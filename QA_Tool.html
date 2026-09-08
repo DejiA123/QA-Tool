@@ -424,23 +424,20 @@
                 </div>
             </div>
 
-            <!-- WHICH REPOSITORY THIS BUILD WATCHES. The button in the title bar does the
-                 checking; this is here because the one question it cannot answer is "up to
-                 date according to WHAT" — and a tool pointed at the wrong repository reports
-                 "up to date" forever, cheerfully and wrongly. -->
+            <!-- A "Watching <owner>/<repo>" ROW USED TO BE HERE. It was put in to answer "up
+                 to date according to WHAT", which is a real question — but it is one the
+                 person maintaining this build asks, not the person reviewing cases, and
+                 printing the repository on screen only invites somebody to go and poke at it.
+                 What is left is the part a reviewer can act on: when it last looked. -->
             <div class="qa-set-block">
                 <div class="qa-set-head">Updates</div>
                 <p class="qa-set-note">
-                    The button beside the version number asks GitHub what has been published and
-                    shows a dot when it is newer than this build. It needs permission to reach
+                    The button beside the version number checks whether a newer build has been
+                    published and shows a dot when there is one. It needs permission to reach
                     api.github.com, which Chrome asks for the first time you press it — that host
                     is used for the version check and nothing else, and the download itself goes
                     through Chrome's own downloads rather than through this page.
                 </p>
-                <div class="qa-set-row">
-                    <label>Watching</label>
-                    <span class="qa-set-status" id="updRepo">—</span>
-                </div>
                 <div class="qa-set-row">
                     <label>Last checked</label>
                     <span class="qa-set-status" id="updWhen">never</span>

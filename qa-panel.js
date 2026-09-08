@@ -2264,28 +2264,28 @@
         fillUpdateStatus();
     }
 
-    /* WHICH REPOSITORY THIS BUILD WATCHES, and when it last looked.
+    /* WHEN THE UPDATE CHECK LAST LOOKED, and what it found.
+     *
+     * NOT which repository it watches. That row was here and is deliberately gone: it is the
+     * maintainer's question rather than the reviewer's, and update.js no longer exports the
+     * name at all — so this function could not print it even if a later edit tried to.
      *
      * update.js is a separate file with its own closure, so this reads the small surface it
-     * exposes rather than duplicating the constants — a second copy of the repository name
-     * is a second thing to change on a rename, and the one that gets missed is the one
-     * nobody notices, because a tool pointed at the wrong repository reports "up to date"
-     * forever and cheerfully. */
+     * exposes rather than keeping a second copy of anything. */
     function fillUpdateStatus() {
-        const repo = $('updRepo');
         const when = $('updWhen');
+        if (!when) return;
         const U = window.QaUpdate;
-        if (repo) {
-            repo.textContent = U ? U.UPDATE_REPO : 'update.js did not load';
-            repo.className = 'qa-set-status' + (U ? '' : ' bad');
+        if (!U) {
+            when.textContent = 'update.js did not load';
+            when.className = 'qa-set-status bad';
+            return;
         }
-        if (when) {
-            const s = U && U.state;
-            when.textContent = s && s.at
-                ? `${E.fmtDateTime(s.at)}${s.version ? ` — latest published is v${s.version}` : ''}`
-                : 'never';
-            when.className = 'qa-set-status';
-        }
+        const s = U.state;
+        when.textContent = s && s.at
+            ? `${E.fmtDateTime(s.at)}${s.version ? ` — latest published is v${s.version}` : ''}`
+            : 'never';
+        when.className = 'qa-set-status';
     }
 
     async function refreshAiStatus() {

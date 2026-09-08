@@ -339,9 +339,13 @@
             console.warn('[Update] check failed', e);
             if (interactive) {
                 openModal({
+                    /* SAY WHAT TO DO, not where to go instead. The old wording sent people to
+                     * a GitHub link that is no longer on this dialog — and "try again in a few
+                     * minutes" is the honest advice anyway: the overwhelmingly likely cause is
+                     * GitHub's rate limit on unauthenticated requests, which clears on its own. */
                     error: 'Could not read the published version — ' + ((e && e.message) || 'the request failed')
-                        + '. GitHub limits unauthenticated requests, so this can simply mean "try again in a '
-                        + 'few minutes"; the Open on GitHub link below always works.'
+                        + '. There is a limit on how often this can be asked, so it usually just means '
+                        + '"try again in a few minutes". Nothing on this panel is affected either way.'
                 });
             }
         }
@@ -463,7 +467,7 @@
 
         const title = document.createElement('div');
         title.className = 'qa-modal-title';
-        title.textContent = opts.busy ? 'Checking GitHub…'
+        title.textContent = opts.busy ? 'Checking for an update…'
             : opts.error ? 'Could not check for an update'
             : newer ? `Version ${updateState.version} is available`
             : 'You are up to date';
@@ -472,7 +476,10 @@
         const note = document.createElement('div');
         note.className = 'qa-modal-note';
         if (opts.busy) {
-            note.textContent = `Asking ${UPDATE_REPO} what has been published…`;
+            /* NOT "Asking <owner>/<repo>…". Where the build comes from is the maintainer's
+             * business, not the reviewer's — naming it here only invites somebody to go and
+             * poke at it, and it tells them nothing they can act on. */
+            note.textContent = 'Checking what has been published…';
         } else if (opts.error) {
             note.textContent = opts.error;
         } else if (newer) {
@@ -540,7 +547,7 @@
                         window.open(url, '_blank', 'noopener');
                     }
                 } catch (err) {
-                    say('Could not start the download — open ' + UPDATE_PAGE + ' and take it from there.', 'e', 10000);
+                    say('Could not start the download — try again, and if it keeps failing ask for the build directly.', 'e', 10000);
                 }
             };
             acts.appendChild(get);
@@ -570,21 +577,13 @@
         acts.appendChild(restore);
         box.appendChild(file);
 
-        const openPage = document.createElement('button');
-        openPage.className = 'btn';
-        openPage.textContent = 'Open on GitHub';
-        openPage.onclick = () => {
-            const url = (updateState && updateState.pageUrl) || UPDATE_PAGE;
-            try {
-                if (isExt() && window.QaReader && window.QaReader.createTab) {
-                    window.QaReader.createTab({ url, active: true }, () => {});
-                } else {
-                    window.open(url, '_blank', 'noopener');
-                }
-            } catch (e) { window.open(url, '_blank', 'noopener'); }
-        };
-        acts.appendChild(openPage);
-
+        /* "Open on GitHub" USED TO SIT HERE, and it is gone deliberately.
+         *
+         * It was a fourth way to do the one thing this dialog already does — Download the
+         * update — reached by sending somebody to a page full of source they have no reason
+         * to read and a Code button that produces the same zip. The only question it
+         * answered that the dialog does not is "where does this come from", which is the
+         * maintainer's business rather than the reviewer's. */
         const close = document.createElement('button');
         close.className = 'btn';
         close.textContent = 'Close';
@@ -644,10 +643,14 @@
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
     else start();
 
-    // Exposed so the rules can be checked without a browser, and so Settings can show which
-    // repository this build watches.
+    /* Exposed so the version rules can be checked without a browser, and so Settings can say
+     * when the last check happened.
+     *
+     * UPDATE_REPO AND UPDATE_PAGE ARE NOT EXPORTED, and that is the point rather than an
+     * omission: the panel used to read UPDATE_REPO to print it in Settings, and the only way
+     * to be sure a name is not shown is for the code that draws the screen to have no way of
+     * getting at it. */
     window.QaUpdate = {
-        UPDATE_REPO, UPDATE_PAGE,
         parseVersion, compareVersions, isNewer,
         check: checkForUpdate,
         backup: backupAllData,

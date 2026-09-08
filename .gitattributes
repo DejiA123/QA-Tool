@@ -1,0 +1,18 @@
+# LF EVERYWHERE, IN THE REPOSITORY AND IN THE WORKING TREE.
+#
+# Git for Windows ships with core.autocrlf=true at the SYSTEM level, so without
+# this file a clone on Windows writes CRLF into every source file while the
+# repository stores LF. That is not cosmetic here: it makes `git diff` on a
+# freshly-touched file report the whole file as changed, and it makes any
+# whole-file rewrite (a formatter, a sed -i, an editor "fix line endings")
+# produce a 40,000-line diff that hides the two lines somebody actually meant.
+#
+# `eol=lf` forces the checkout as well as the commit, so every machine that
+# clones this — Windows, Mac, a CI runner — has byte-identical files.
+* text=auto eol=lf
+
+# The icons are the extension's toolbar mark. Marked binary explicitly so no
+# future eol rule can be tempted to touch them.
+*.png binary
+*.crx binary
+*.zip binary

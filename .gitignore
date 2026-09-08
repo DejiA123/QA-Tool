@@ -1,0 +1,31 @@
+# QA Tool — Git Ignore Rules
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor artifacts
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Packaged builds
+*.zip
+*.crx
+
+# THE SIGNING KEY — the private half of the manifest "key" that pins this
+# extension's ID. NEVER COMMIT. It lives outside this folder on purpose
+# (alongside the analyser's, at the SOTI-AI-Analyser root) so it cannot be
+# swept into this repository by accident, and this rule is the backstop for
+# the day somebody copies it in "just to keep them together".
+#
+# What it is for: publishing a .crx under the same ID. The ID itself comes
+# from the PUBLIC half, which is in manifest.json and is meant to be there.
+# Losing this file costs the ability to sign a .crx, nothing else.
+*.pem
+
+# Backups the tool writes
+QA Tool backup *.json

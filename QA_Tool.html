@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- THIS MUST MIRROR manifest.json's extension_pages CSP. Both apply to the side panel
+         and the browser enforces the INTERSECTION of the two, so a host named in one and
+         missing from the other is blocked with an opaque network error and no clue which of
+         the files is refusing it.
+
+         The QA Tool's list is SHORTER than the analyser's, and deliberately: it has no Power
+         BI report to frame and no on-device model to reach, so frame-src is 'none' and
+         connect-src names two hosts and no others.
+
+         WHY api.github.com IS ON connect-src. The update check reads the repository's
+         published version and its manifest, and that is the ONE host it talks to — the
+         GitHub API returns file contents base64-encoded, so nothing has to be fetched from
+         raw.githubusercontent.com and that host is deliberately absent. The PERMISSION to
+         reach it is optional and is asked for the first time the update button is pressed;
+         this line grants nothing on its own. The DOWNLOAD does not go through here at all:
+         it is handed to chrome.downloads, which this policy does not govern.
+
+         The Copilot relay is likewise not a connection this page makes — it is a tab the
+         extension drives through chrome.scripting. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; media-src 'self' data:; connect-src 'self' https://*.salesforce.com https://*.force.com https://api.github.com; object-src 'self'; worker-src 'self'; frame-src 'none'; base-uri 'self'; form-action 'none'">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QA Tool</title>
+    <!-- The analyser's stylesheet, unchanged, so this tool looks like the one the team
+         already uses — same palette, same rows, same buttons. qa-styles.css holds ONLY what
+         is new here (the tick boxes, the run console, the sheet and the coaching grid), which
+         means a change made to the analyser's styling can be dropped in by replacing one file
+         rather than by picking a diff apart. -->
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="qa-styles.css">
+</head>
+<body>
+    <header class="topbar">
+        <div class="tl-wrap">
+            <div class="tl" id="btnHome" role="button" tabindex="0" title="QA Tool — back to the case list">
+                <!-- THE SAME MARK AS THE EXTENSION ICON, and that is the whole point of it.
+                     This used to be a drawn clipboard while the toolbar icon was a lettered
+                     badge — so the thing you click in Chrome and the thing at the top of what
+                     opens were two different pictures, which is how a tool ends up feeling
+                     like two tools.
+
+                     Teal rather than the analyser's indigo, because at 16px in a toolbar the
+                     COLOUR is what tells two extensions apart long before the shape does. -->
+                <svg width="22" height="22" viewBox="0 0 24 24" style="margin-right:10px" aria-hidden="true">
+                    <defs>
+                        <linearGradient id="qaMark" x1="0" y1="0" x2="1" y2="1">
+                            <stop offset="0" stop-color="#1fc6b2"></stop>
+                            <stop offset="1" stop-color="#0a6a84"></stop>
+                        </linearGradient>
+                    </defs>
+                    <rect x="1" y="1" width="22" height="22" rx="5.5" fill="url(#qaMark)"></rect>
+                    <text x="12" y="12.6" text-anchor="middle" dominant-baseline="central"
+                          font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+                          font-size="11.5" font-weight="900" letter-spacing="-0.4" fill="#ffffff">QA</text>
+                </svg>
+                <div class="logo-block">
+                    <span class="logo-name">QA TOOL</span>
+                    <!-- Filled in from the manifest, so it can never drift from the build
+                         Chrome actually loaded — the first thing anyone needs when reporting
+                         that something behaves oddly. -->
+                    <span class="logo-ver" id="appVersion"></span>
+                </div>
+            </div>
+            <!-- IS THERE A NEWER BUILD? — beside the version, because that is the only place
+                 on the panel where "which build is this" is already the question being
+                 answered.
+
+                 OUTSIDE #btnHome, deliberately, and that is not a layout preference. The
+                 wordmark is a role="button" that navigates home; a real <button> nested
+                 inside another control is a thing screen readers and keyboard users are
+                 entitled to be confused by, and stopPropagation would be papering over it
+                 rather than fixing it. As a sibling in .tl-wrap it sits in the same place on
+                 screen and is its own control in the accessibility tree.
+
+                 THE DOT IS THE WHOLE POINT OF IT BEING HERE. Nobody opens an update screen
+                 speculatively — this only works if the panel says, quietly and without being
+                 asked, that there is something to open it for. See update.js: the automatic
+                 check runs only once the GitHub host permission has been granted by pressing
+                 this button once, and at most a few times a day after that. -->
+            <button class="btn-upd" id="btnUpdate" type="button"
+                    title="Check GitHub for a newer version of the QA Tool"
+                    aria-label="Check for a newer version">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><polyline points="21 3 21 9 15 9"></polyline></svg>
+                <span class="btn-upd-dot" id="updDot" hidden></span>
+            </button>
+        </div>
+        <div class="tc">
+            <!-- WHAT THE RUN IS DOING, in the one place that is visible from every tab. A QA
+                 run takes minutes and the reviewer is entitled to walk away from it; a
+                 progress line that only exists on the tab they walked away from is a progress
+                 line nobody sees. Hidden until a run starts. -->
+            <div class="qa-runpill" id="runPill" style="display:none">
+                <span class="qa-runpill-dot" id="runPillDot"></span>
+                <span class="qa-runpill-txt" id="runPillTxt">—</span>
+                <button class="qa-runpill-stop" id="btnStopRun" type="button" title="Stop after the case being read now">Stop</button>
+            </div>
+        </div>
+        <div class="tr">
+            <div class="more-menu">
+                <button class="btn" id="btnMore" title="More options" aria-label="More options">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>
+                </button>
+                <div class="dropdown" id="moreDropdown" style="display:none">
+                    <button class="drop-item" id="btnGoSettings">⚙️ Settings</button>
+                    <button class="drop-item" id="btnExportAll">⬇️ Export everything (CSV)</button>
+                    <button class="drop-item" id="btnClearReviews">🗑️ Clear all reviews</button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- A FIXED SET OF TABS. The analyser has a tab per case because an engineer works one
+         case at a time and needs somewhere to keep the chat for each. A QA reviewer works the
+         LIST — they are never on one case, they are partway through thirty — so the tabs here
+         are the queue, the four things a review produces, and the settings, and they never
+         change. -->
+    <div class="tab-bar" id="tabBar">
+        <div class="tab-item active" data-view="cases" role="button" tabindex="0">
+            <svg class="tab-cases-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"></polyline><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></svg>
+            <span class="tab-name">Cases</span>
+            <span class="tab-cases-count" id="tabCasesCount"></span>
+        </div>
+        <div class="tab-item" data-view="reviews" role="button" tabindex="0">
+            <span class="tab-name">Reviews</span>
+            <span class="tab-cases-count" id="tabReviewsCount"></span>
+        </div>
+        <div class="tab-item" data-view="chat" role="button" tabindex="0">
+            <span class="tab-name">Chat</span>
+            <span class="tab-cases-count" id="tabChatCount"></span>
+        </div>
+        <!-- "Sheet", not "QA Sheet". The whole tool is the QA tool; the word was being said
+             twice, and it was the width that pushed Settings off the end of the bar. -->
+        <div class="tab-item" data-view="sheet" role="button" tabindex="0">
+            <span class="tab-name">Sheet</span>
+        </div>
+        <div class="tab-item" data-view="coaching" role="button" tabindex="0">
+            <span class="tab-name">Coaching</span>
+        </div>
+        <!-- A GEAR, NOT THE WORD. Six labelled tabs do not fit a side panel, and the one to
+             give up its word is this: settings is the only tab nobody visits during the work,
+             and a gear is the most universally understood icon there is. -->
+        <div class="tab-item tab-icon-only" data-view="settings" role="button" tabindex="0"
+             title="Settings" aria-label="Settings">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        </div>
+    </div>
+
+    <!-- ==================================================================
+         CASES — the queue, with a tick box on every row
+         ================================================================== -->
+    <div class="oc-view qa-view" id="viewCases">
+        <div class="oc-head" id="ocHead">
+            <div class="oc-title"><span class="oc-meta" id="ocMeta"></span></div>
+        </div>
+
+        <div class="oc-toolbar qa-toolbar">
+            <button class="btn btn-sf" id="btnSyncCaseList" title="Refresh the Salesforce list view and read every case from it. You do not need to be standing on the list: if it is open in another tab this brings it to the front, and if it is closed it opens the one you last synced from.">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                <span id="ocSyncLabel">Sync case list</span>
+            </button>
+            <button class="btn" id="btnAddByUrl" title="Paste a Salesforce case link to add one case to this list">🔗 Add by URL</button>
+            <button class="btn" id="btnClearList" title="Empty this list. Reviews already done are kept.">Clear</button>
+        </div>
+
+        <div class="oc-filters">
+            <div class="oc-filter-row">
+                <input class="oc-search" id="ocSearch" type="search" placeholder="Filter by case number, subject, account or owner…" autocomplete="off">
+                <select class="oc-sort" id="ocSort" title="Order the list">
+                    <option value="age-desc">Oldest first</option>
+                    <option value="age-asc">Newest first</option>
+                    <option value="case">Case number</option>
+                    <option value="owner">Case owner</option>
+                    <option value="score">QA score (reviewed first)</option>
+                </select>
+            </div>
+
+            <!-- BY CASE OWNER. The second way a QA reviewer picks work: not "these six cases"
+                 but "everything Imran touched this month". Choosing an owner here filters the
+                 list to them AND makes Select all mean their cases, which is the whole of the
+                 by-owner workflow — no separate mode, no second screen. -->
+            <div class="oc-filter-row">
+                <select class="oc-sort qa-owner-select" id="ocOwner" title="Show only one agent's cases">
+                    <option value="">All case owners</option>
+                </select>
+                <button class="btn" id="btnSelectOwner" title="Tick every case belonging to the agent chosen on the left">Select this owner's cases</button>
+            </div>
+
+            <!-- THE 30/60/90 FLAGS, AS FILTERS. A case's milestone is computed from its age
+                 (see QaEngine.milestoneFor) and shown on its row; these chips narrow the list
+                 to one milestone so "give me everything at its 90-day review" is one click
+                 rather than a read of thirty ages. -->
+            <div class="oc-chips" id="ocChips">
+                <button class="oc-chip active" data-filter="all" type="button">All</button>
+                <button class="oc-chip" data-filter="30" type="button" title="Cases 30 days old or more but under 60">30-day</button>
+                <button class="oc-chip" data-filter="60" type="button" title="Cases 60 days old or more but under 90">60-day</button>
+                <button class="oc-chip" data-filter="90" type="button" title="Cases 90 days old or more">90-day</button>
+                <button class="oc-chip" data-filter="milestone" type="button" title="Every case at or past its first 30-day review">Needs 30/60/90</button>
+                <button class="oc-chip" data-filter="unreviewed" type="button" title="Cases with no QA review yet">Not yet QA'd</button>
+                <button class="oc-chip" data-filter="reviewed" type="button" title="Cases this tool has already reviewed">Already QA'd</button>
+            </div>
+        </div>
+
+        <!-- THE SELECTION BAR. It is above the list rather than below it because it is the
+             thing you act on after ticking, and a control that appears at the bottom of a
+             scrolled list is a control you have to go looking for. The count is on the button
+             itself so pressing it is never a guess about what it will act on. -->
+        <div class="qa-selbar">
+            <label class="qa-checkline" title="Tick or untick every case currently shown">
+                <input type="checkbox" id="ocSelectAll" class="qa-check">
+                <span id="ocSelectAllLabel">Select all shown</span>
+            </label>
+            <span class="qa-selcount" id="ocSelCount">0 selected</span>
+            <div class="qa-selbar-acts">
+                <button class="btn qa-btn-primary" id="btnRunQa" disabled>QA selected</button>
+                <button class="btn" id="btnRun306090" disabled title="Produce the 30/60/90 management-review write-up for the ticked cases">30/60/90</button>
+            </div>
+        </div>
+
+        <div class="oc-list" id="ocList"></div>
+    </div>
+
+    <!-- ==================================================================
+         REVIEWS — what the run produced, one card per case
+         ================================================================== -->
+    <div class="oc-view qa-view" id="viewReviews" style="display:none">
+        <div class="oc-head">
+            <div class="oc-title"><span class="oc-meta" id="revMeta"></span></div>
+        </div>
+        <div class="oc-filters">
+            <div class="oc-filter-row">
+                <input class="oc-search" id="revSearch" type="search" placeholder="Filter reviews…" autocomplete="off">
+                <select class="oc-sort" id="revFilter">
+                    <option value="">All reviews</option>
+                    <option value="qa">QA reviews</option>
+                    <option value="milestone">30/60/90 analyses</option>
+                    <option value="failed">Failed to read</option>
+                </select>
+            </div>
+        </div>
+        <!-- THE RUN LOG. What was opened, what came back, and what went wrong — in order.
+             A run that quietly skipped four cases and a run that reviewed them all look
+             identical from a results list; this is where the difference is visible. -->
+        <div class="qa-runlog" id="runLog" style="display:none"></div>
+        <div class="oc-list" id="revList"></div>
+    </div>
+
+    <!-- ==================================================================
+         CHAT — one conversation per case, like the analyser's
+         ==================================================================
+         A review is a document: it answers the questions the sheet asks and
+         then it stops. What it cannot do is answer the next question, and on a
+         case that scored badly the next question is always the same one —
+         "why?", or "show me where", or "what should they actually have done".
+
+         So every case gets a conversation of its own, grounded in the same
+         material the review was written from: the case facts, the measured
+         findings, the review itself if there is one, and the whole transcript
+         oldest-first. The reviewer can argue with it, and the answers cite the
+         case rather than the review.
+
+         ONE CHAT PER CASE, kept. Switching to another case and back finds the
+         conversation where it was left — a QA pass is spread over days, and a
+         chat that resets each time is a chat nobody uses twice. -->
+    <div class="oc-view qa-view" id="viewChat" style="display:none">
+        <div class="qa-chat-head" id="chatHead" style="display:none">
+            <div class="qa-chat-who">
+                <span class="qa-chat-num" id="chatCaseNum"></span>
+                <span class="qa-chat-subject" id="chatSubject"></span>
+            </div>
+            <div class="qa-chat-acts">
+                <button class="btn" id="btnChatSwitch" title="Pick a different case to talk about">Change case</button>
+                <button class="btn" id="btnChatOpenSf" title="Open this case in Salesforce">Salesforce</button>
+                <button class="btn" id="btnChatClear" title="Delete this case's conversation">Clear chat</button>
+            </div>
+        </div>
+
+        <!-- WHAT THE ANSWERS ARE STANDING ON. A chat that will not say where its
+             facts came from is a chat that can be quietly wrong for a whole
+             session, so this strip names the material and how old it is — and
+             says plainly when there is none yet. -->
+        <div class="qa-chat-ground" id="chatGround" style="display:none"></div>
+
+        <div class="qa-chat-msgs" id="chatMsgs"></div>
+        <div class="qa-chat-chips" id="chatChips"></div>
+
+        <div class="qa-chat-compose" id="chatCompose" style="display:none">
+            <textarea id="chatInput" rows="2" spellcheck="true"
+                      placeholder="Ask about this case — Enter to send, Shift+Enter for a new line"></textarea>
+            <div class="qa-chat-send">
+                <button class="btn qa-btn-primary" id="btnChatSend">Send</button>
+                <button class="btn" id="btnChatStop" style="display:none">Stop</button>
+            </div>
+        </div>
+
+        <!-- The picker, shown until a case is chosen. -->
+        <div class="oc-list" id="chatPicker"></div>
+    </div>
+
+    <!-- ==================================================================
+         QA SHEET — the team's own spreadsheet, column for column
+         ================================================================== -->
+    <div class="oc-view qa-view" id="viewSheet" style="display:none">
+        <div class="oc-head">
+            <div class="oc-title">
+                <!-- The month band, exactly as the sheet has it. Editable, because a review
+                     run in October about September's cases is headed September. -->
+                <input class="qa-month" id="sheetMonth" type="text" spellcheck="false" title="The heading on the sheet">
+            </div>
+            <div class="qa-head-acts">
+                <button class="btn" id="btnSheetCopy" title="Copy the whole sheet as tab-separated text — paste straight into Excel or Google Sheets">Copy for Excel</button>
+                <button class="btn" id="btnSheetCsv" title="Download the sheet as a CSV file">Download CSV</button>
+            </div>
+        </div>
+        <div class="qa-sheet-wrap">
+            <table class="qa-sheet" id="sheetTable"></table>
+        </div>
+        <div class="oc-hint" id="sheetHint" style="display:none">
+            No reviews yet. Tick some cases on the Cases tab and press <b>QA selected</b>; every
+            review lands here as a row.
+        </div>
+    </div>
+
+    <!-- ==================================================================
+         COACHING — one row per agent, built out of their reviews
+         ================================================================== -->
+    <div class="oc-view qa-view" id="viewCoaching" style="display:none">
+        <div class="oc-head">
+            <div class="oc-title"><span class="oc-meta" id="coachMeta"></span></div>
+            <div class="qa-head-acts">
+                <button class="btn qa-btn-primary" id="btnBuildCoaching" title="Write a coaching row for every agent who has reviewed cases">Build from reviews</button>
+                <button class="btn" id="btnCoachCopy">Copy for Excel</button>
+                <button class="btn" id="btnCoachCsv">Download CSV</button>
+            </div>
+        </div>
+        <!-- WHAT EACH AGENT'S REVIEWS ADD UP TO, before anybody writes a word about them.
+             Counted from the reviews rather than judged: how many cases, how they scored, and
+             which training areas came up most. The written row underneath has to agree with
+             this, and a reviewer can see at a glance whether it does. -->
+        <div class="qa-agent-strip" id="coachStrip"></div>
+        <div class="qa-sheet-wrap">
+            <table class="qa-sheet qa-sheet-coach" id="coachTable"></table>
+        </div>
+        <div class="oc-hint" id="coachHint" style="display:none">
+            Nothing to summarise yet. Review some cases first — a coaching row is built out of an
+            agent's reviews, not out of their cases, so that it can only ever say what the reviews said.
+        </div>
+    </div>
+
+    <!-- ==================================================================
+         SETTINGS
+         ================================================================== -->
+    <div class="oc-view qa-view" id="viewSettings" style="display:none">
+        <div class="qa-settings">
+            <div class="qa-set-block">
+                <div class="qa-set-head">The standards this tool measures against</div>
+                <p class="qa-set-note">
+                    These are the numbers every measured finding is compared with. They are settings
+                    rather than constants because a threshold nobody can change is one people work
+                    around — if the first response target moves, change it here rather than waiting
+                    for a new build.
+                </p>
+                <div class="qa-set-row">
+                    <label for="setFrt">First response target (hours)</label>
+                    <input class="finput" id="setFrt" type="number" min="0.25" max="72" step="0.25">
+                </div>
+                <div class="qa-set-row">
+                    <label for="setGap">Flag silence longer than (days)</label>
+                    <input class="finput" id="setGap" type="number" min="1" max="60" step="1">
+                </div>
+                <div class="qa-set-row">
+                    <label for="setMeetingNote">Meeting must be written up within (hours)</label>
+                    <input class="finput" id="setMeetingNote" type="number" min="1" max="168" step="1">
+                </div>
+                <div class="qa-set-row">
+                    <label for="setOpenWait">Flag "waiting on us" after (days)</label>
+                    <input class="finput" id="setOpenWait" type="number" min="1" max="30" step="1">
+                </div>
+            </div>
+
+            <div class="qa-set-block">
+                <div class="qa-set-head">The team</div>
+                <p class="qa-set-note">
+                    The agents the coaching sheet has a row for, one per line. A name here is matched
+                    against the case owner Salesforce reports, so it wants to be the name as Salesforce
+                    writes it. An agent who turns up in the queue but is not on this list still gets
+                    reviewed and still gets a coaching row — the list decides the ORDER of the sheet
+                    and who appears on it with no cases yet, not who may be reviewed.
+                </p>
+                <textarea class="finput qa-roster" id="setRoster" rows="10" spellcheck="false"></textarea>
+            </div>
+
+            <div class="qa-set-block">
+                <div class="qa-set-head">How many cases at once</div>
+                <p class="qa-set-note">
+                    Each case is opened in a background window, read to the end of its feed and closed
+                    again. More at once is faster and heavier: every case being read is a full
+                    Salesforce page in memory. Two is comfortable on a support laptop; go higher only
+                    if the machine has room, and expect the reader window to surface more often.
+                </p>
+                <div class="qa-set-row">
+                    <label for="setWorkers">Cases read at the same time</label>
+                    <input class="finput" id="setWorkers" type="number" min="1" max="4" step="1">
+                </div>
+            </div>
+
+            <div class="qa-set-block">
+                <div class="qa-set-head">The AI</div>
+                <p class="qa-set-note">
+                    Reviews are written through the Microsoft 365 Copilot relay: the tool drives a
+                    Copilot tab in a window of its own, the same way the SOTI AI Analyser does, so no
+                    case data goes anywhere the browser was not already signed in to. Chrome has to
+                    grant access to that site once — press Grant below and allow it when asked.
+                </p>
+                <div class="qa-set-row">
+                    <label>Status</label>
+                    <span class="qa-set-status" id="aiStatus">—</span>
+                </div>
+                <div class="qa-set-acts">
+                    <button class="btn qa-btn-primary" id="btnGrantAi">Grant site access</button>
+                    <button class="btn" id="btnTestAi">Test the relay</button>
+                </div>
+            </div>
+
+            <!-- WHICH REPOSITORY THIS BUILD WATCHES. The button in the title bar does the
+                 checking; this is here because the one question it cannot answer is "up to
+                 date according to WHAT" — and a tool pointed at the wrong repository reports
+                 "up to date" forever, cheerfully and wrongly. -->
+            <div class="qa-set-block">
+                <div class="qa-set-head">Updates</div>
+                <p class="qa-set-note">
+                    The button beside the version number asks GitHub what has been published and
+                    shows a dot when it is newer than this build. It needs permission to reach
+                    api.github.com, which Chrome asks for the first time you press it — that host
+                    is used for the version check and nothing else, and the download itself goes
+                    through Chrome's own downloads rather than through this page.
+                </p>
+                <div class="qa-set-row">
+                    <label>Watching</label>
+                    <span class="qa-set-status" id="updRepo">—</span>
+                </div>
+                <div class="qa-set-row">
+                    <label>Last checked</label>
+                    <span class="qa-set-status" id="updWhen">never</span>
+                </div>
+                <div class="qa-set-acts">
+                    <button class="btn" id="btnCheckUpdate">Check now</button>
+                    <button class="btn" id="btnBackupNow" title="Write every review, chat and setting to a JSON file">Back up my data</button>
+                </div>
+            </div>
+
+            <div class="qa-set-block">
+                <div class="qa-set-acts">
+                    <button class="btn qa-btn-primary" id="btnSaveSettings">Save settings</button>
+                    <button class="btn" id="btnResetSettings">Reset to defaults</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script src="ai-provider.js"></script>
+    <script src="qa-engine.js"></script>
+    <script src="case-reader.js"></script>
+    <script src="qa-panel.js"></script>
+    <script src="update.js"></script>
+</body>
+</html>

@@ -1,0 +1,5004 @@
+/* SOTI AI Analyser - Full Premium Styles */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0
+}
+
+/* `hidden` HAS TO ACTUALLY HIDE, and in this stylesheet it did not.
+   The attribute is only a `display:none` in the browser's OWN stylesheet, which every
+   author rule outranks — and this file gives most of its boxes a display of their own.
+   `.fld` is `display:flex`, so `<div class="fld" hidden>` rendered in full: the element
+   said hidden, the DOM agreed, and the section was on screen anyway. That is the worst
+   shape a bug can take, because the thing you would check to disprove it reads correct.
+   One rule, `!important` because it has to beat the layout rule it is overriding, and
+   the attribute means the same thing everywhere it is used from here on. */
+[hidden] { display: none !important; }
+
+:root {
+    color-scheme: dark;
+    --bg0: #0d1321;
+    --bg1: #111827;
+    --bg2: #172035;
+    --bg3: #1e2d47;
+    --border: rgba(255, 255, 255, .07);
+    --border2: rgba(255, 255, 255, .11);
+    /* THE MUTED END OF THIS RAMP WAS UNREADABLE.
+       --txt3 at #4a5a70 is 2.4:1 against --bg1 — under half the 4.5:1 a body text needs and
+       below the 3:1 floor for large text — and it is what every field label in Case Details
+       ("CASE NUMBER", "ACCOUNT NAME"), every key in the Case Activity and NPS boxes, the
+       column headings over the case list and the "No entitlement listed" group were painted
+       in. They were not subtle; they were invisible on a laptop screen at an angle.
+       The four steps are lifted together so the hierarchy between them is unchanged — each
+       tier is still clearly quieter than the one above it, and each is now legible. */
+    --txt1: #e2e9f3;
+    --txt2: #a6b8ce;
+    --txt3: #8497ae;
+    --txt4: #5d6f88;
+    --blue: #6366f1;
+    --blue2: #818cf8;
+    --green: #22c55e;
+    --green-pill: rgba(34, 197, 94, .12);
+    --warn: #f59e0b;
+    --red: #ef4444;
+    --r4: 4px;
+    --r6: 6px;
+    --r8: 8px;
+    --r10: 10px;
+    --r20: 20px;
+    --font: 'Inter', system-ui, sans-serif;
+    --mono: 'JetBrains Mono', monospace;
+    --accent: #818cf8;
+}
+
+html,
+body {
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg0);
+    color: var(--txt1);
+    font-family: var(--font);
+    line-height: 1.5;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+}
+
+/* ============================================================
+   THE PANEL IS ON A DIFFERENT CASE FROM THE SCREEN
+   ============================================================
+   A red edge around the WHOLE panel, not a line at the top of it. The mistake this exists to
+   stop is made with the eyes somewhere else — reading case B in Salesforce while acting on
+   what the panel says about case A — so the signal has to be catchable in peripheral vision
+   from the far side of the window. A 3px rule under the header is not.
+
+   `outline` rather than `border`, and inset: a border would add 6px to the panel's box and
+   shove every pixel of the layout inwards the moment it appeared, which on a 400px side panel
+   re-wraps the case tabs and the toolbar. An inset outline is painted over the top of the
+   layout and costs it nothing, so the panel does not move as the warning comes and goes.
+
+   The pulse runs for a few seconds and then stops. It has to move to be noticed at all, and
+   it has to stop moving to be worked next to — an edge that pulses forever is one people
+   turn off, and this is the warning that must never be turned off. `prefers-reduced-motion`
+   removes it entirely; the colour alone still carries the message.
+   ============================================================ */
+/* 8px, not 3. Three was thin enough to read as a rendering artefact on a panel this narrow
+ * — a hairline at the edge of the window rather than a warning — and it is the one signal
+ * here that has to survive being seen out of the corner of an eye while the engineer is
+ * reading Salesforce. The inset offset keeps it painted OVER the layout, so widening it
+ * still costs the panel no space and moves nothing. */
+body.case-mismatch {
+    outline: 8px solid var(--danger, #ef4444);
+    outline-offset: -8px;
+    animation: caseMismatchPulse 1.1s ease-in-out 0s 4;
+}
+@keyframes caseMismatchPulse {
+    0%, 100% { outline-color: rgba(239, 68, 68, .55); }
+    50%      { outline-color: rgba(239, 68, 68, 1); }
+}
+@media (prefers-reduced-motion: reduce) {
+    body.case-mismatch { animation: none; outline-color: #ef4444; }
+}
+
+.case-mismatch-bar {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 12px;
+    background: rgba(239, 68, 68, .12);
+    border-bottom: 1px solid rgba(239, 68, 68, .45);
+}
+.cmb-row { display: flex; align-items: flex-start; gap: 7px; }
+.cmb-dot {
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    margin-top: 4px;
+    border-radius: 50%;
+    background: #ef4444;
+}
+.cmb-text { font-size: 11px; line-height: 1.5; color: var(--txt1, #fff); }
+.cmb-text b { font-weight: 700; }
+.cmb-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.cmb-btn {
+    padding: 4px 9px;
+    background: rgba(239, 68, 68, .9);
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: #fff;
+    font-family: var(--font);
+    font-size: 10.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: filter .15s, background .15s;
+}
+.cmb-btn:hover { filter: brightness(1.12); }
+.cmb-btn:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+.cmb-btn-ghost {
+    background: transparent;
+    border-color: rgba(239, 68, 68, .7);
+    color: var(--txt1, #fff);
+}
+.cmb-btn-ghost:hover { background: rgba(239, 68, 68, .18); }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px }
+::-webkit-scrollbar-track { background: transparent }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .08); border-radius: 2px }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, .14) }
+
+/* Topbar */
+.topbar {
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    background: var(--bg1);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    z-index: 100;
+}
+
+.tab-bar {
+    height: 36px;
+    background: var(--bg0);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    gap: 4px;
+    overflow-x: auto;
+    flex-shrink: 0;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border2) transparent;
+}
+.tab-bar::-webkit-scrollbar { height: 3px; display: block; }
+.tab-bar::-webkit-scrollbar-track { background: transparent; }
+.tab-bar::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 10px; }
+
+.tab-item {
+    flex-shrink: 0;
+    height: 28px;
+    padding: 0 10px 0 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--r6);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--txt2);
+    cursor: pointer;
+    white-space: nowrap;
+    max-width: 160px;
+    user-select: none;
+}
+
+.tab-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.tab-item:hover {
+    background: var(--bg3);
+    color: var(--txt1);
+}
+
+.tab-item.active {
+    background: rgba(99, 102, 241, 0.15);
+    border-color: rgba(99, 102, 241, 0.4);
+    color: var(--blue2);
+}
+
+.tab-item.dragging {
+    opacity: 0.4;
+    border-style: dashed;
+}
+
+.tab-close {
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-size: 14px;
+    line-height: 1;
+    opacity: 0;
+    pointer-events: none;
+    transition: background .15s, opacity .15s, color .15s;
+    flex-shrink: 0;
+}
+.tab-item:hover .tab-close,
+.tab-item.active .tab-close {
+    opacity: 0.5;
+    pointer-events: auto;
+}
+.tab-close:hover {
+    background: rgba(255,255,255,0.1);
+    opacity: 1 !important;
+    color: var(--red);
+}
+
+/* THE LOGO IS A CONTROL — it goes back to the main screen. It has to say so on hover, or a
+   corner that turns out to be clickable is a surprise rather than an affordance; and it has
+   to stay quiet the rest of the time, because it is a wordmark and not a button. Negative
+   margins so the hover background has room to breathe without moving the logo one pixel from
+   where it has always sat. */
+.tl {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: -4px -6px;
+    padding: 4px 6px;
+    border-radius: var(--r6);
+    cursor: pointer;
+    user-select: none;
+    transition: background .15s ease;
+}
+/* .08, not .05 — on the topbar's #111827 a five-percent white wash is under a point of
+   luminance and simply is not visible, which makes the affordance a promise the pixels do
+   not keep. The wordmark going full white is the other half of the signal. */
+.tl:hover { background: rgba(255, 255, 255, .08); }
+.tl:hover .logo-name { color: #fff; }
+.tl:active { background: rgba(255, 255, 255, .12); }
+.tl:focus-visible { outline: 2px solid var(--blue2); outline-offset: 1px; }
+.logo-hex { font-size: 18px; color: var(--txt3) }
+/* The wordmark and the version share a line rather than stacking. A second line here would
+   push the 48px topbar out of shape, and the version is a suffix to the name — "SOTI AI
+   ANALYSER v8.1.0" is how anybody says it out loud. */
+.logo-block { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.logo-name { font-size: 11px; font-weight: 700; color: var(--txt1); letter-spacing: .5px; transition: color .15s ease }
+/* Quieter than the name and in the tabular figures, because it is a fact you look up rather
+   than a label you read. Hidden by applyAppVersion() when there is no manifest to read one
+   from, so the standalone page never shows an empty "v". */
+.logo-ver {
+    font-size: 9.5px;
+    font-weight: 600;
+    color: var(--txt3);
+    letter-spacing: .2px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* BACK. Its own control, left of the wordmark, where every browser and every phone puts it.
+   Sized and coloured as a quiet icon button: it appears and disappears as the history does,
+   and a loud control that comes and goes is a flicker in the corner of the eye. */
+.btn-back {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    margin-right: 4px;
+    padding: 0;
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--r6);
+    color: var(--txt2);
+    cursor: pointer;
+    transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.tl-wrap { display: flex; align-items: center; min-width: 0; }
+
+/* IS THERE A NEWER BUILD — beside the version, and quiet until there is.
+   ============================================================
+   Same size and same restraint as .btn-back: it lives in the corner of the eye all day
+   and must not compete with the wordmark it sits next to. The whole of its loudness is
+   the dot, and the dot only appears once a strictly newer version has actually been seen
+   — see paintUpdateBadge, which is deliberate about never lighting up for "unknown".
+
+   `flex-shrink: 0` because .tl-wrap is a min-width:0 flex row and the wordmark beside it
+   is allowed to ellipsis; without it a narrow panel would squash the icon to nothing. */
+.btn-upd {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    margin-left: 4px;
+    padding: 0;
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--r6);
+    color: var(--txt3);
+    cursor: pointer;
+    transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.btn-upd:hover { background: rgba(255, 255, 255, .08); border-color: var(--border); color: #fff; }
+.btn-upd:active { background: rgba(255, 255, 255, .12); }
+.btn-upd:focus-visible { outline: 2px solid var(--blue2); outline-offset: 1px; }
+/* With something to install the icon stops being grey. The dot alone is 6px and on a
+   busy topbar 6px is missable; the two together are not. */
+.btn-upd.has-update { color: var(--blue2); }
+.btn-upd.has-update:hover { color: #fff; }
+.btn-upd-dot {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--blue2, #818cf8);
+    /* A ring in the bar's own colour, so the dot reads as a badge sitting on the icon
+       rather than as part of the glyph underneath it. */
+    box-shadow: 0 0 0 1.5px var(--bg2, #111827);
+    animation: pulse-dot 2.4s ease-in-out infinite;
+}
+.btn-upd-dot[hidden] { display: none !important; }
+
+.btn-back:hover { background: rgba(255, 255, 255, .08); border-color: var(--border); color: #fff; }
+.btn-back:active { background: rgba(255, 255, 255, .12); }
+.btn-back:focus-visible { outline: 2px solid var(--blue2); outline-offset: 1px; }
+
+.tc { display: flex; align-items: center; gap: 10px }
+.status-pill {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: transform .2s;
+}
+.status-pill:hover { transform: scale(1.2) }
+
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--txt4); flex-shrink: 0 }
+.dot.on { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,.6); animation: dotPulse 2s ease-in-out infinite }
+@keyframes dotPulse {
+    0%, 100% { box-shadow: 0 0 4px rgba(34,197,94,.4) }
+    50% { box-shadow: 0 0 10px rgba(34,197,94,.8) }
+}
+
+.tr { display: flex; align-items: center; gap: 8px }
+
+/* Layout */
+.layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    flex-direction: column; /* Mobile/Sidepanel view */
+}
+
+/* Stacked (side panel) ordering: Case Info sits directly under the pinned Quick Options
+   bar, then the chat. Case Info used to render AFTER the chat, which put it at the very
+   bottom of a long conversation — the one panel an engineer opens constantly was the one
+   they had to scroll past everything to reach, and its position moved as the chat grew.
+   #qaBar lives outside .layout and above it, so this ordering reads
+   Quick Options → Case Info → chat, top to bottom, always. */
+.panel-left { order: 1; }
+.chat-wrap { order: 2; }
+.panel-right { order: 3; }
+
+/* In small view, differentiate expansion behavior */
+@media (max-width: 599px) {
+    /* Case Info: True Full-Screen (hides everything else) */
+    .layout:has(.panel-left:not(.collapsed)) .chat-wrap,
+    .layout:has(.panel-left:not(.collapsed)) .panel-right {
+        display: none !important;
+    }
+    .panel-left:not(.collapsed) {
+        flex: 1 !important;
+        height: 100% !important;
+        max-height: none !important;
+    }
+
+    /* Logs: True Full-Screen (hides everything else) */
+    .layout:has(.panel-right:not(.collapsed)) .chat-wrap,
+    .layout:has(.panel-right:not(.collapsed)) .panel-left {
+        display: none !important;
+    }
+    .panel-right:not(.collapsed) {
+        flex: 1 !important;
+        height: 100% !important;
+        max-height: none !important;
+    }
+}
+
+/* Wide View - Match SOTI_AI_Analyser.html */
+@media (min-width: 600px) {
+    .layout {
+        flex-direction: row;
+    }
+    
+    .panel-left {
+        /* THE WIDTH OF THE OPEN SIDEBAR, as one value. Opening Case Info and opening Quick
+           Options must put the panel at the SAME width — they are two sections of one panel,
+           and a list that opens at a different width from the fields above it reads as a
+           second, misaligned thing. Both take it from here.
+
+           IT IS 300px, AND THE 180px THAT USED TO BE HERE WAS DEAD. Further down this file,
+           `.panel-left, .panel-right { width: 100% }` — the mobile rule — sits AFTER this
+           block, and a media query adds no specificity, so that later declaration wins on
+           every layout: the panel renders at 100% capped by its own max-width, which is
+           300px. That is where Case Info's width actually comes from, and it is why matching
+           "180px" produced a Quick Options column visibly narrower than the fields above it.
+
+           Both routes now land on the same number, so the two agree whichever one wins. If
+           you ever scope that mobile rule to the narrow layout, this declaration takes over
+           and nothing moves — which is the point of writing it as the same value. */
+        --panel-w: 300px;
+        width: var(--panel-w); /* Matches the effective width the cascade already produces */
+        min-width: 80px;
+        max-width: 300px;
+        flex-shrink: 0;
+        resize: horizontal;
+        overflow: auto;
+        max-height: none !important;
+        transition: width .2s ease;
+        border-right: 1px solid var(--border);
+        border-top: none !important;
+        order: 0 !important;
+    }
+
+    .panel-right {
+        width: 160px; /* Slim expanded: slightly wider than collapsed */
+        min-width: 40px;
+        max-width: 250px;
+        flex-shrink: 0;
+        resize: horizontal;
+        overflow: auto;
+        max-height: none !important;
+        transition: width .2s ease;
+        border-left: 1px solid var(--border);
+        border-top: none !important;
+        order: 0 !important;
+    }
+
+    /* Collapsed state via class - 140px to keep labels readable */
+    .panel-left.collapsed,
+    .panel-right.collapsed {
+        width: 140px !important;
+        min-width: 140px !important;
+        resize: none !important;
+        overflow: hidden;
+    }
+
+    .chat-wrap {
+        flex: 1;
+        border-left: none;
+        border-right: none;
+        min-width: 300px;
+        order: 0 !important;
+    }
+}
+
+/* Panels */
+.panel-left, .panel-right {
+    background: var(--bg1);
+    display: flex;
+    flex-direction: column;
+    transition: width .2s ease;
+    width: 100%; /* Full width in mobile view */
+}
+
+.panel-left { border-top: 1px solid var(--border); border-bottom: none !important; max-height: 100%; }
+.panel-right { border-top: 1px solid var(--border); max-height: 100%; }
+
+.ph {
+    padding: 8px 12px;
+    background: var(--bg2);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+    transition: background .2s;
+}
+
+.ph:hover {
+    background: var(--bg3);
+}
+
+.ph-left {
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--txt1);
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+/* WHICH CASE THIS PANEL IS ON, beside the heading.
+   A chip rather than more heading text: "CASE INFO C01718402" reads as one long label and
+   the number is the half that changes, so it is given its own outline and the tabular
+   figures the version number uses. Quieter than the heading (it is a value, not a title) but
+   in --txt1 rather than grey, because it is the one thing on this bar anybody looks up.
+   `letter-spacing: normal` undoes .ph-left's tracking — a case number is not prose and the
+   extra half-pixel between digits makes it harder to read back over a call, not easier. */
+.ph-case {
+    flex: 0 1 auto;
+    min-width: 0;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: rgba(80, 130, 230, .14);
+    border: 1px solid rgba(80, 130, 230, .34);
+    color: var(--txt1);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: normal;
+    font-variant-numeric: tabular-nums;
+    text-transform: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* .ph-case is a flex child with its own box, so `hidden` has to be spelled out or the
+   layout rule above silently outranks the UA sheet — the same trap .stats-note documents. */
+.ph-case[hidden] { display: none !important; }
+
+.pb {
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    flex: 1;
+}
+
+/* The panel body is the scroll container, so its sections must keep their
+   natural height. .subsec sets overflow:hidden (for the rounded corners),
+   which drops its automatic minimum size to 0 — without this, flex squashes
+   an expanded section and clips the overflow instead of letting .pb scroll,
+   which hid Email Chain at the bottom of Case Details. */
+.pb > * { flex-shrink: 0; }
+
+.panel-left, .panel-right {
+    max-height: 80vh; /* Consistent height in sidepanel mode */
+}
+
+/* Salesforce Sync Row */
+.sf-sync-row {
+    padding: 10px 12px;
+    background: rgba(0, 161, 224, 0.08);
+    border-bottom: 1px solid rgba(0, 161, 224, 0.15);
+}
+
+.btn-sf {
+    width: 100%;
+    background: #00a1e0 !important;
+    color: #fff !important;
+    border: none !important;
+    padding: 8px !important;
+    font-weight: 600 !important;
+    font-size: 11px !important;
+}
+
+/* Sync from JIRA — sits under Sync from Salesforce in the same row. JIRA blue
+   rather than Salesforce cyan, so the two are not mistaken for each other. */
+.btn-jira {
+    width: 100%;
+    margin-top: 8px;
+    background: #2684ff !important;
+    color: #fff !important;
+    border: none !important;
+    padding: 8px !important;
+    font-weight: 600 !important;
+    font-size: 11px !important;
+}
+.btn-jira:hover { background: #0065ff !important; }
+
+/* THE SPLIT SYNC PILL IS GONE. `.sf-split` / `.sf-refresh` welded a ↻ onto the end of
+   "Sync from Salesforce"; refreshing is now part of every sync, so the second half had
+   become the same button twice and was removed with its markup. Nothing here styles it
+   any more — see the note on .oc-toolbar .btn-sf, which no longer has to work around it. */
+
+/* Meeting-notes AI cleanup button (sits under the Meeting Notes textarea) */
+.btn-clean-notes {
+    width: 100%;
+    margin-top: 2px;
+    background: rgba(129, 140, 248, 0.10) !important;
+    color: var(--blue2) !important;
+    border: 1px solid rgba(129, 140, 248, 0.35) !important;
+    padding: 7px !important;
+    font-weight: 600 !important;
+    font-size: 11px !important;
+}
+.btn-clean-notes:hover {
+    background: rgba(129, 140, 248, 0.22) !important;
+    color: #fff !important;
+}
+
+/* Fields */
+.fld { display: flex; flex-direction: column; gap: 4px }
+
+/* A field that carries a link (JIRA Number): the input keeps the full row and the
+   open-in-browser button sits beside it, so the value is still typed and edited
+   normally. The button is hidden by JS until the value is a real issue key. */
+.fld-row { display: flex; align-items: stretch; gap: 6px }
+.fld-row .finput { flex: 1; min-width: 0 }
+.fld-open {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    flex-shrink: 0;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--r4);
+    color: var(--blue2);
+    cursor: pointer;
+    transition: all .2s;
+}
+.fld-open:hover { background: var(--bg2); border-color: var(--blue2); color: var(--blue) }
+/* 8.5px spaced capitals in the dimmest colour on the palette was three separate things all
+   working against being read. The size and the colour both go up; the tracking comes down a
+   touch, because letter-spacing on capitals this small costs more legibility than it buys. */
+.flbl { font-size: 10px; font-weight: 700; color: #b7c7db; text-transform: uppercase; letter-spacing: .4px }
+.finput, .fsel {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--r4);
+    color: var(--txt1);
+    padding: 7px 9px;
+    font-size: 11.5px;
+    outline: none;
+    transition: all .2s;
+}
+.fsel option {
+    background: var(--bg2);
+    color: var(--txt1);
+}
+.finput:focus, .fsel:focus { border-color: rgba(99, 102, 241, .4) }
+
+.ftxt {
+    width: 100%;
+    padding: 10px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--r6);
+    color: var(--txt1);
+    font-family: inherit;
+    font-size: 11.5px;
+    resize: vertical; /* Explicitly allow vertical resizing */
+    min-height: 160px;
+    transition: border-color .2s, box-shadow .2s;
+    outline: none;
+    display: block;
+}
+
+.ftxt:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(129, 140, 248, .15);
+}
+
+/* Field Validation States */
+.finput.filled, .fsel.filled, .ftxt.filled {
+    border-color: var(--green) !important;
+    background: rgba(34, 197, 94, 0.03) !important;
+}
+.finput.empty, .fsel.empty, .ftxt.empty {
+    border-color: var(--red) !important;
+    background: rgba(239, 68, 68, 0.03) !important;
+}
+
+/* High-visibility resize handle */
+.ftxt::-webkit-resizer {
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M16 4 L16 16 L4 16 Z" fill="%23818cf8"/></svg>');
+    background-repeat: no-repeat;
+    background-position: bottom right;
+}
+
+/* Buttons */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 5px 8px;
+    border-radius: var(--r4);
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .2s;
+    border: 1px solid var(--border);
+    background: var(--bg2);
+    color: var(--txt1);
+    white-space: nowrap;
+}
+.btn:hover { background: var(--bg3); border-color: var(--border2) }
+.btn-new { background: rgba(99, 102, 241, .1); color: var(--blue2); border-color: rgba(99, 102, 241, .2) }
+.btn-jira { background: #0052cc !important; color: #fff; border: none; padding: 5px 10px; }
+.btn-analyse {
+    margin: 10px 15px;
+    background: var(--blue) !important;
+    color: #fff !important;
+    border: none !important;
+    padding: 10px !important;
+    font-weight: 700 !important;
+    font-size: 12px !important;
+    border-radius: var(--r8) !important;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+.btn-analyse:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 15px rgba(99, 102, 241, 0.4);
+}
+
+/* Dropdown Menu */
+.more-menu { position: relative; display: inline-block; }
+.dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 8px;
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: var(--r8);
+    box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    z-index: 1000;
+    min-width: 160px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.drop-item {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 10px 12px;
+    background: none;
+    border: none;
+    border-radius: var(--r6);
+    color: var(--txt1);
+    font-size: 11.5px;
+    font-weight: 500;
+    cursor: pointer;
+    text-align: left;
+    transition: background .2s;
+}
+.drop-item:hover { background: rgba(255,255,255,0.05); }
+.drop-item svg { opacity: 0.7; }
+
+/* Chat */
+.chat-wrap {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg0);
+}
+
+.chat-msgs {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.msg { display: flex; gap: 12px; max-width: 95% }
+.msg.user { align-self: flex-end; flex-direction: row-reverse }
+.mb {
+    padding: 10px 14px;
+    border-radius: 10px;
+    font-size: 12.5px;
+    line-height: 1.6;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    max-width: 100%;
+}
+.msg.user .mb { background: var(--blue); color: #fff }
+.msg.assistant .mb { background: var(--bg2); border: 1px solid var(--border); color: var(--txt1) }
+
+.welcome {
+    text-align: center;
+    padding: 60px 20px;
+    max-width: 420px;
+    margin: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.w-hex-wrap { font-size: 32px; color: var(--txt3); margin-bottom: 24px; opacity: 0.6; }
+.w-title { font-size: 20px; font-weight: 700; color: #fff; margin-bottom: 12px; letter-spacing: 0.5px; }
+.w-sub { font-size: 13px; color: var(--txt2); line-height: 1.6; margin-bottom: 40px; }
+
+.w-features {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.w-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 12.5px;
+    color: var(--txt1);
+    text-align: left;
+    transition: all 0.2s ease;
+}
+
+.w-card {
+    cursor: pointer;
+    user-select: none;
+}
+
+.w-card:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: var(--blue);
+    transform: translateY(-1px);
+}
+
+.w-card:focus-visible {
+    outline: 1px solid var(--blue);
+    outline-offset: 1px;
+}
+
+.w-card:active {
+    transform: translateY(0);
+}
+
+.w-icon { font-size: 18px; flex-shrink: 0; }
+
+/* "How to get started" steps on the welcome screen */
+.w-howto {
+    width: 100%;
+    text-align: left;
+    background: rgba(0, 161, 224, 0.06);
+    border: 1px solid rgba(0, 161, 224, 0.22);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 24px;
+}
+/* Title and dismiss on one row, so the × sits with the thing it closes rather than
+   floating in the corner of a box whose heading is elsewhere. */
+.w-howto-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+.w-howto-title {
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--blue2);
+}
+.w-howto-dismiss {
+    background: none;
+    border: none;
+    color: var(--txt2);
+    font-size: 16px;
+    line-height: 1;
+    padding: 0 2px;
+    cursor: pointer;
+    opacity: .65;
+    transition: opacity .15s, color .15s;
+}
+.w-howto-dismiss:hover { opacity: 1; color: var(--txt1); }
+
+/* THE WAY BACK, once the box has been shown its one time. Deliberately quiet — it is a
+   footnote on the welcome screen, not a call to action, and it must not read like a
+   button people are supposed to press. */
+.w-howto-link {
+    background: none;
+    border: none;
+    color: var(--txt2);
+    font-family: var(--font);
+    font-size: 11px;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+    padding: 2px 4px;
+    margin-bottom: 24px;
+    opacity: .75;
+    transition: opacity .15s, color .15s;
+}
+.w-howto-link:hover { opacity: 1; color: var(--blue2); }
+/* Pager for the two "How to get started" pages. */
+.w-howto-pager {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 12px;
+}
+.w-howto-nav {
+    width: 22px;
+    height: 22px;
+    line-height: 1;
+    font-size: 15px;
+    color: var(--txt2, #9aa4b2);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: color .15s ease, border-color .15s ease;
+}
+.w-howto-nav:hover { color: #fff; border-color: var(--blue2); }
+.w-howto-dots { display: flex; align-items: center; gap: 6px; }
+.w-howto-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--border);
+    transition: background .15s ease;
+}
+.w-howto-dot.is-on { background: var(--blue2); }
+
+.w-step {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--txt1);
+    padding: 4px 0;
+}
+.w-step-num {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--blue);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* QUICK OPTIONS — in the left sidebar, under the Case Info header.
+   The .qa-bar rules that used to live here styled a pinned strip under the case tabs that
+   the panel relocated into once a conversation started. There is no strip and no relocation
+   any more, so they are gone rather than left as rules matching nothing. */
+.qa-panel {
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg1);
+}
+.qa-ph {
+    padding: 8px 12px;
+    background: var(--bg2);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+    transition: background .2s;
+}
+.qa-ph:hover { background: var(--bg3); }
+.qa-ph-left {
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--txt1);
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.qa-ph-collapse { font-size: 10px; color: var(--txt2); }
+.qa-pb {
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 45vh;
+    overflow-y: auto;
+}
+
+/* THE LIST NEEDS ROOM ON A WIDE LAYOUT — AND IT TAKES IT BY OPENING THE PANEL.
+ *
+ * Below 600px — the shape the Chrome side panel actually is — the sidebar is full width and
+ * the list sits in flow underneath the header, which is fine and needs nothing. On a wide
+ * layout (the pop-out window, the standalone page) that same column is 140px collapsed, and
+ * "Problem & Resolution Summary (Internal)" in 140px is four wrapped lines.
+ *
+ * IT WAS AN OVERLAY, AND THAT WAS THE WRONG ANSWER. Anchoring the list to the panel and
+ * letting it hang out over the chat gave it the width it needed, but it read as the sidebar
+ * spilling out of the frame: a floating box with a hard edge, sitting on top of half-covered
+ * paragraphs. Sizing it better did not fix that — the problem was that it was floating at all.
+ *
+ * SO IT OPENS THE PANEL, EXACTLY AS CASE INFO DOES — and to exactly the same width. That took
+ * three goes, and the first two were both guesses at a number the cascade was deciding
+ * somewhere else: a clamp up to 340px, which stuck out past the fields above it, and then the
+ * stylesheet's own 180px, which sat visibly narrower than them. Case Info is neither — it is
+ * 300px, because the mobile `width: 100%` rule further down this file outranks the wide-layout
+ * declaration and the panel's own max-width caps the result. See the note on --panel-w.
+ *
+ * Both rules take --panel-w now, so they cannot be different numbers, and a long label wraps
+ * rather than widening the column — which is what it does in the side panel, where this shape
+ * comes from.
+ *
+ * Only the COLLAPSED case needs a rule at all: a panel that is already open is already at that
+ * width, dragged or not, and must be left exactly where the engineer put it. The width
+ * transition is already on .panel-left, so it slides. One scrollbar, the panel's own — hence
+ * max-height: none on the list, which would otherwise scroll inside a scrolling panel.
+ */
+@media (min-width: 600px) {
+    .panel-left.collapsed.qa-open {
+        width: var(--panel-w) !important;
+        min-width: 80px !important;
+        max-width: 300px !important;
+        /* .collapsed clips at 140px; the panel has to be able to show and scroll the list. */
+        overflow-y: auto !important;
+        overflow-x: hidden;
+        /* Still off: a drag handle on a panel that snaps back to 140px when the list closes
+           is a control that lies about what it does. */
+        resize: none !important;
+    }
+    .panel-left.qa-open .qa-pb { max-height: none; }
+}
+.qa-drop-item {
+    text-align: left;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    color: var(--txt1);
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: var(--font);
+    cursor: pointer;
+    transition: color .15s, border-color .15s, background .15s;
+}
+.qa-drop-item:hover {
+    color: var(--txt1);
+    border-color: var(--blue);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+/* THE LENGTH CHIPS SIT ON THE BUTTON THEY GOVERN.
+ *
+ * A column, not a row: the panel is 140px wide collapsed on a wide layout and the overlay it
+ * opens into is 260px, so "Case Summary + Next Steps" plus two chips beside it would wrap the
+ * label to three lines. Underneath, the two chips read as a property OF the action directly
+ * above them — which is exactly what they are — and cost one short line.
+ *
+ * The row is the flex child now, so the button inside it has to be told to fill it. */
+.qa-item-row { display: flex; flex-direction: column; gap: 4px; }
+.qa-item-row > .qa-drop-item { width: 100%; }
+
+/* ============================================================
+   THE EMAIL ACTION AND ITS +
+   ============================================================
+   `.qa-sub` used to live here — the elbow-connected "Draft with a meeting request"
+   sub-button. It is gone with the two buttons it drew, because a meeting request and an
+   account-team Cc are properties of one email rather than two more errands; see the note in
+   the markup. What replaced it is a + on the row and a list of ticks under it.
+
+   THE + IS PART OF THE BUTTON, NOT A SECOND BUTTON. It shares the row, matches its height
+   exactly and carries the same border, so the two read as one control with a handle on the
+   end — the shape a split button has everywhere else. Square and narrow so the label above
+   keeps every pixel it can: this column is 260px at its widest and "Draft an email to the
+   customer" only just fits. */
+.qa-email-row { display: flex; align-items: stretch; gap: 4px; }
+.qa-email-row > .qa-drop-item { flex: 1 1 auto; min-width: 0; }
+.qa-email-plus {
+    flex: 0 0 auto;
+    width: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: rgba(255, 255, 255, .03);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--txt2);
+    cursor: pointer;
+    transition: color .15s, border-color .15s, background .15s;
+}
+.qa-email-plus:hover {
+    color: #fff;
+    border-color: var(--blue);
+    background: rgba(99, 102, 241, .20);
+}
+.qa-email-plus:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+/* Open, the + turns into an × without a second glyph to keep in step — the rotation says
+   "this closes what it opened" and cannot get out of sync with the panel's state.
+   THE GLYPH TURNS, NOT THE BUTTON. Rotating the button rotated its rounded rectangle too,
+   which put a diamond sticking out of the row — a shape that reads as a rendering fault
+   rather than as a control. The svg is the only thing with an orientation worth changing. */
+.qa-email-plus svg { transition: transform .15s ease; }
+.qa-email-plus[aria-expanded="true"] {
+    color: #fff;
+    border-color: var(--blue);
+    background: rgba(99, 102, 241, .28);
+}
+.qa-email-plus[aria-expanded="true"] svg { transform: rotate(45deg); }
+/* And the row says so too, so the ticks below are visibly attached to THIS action rather
+   than floating in the column between two of them. */
+.qa-email-row:has(.qa-email-plus[aria-expanded="true"]) > .qa-drop-item { border-color: var(--blue); }
+
+/* WHAT WILL HAPPEN, IN WORDS, under the button that will do it.
+   The whole safety of remembering a choice: the state is on screen at all times instead of
+   behind the + that set it. Reads as a caption rather than as a control — no border, no
+   fill, and small — because it is not something to press. */
+.qa-email-sum {
+    padding: 0 3px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.45;
+    color: var(--blue2);
+    letter-spacing: .1px;
+}
+.qa-email-sum[hidden] { display: none !important; }
+
+/* The ticks. Same box as the + chooser at the foot of this list, deliberately — they are the
+   same kind of thing (a short list of options beside what they configure) and a second visual
+   language for it would make the panel look assembled rather than designed. */
+.qa-email-opts {
+    margin-top: 2px;
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.qa-email-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--txt2);
+    text-transform: uppercase;
+    letter-spacing: .4px;
+}
+.qa-email-body { padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+/* A LABELLED GROUP INSIDE THE LIST. "Copy in" and "Also" are two different questions —
+   who receives it, and what it asks for — and running six ticks together with no break
+   makes "Ask for a meeting" read as a fourth recipient. */
+.qa-email-group {
+    padding: 6px 7px 2px;
+    font-size: 9.5px;
+    font-weight: 700;
+    color: var(--txt3);
+    text-transform: uppercase;
+    letter-spacing: .5px;
+}
+.qa-email-group:first-child { padding-top: 2px; }
+.qa-email-opt {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 7px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.qa-email-opt:hover { background: rgba(255, 255, 255, .05); }
+.qa-email-opt input { accent-color: var(--blue); cursor: pointer; flex: 0 0 auto; margin-top: 2px; }
+.qa-email-opt-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.qa-email-opt-t { font-size: 11.5px; font-weight: 600; color: var(--txt1); }
+/* One line of what the tick actually means. These options put a colleague's name on an email
+   to a customer, so "TAM" on its own is not enough to choose by — it has to say that the
+   backup comes with it. */
+.qa-email-opt-s { font-size: 10px; line-height: 1.4; color: var(--txt3); }
+/* STACKED, not a row. Beside the button the sentence gets about 150px of a 260px panel and
+   wraps to four cramped lines against a 24px control — which reads as a caption that has
+   been squeezed in beside something rather than as the thing you are meant to read before
+   pressing. On its own line it is one short paragraph, and the button keeps the bottom-right
+   corner every confirming button in this panel sits in. */
+.qa-email-foot {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 7px;
+    padding: 8px 10px;
+    border-top: 1px solid var(--border);
+}
+/* THE ONE CONSEQUENCE WORTH WARNING ABOUT, and it is only ever shown when it applies: a Cc
+   makes this write into Salesforce's own composer, which the plain draft does not do. */
+.qa-email-hint { font-size: 9.5px; line-height: 1.45; color: var(--txt3); min-width: 0; }
+.qa-email-go {
+    flex: 0 0 auto;
+    align-self: flex-end;
+    height: 24px;
+    padding: 0 12px;
+    border-radius: var(--r6);
+    background: var(--blue);
+    border: 1px solid var(--blue);
+    color: #fff;
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: filter .15s;
+}
+.qa-email-go:hover { filter: brightness(1.15); }
+.qa-email-go:focus-visible { outline: 2px solid var(--blue2); outline-offset: 2px; }
+.qa-len {
+    display: flex;
+    gap: 4px;
+    padding: 0 2px 2px;
+}
+.qa-len-opt {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 20px;
+    padding: 0 6px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--txt3);
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    transition: background .15s, border-color .15s, color .15s;
+}
+.qa-len-opt:hover { color: var(--txt1); border-color: var(--blue); }
+.qa-len-opt:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+/* The chosen one is filled in, not merely brighter. This choice survives between sessions, so
+   coming back to the panel it must be readable at a glance which length the next summary will
+   be — a one-shade difference is not an answer to that question. */
+.qa-len-opt.is-on {
+    background: rgba(129, 140, 248, .18);
+    border-color: var(--blue);
+    color: #fff;
+}
+
+/* ============================================================
+   THE ACTIONS THIS ENGINEER ADDED
+   ============================================================
+   A plain container, laid out exactly like the fixed buttons
+   above it — the whole point is that a chosen action is
+   indistinguishable from a permanent one once it is on the
+   panel. It inherits .qa-pb's gap, so it needs its own only
+   because it is itself a flex child holding several buttons.
+   Nothing is drawn when it is empty, which is a fresh install.
+   ============================================================ */
+.qa-extra-items { display: flex; flex-direction: column; gap: 6px; }
+.qa-extra-items:empty { display: none; }
+
+/* THE × THAT TAKES ONE BACK OFF.
+   Adding an action is one click, so removing it is one click, on the thing being removed —
+   the same × the saved list-view chips and the queue rows carry. Unticking it in the +
+   chooser still works and always did; this is so that the reverse of a one-click action is
+   not a two-step hunt.
+
+   The ROW is the flex child now, so the action inside it has to be told to fill what is left
+   of it — same adjustment .qa-item-row needed for the length chips. */
+.qa-extra-row { display: flex; align-items: stretch; gap: 4px; }
+.qa-extra-row > .qa-drop-item { flex: 1 1 auto; min-width: 0; }
+.qa-extra-del {
+    flex: 0 0 auto;
+    width: 26px;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: var(--txt4);
+    font-family: var(--font);
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    transition: color .15s, background .15s, border-color .15s;
+}
+/* Quiet until the pointer is on the row it belongs to. It sits directly beside a control that
+   starts a several-minute generation, and a permanently lit × next to those reads as "one of
+   these removes things" — the mis-click that costs something is the one onto the action, so
+   the × stays out of the way until you are actually going for it. */
+.qa-extra-row:hover .qa-extra-del { color: var(--txt3); }
+.qa-extra-del:hover { color: #ff9a8b; background: rgba(239, 68, 68, .14); border-color: rgba(239, 68, 68, .35); }
+.qa-extra-del:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; color: var(--txt1); }
+
+/* ============================================================
+   THE + THAT ADDS THEM
+   ============================================================
+   Deliberately not a .qa-drop-item. Everything above it DOES
+   something to the case; this one changes what the panel holds,
+   and giving it the same weight would put a settings control in
+   a row of actions and have people press it looking for one.
+   So: no fill, no border until hover, and the text at the size
+   of a caption rather than a button label.
+   ============================================================ */
+.qa-add-row { position: relative; }
+.qa-add-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: transparent;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    color: var(--txt3);
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: color .15s, border-color .15s, background .15s;
+}
+.qa-add-btn:hover { color: var(--txt1); border-color: var(--blue); background: rgba(255, 255, 255, .04); }
+.qa-add-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.qa-add-plus { font-size: 14px; line-height: 1; font-weight: 700; }
+
+/* HOW MANY MORE THERE ARE.
+   The + is deliberately the quietest control in the panel — it changes what the panel HOLDS
+   rather than doing anything to the case, so it must not compete with the actions above it.
+   That quiet is why it read as a settings screen nobody had a reason to open. A number is the
+   cheapest possible fix: it does not raise the button's voice, it tells you there is something
+   behind it. Pushed to the right so the button still reads "+ Add actions" first. */
+.qa-add-n {
+    margin-left: auto;
+    min-width: 17px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: rgba(80, 130, 230, .18);
+    border: 1px solid rgba(80, 130, 230, .42);
+    color: #a7c7ff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 15px;
+    text-align: center;
+}
+.qa-add-btn:hover .qa-add-n { background: rgba(80, 130, 230, .30); color: #fff; }
+
+/* The chooser itself. IN FLOW, not an overlay — and that is the second attempt.
+   An overlay above the + would have been nicer (it would leave the actions it configures
+   visible while you tick), but .qa-pb is scroll-capped at 45vh with `overflow-y: auto` in the
+   stacked layout (the wide one lets the panel do the scrolling instead), and
+   an absolutely positioned child of a scrolling box is CLIPPED by it. Opening upward from a
+   control at the bottom of that box is precisely the case that gets cut off, so the prettier
+   version would simply not have been readable. In flow it makes the panel scroll, which is
+   what a scrolling panel is for, and the list is four items. */
+.qa-add-panel {
+    margin-top: 6px;
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.qa-add-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--txt2);
+    text-transform: uppercase;
+    letter-spacing: .4px;
+}
+.qa-add-close {
+    background: none;
+    border: 0;
+    color: var(--txt3);
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 2px;
+}
+.qa-add-close:hover { color: var(--txt1); }
+.qa-add-body { padding: 6px; display: flex; flex-direction: column; gap: 2px; max-height: 40vh; overflow-y: auto; }
+.qa-add-opt {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 7px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    color: var(--txt1);
+    cursor: pointer;
+}
+.qa-add-opt:hover { background: rgba(255, 255, 255, .05); }
+.qa-add-opt input { accent-color: var(--blue); cursor: pointer; flex: 0 0 auto; }
+.qa-add-opt-t { flex: 1 1 auto; min-width: 0; }
+
+/* Log UI Restoration */
+.dz-sub { font-size: 10px; color: var(--txt2); margin-top: 5px; letter-spacing: 1px; }
+.log-guide { margin-top: 20px; padding: 0 15px; }
+.guide-title { font-size: 11px; font-weight: bold; color: var(--txt2); text-transform: uppercase; margin-bottom: 12px; letter-spacing: 0.5px; }
+.guide-grid { display: grid; gap: 8px; }
+.guide-item { font-size: 11.5px; color: #7f8c8d; display: flex; align-items: center; gap: 12px; }
+
+.badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 900;
+    min-width: 38px;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border: 1px solid rgba(255,255,255,0.15);
+    background: rgba(0,0,0,0.4);
+}
+
+.badge.ms { color: #5c7cff; border-color: #3b4c8a; }
+.badge.ds { color: #d63aff; border-color: #6a2d7d; }
+.badge.dse { color: #00ff8c; border-color: #1a5c3e; }
+.badge.agt { color: #ffd32a; border-color: #7d6a1a; }
+.badge.ddr { color: #ff3e3e; border-color: #7d2a2a; }
+.badge.enr { color: #3498db; border-color: #2c3e50; }
+.badge.har { color: #f39c12; border-color: #e67e22; }
+.badge.evt { color: #bdc3c7; border-color: #34495e; }
+
+.no-files { text-align: center; padding: 30px; color: var(--txt2); font-size: 11px; font-style: italic; }
+.log-list { padding: 15px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; overflow-x: hidden; }
+.log-item {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 11.5px;
+    min-width: 0;
+}
+.log-icon { font-size: 14px; opacity: 0.7; }
+.log-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--txt1); min-width: 0; font-weight: 700; }
+.log-del {
+    background: none;
+    border: none;
+    color: var(--txt2);
+    font-size: 18px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0 5px;
+    flex-shrink: 0;
+}
+.log-del:hover { color: var(--red); }
+
+/* ============================================================
+   THE ATTACHMENT HISTORY
+   ============================================================
+   Quieter than the list above it, and that difference is the
+   whole design: the list is what Analyse Now will read, this is
+   the record of what has been here. Same width, smaller type, a
+   rule between them — so it reads as a footnote to the section
+   rather than as a second list of things you can act on.
+   ============================================================ */
+.att-hist {
+    margin-top: 14px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+}
+.att-hist-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.att-hist-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .5px;
+    text-transform: uppercase;
+    color: var(--txt2);
+}
+.att-hist-zip {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--txt2);
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color .15s, border-color .15s;
+}
+.att-hist-zip:hover:not(:disabled) { color: var(--txt1); border-color: var(--blue); }
+.att-hist-zip:disabled { opacity: .5; cursor: default; }
+
+.att-hist-list { display: flex; flex-direction: column; gap: 2px; max-height: 190px; overflow-y: auto; }
+.att-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 3px 4px;
+    border-radius: 5px;
+    font-size: 10.5px;
+    color: var(--txt1);
+    min-width: 0;
+}
+.att-row:hover { background: rgba(255, 255, 255, .04); }
+.att-icon { flex: 0 0 auto; opacity: .7; font-size: 11px; }
+.att-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The date is the point of this list, so it never gives way — the NAME is what ellipsises
+   when the panel is narrow, because a truncated name is still recognisable and a truncated
+   date is not a date. */
+.att-when { flex: 0 0 auto; color: var(--txt3); font-variant-numeric: tabular-nums; }
+/* No longer attached. Dimmed rather than hidden: the row is a record, and it has to be
+   obvious at a glance that this file is not one Analyse Now will read. */
+.att-row-gone { opacity: .55; }
+.att-row-gone .att-name { text-decoration: line-through; text-decoration-thickness: 1px; }
+.att-gone-tag {
+    flex: 0 0 auto;
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: .3px;
+    text-transform: uppercase;
+    color: var(--txt3);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 0 5px;
+}
+
+/* ============================================================
+   PICKING THE CASE'S OWN ATTACHMENTS
+   ============================================================
+   Rows rather than a plain checkbox list: each one carries who
+   sent the file and when, because that is the question actually
+   being answered — "the log they sent this morning", not
+   "logs.zip", which is what every one of them is called.
+   ============================================================ */
+.pick-tools {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 10px 0 6px;
+}
+.pick-tool {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--txt2);
+    font-family: var(--font);
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 3px 9px;
+    cursor: pointer;
+}
+.pick-tool:hover { color: var(--txt1); border-color: var(--blue); }
+.pick-count { margin-left: auto; font-size: 10.5px; color: var(--txt3); }
+
+.pick-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 46vh;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px;
+}
+.pick-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    padding: 7px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    min-width: 0;
+}
+.pick-row:hover { background: rgba(255, 255, 255, .05); }
+.pick-row input { accent-color: var(--blue); cursor: pointer; margin-top: 2px; flex: 0 0 auto; }
+.pick-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.pick-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--txt1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.pick-meta { font-size: 10.5px; color: var(--txt3); }
+
+/* Chat Input Area */
+.chat-foot {
+    padding: 12px;
+    background: var(--bg1);
+    border-top: 1px solid var(--border);
+}
+
+/* The jump back up to Meeting Notes. Right-aligned so it lands directly over the send
+   button, and quiet by default — it is a shortcut, not a call to action, and it sits in
+   the one strip of the UI that must never compete with the message box. */
+.notes-jump-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 6px;
+}
+
+/* THE ATTACHMENT COUNT, in the same row as the jump arrow so the composer keeps one strip
+   of chrome instead of growing a second one. It is the LEFT half of that row:
+   `margin-right:auto` pushes the arrow to the right edge and holds it there whether this
+   is showing or not, which is why the row itself still says justify-content:flex-end.
+
+   `min-width:0` is what lets the file names ellipsis rather than shoving the arrow off the
+   end of a 400px side panel — a flex item's automatic minimum size is its content, so
+   without it one long ZIP name wins the argument and the row overflows. */
+.attach-strip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-right: auto;
+    min-width: 0;
+    max-width: calc(100% - 34px);
+    padding: 3px 9px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--txt2);
+    font-family: inherit;
+    font-size: 10.5px;
+    line-height: 1.5;
+    text-align: left;
+    cursor: pointer;
+    transition: color .2s, border-color .2s, background .2s;
+}
+.attach-strip:hover {
+    background: var(--bg2);
+    border-color: var(--blue);
+    color: var(--txt1);
+}
+.attach-strip:focus-visible {
+    outline: 2px solid var(--blue);
+    outline-offset: 2px;
+}
+.attach-strip svg { flex-shrink: 0; opacity: .7; }
+
+/* The count never truncates — it is the whole point of the chip. The names are the part
+   that gives way when the row runs out of room; the full list is in the tooltip. */
+.attach-strip-count { flex-shrink: 0; font-weight: 700; color: var(--txt1); white-space: nowrap; }
+.attach-strip-names {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* A 24px circle holding the arrow and nothing else. Fixed width AND height rather than
+   padding around the glyph — padding on an inline-flex button rounds differently in each
+   direction and the circle comes out an egg. */
+.notes-jump {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    color: var(--txt2);
+    cursor: pointer;
+    transition: color .2s, border-color .2s, background .2s;
+}
+.notes-jump:hover {
+    background: var(--bg2);
+    border-color: var(--blue);
+    color: var(--txt1);
+}
+.notes-jump:focus-visible {
+    outline: 2px solid var(--blue);
+    outline-offset: 2px;
+}
+
+.input-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--r8);
+    padding: 6px 10px;
+}
+
+.cinput {
+    flex: 1;
+    background: none;
+    border: none;
+    color: var(--txt1);
+    font-size: 12.5px;
+    padding: 6px 0;
+    resize: vertical; /* Allow manual resizing */
+    min-height: 32px;
+    max-height: 50vh; /* Allow it to take up to half the screen */
+    outline: none;
+    overflow-y: auto;
+}
+
+.attach-btn, .send-btn {
+    background: none;
+    border: none;
+    color: var(--txt3);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 4px;
+    transition: color .2s;
+}
+.send-btn { color: var(--blue); font-size: 18px }
+.attach-btn:hover { color: var(--txt1) }
+
+/* Reasoning Blocks */
+.reasoning-block {
+    background: rgba(99, 102, 241, 0.03);
+    border-left: 2px solid var(--blue);
+    padding: 10px 12px;
+    margin: 8px 0;
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--txt3);
+    font-style: italic;
+}
+
+.reasoning-header {
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--blue);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.thinking-dot {
+    width: 5px;
+    height: 5px;
+    background: var(--blue);
+    border-radius: 50%;
+    animation: pulse-dot 1.5s infinite;
+}
+
+/* Drag & Drop Animations */
+@keyframes pulse-drag {
+    0% { background: rgba(99, 102, 241, 0.08); box-shadow: inset 0 0 20px rgba(99, 102, 241, 0.1); }
+    50% { background: rgba(99, 102, 241, 0.20); box-shadow: inset 0 0 60px rgba(99, 102, 241, 0.3); }
+    100% { background: rgba(99, 102, 241, 0.08); box-shadow: inset 0 0 20px rgba(99, 102, 241, 0.1); }
+}
+
+.drag-active {
+    background: rgba(99, 102, 241, 0.15) !important;
+    outline: 3px dashed var(--blue) !important;
+    outline-offset: -15px;
+    animation: pulse-drag 0.7s infinite ease-in-out;
+    transform: scale(0.97);
+    transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    z-index: 1000;
+    position: relative;
+}
+
+.drag-active * {
+    pointer-events: none !important;
+}
+
+@keyframes diagnostic-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
+    70% { box-shadow: 0 0 0 10px rgba(99, 102, 241, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+}
+
+.drag-active.attach-btn {
+    animation: diagnostic-pulse 1s infinite;
+    background: var(--bg3) !important;
+    border-radius: 50%;
+}
+
+@keyframes pulse-dot {
+    0% { opacity: 0.3 }
+    50% { opacity: 1 }
+    100% { opacity: 0.3 }
+}
+
+/* Modals & Toasts */
+.backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+.modal {
+    background: var(--bg1);
+    border: 1px solid var(--border2);
+    border-radius: 12px;
+    padding: 20px;
+    width: 95%;
+    max-width: 600px;
+    max-height: 95vh;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    position: relative;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+}
+.toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    padding: 8px 16px;
+    border-radius: var(--r6);
+    font-size: 12px;
+    transition: all .3s;
+    z-index: 2000;
+    opacity: 0;
+}
+.toast.show { transform: translateX(-50%) translateY(0); opacity: 1 }
+.toast.s { border-color: var(--green); color: var(--green) }
+.toast.e { border-color: var(--red); color: var(--red) }
+/* 'w' has been passed by the code for several builds with nothing to match it, so every
+   warning rendered identically to an ordinary notice — including the one saying the case
+   was shortened before the model saw it, which is precisely the message that must not blend
+   in. 'i' is its quieter counterpart: work is happening, nothing is wrong. */
+.toast.w { border-color: var(--warn); color: var(--warn) }
+.toast.i { border-color: var(--blue2); color: var(--blue2) }
+
+.m-jira {
+    max-width: 900px;
+    height: 90vh;
+}
+.jira-textarea {
+    width: 100%;
+    flex: 1;
+    background: var(--bg0);
+    color: var(--txt1);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    resize: none;
+    margin-bottom: 15px;
+}
+/* "Kept on <date>" — an amber note rather than a neutral one, because its whole job is to
+   stop a stored draft being read as something the AI just wrote about the case as it is now. */
+.jira-kept-note {
+    font-size: 11px;
+    color: var(--amber, #d9a441);
+    background: rgba(217, 164, 65, .10);
+    border: 1px solid rgba(217, 164, 65, .28);
+    border-radius: 6px;
+    padding: 7px 10px;
+    margin-bottom: 10px;
+}
+/* Progress Indicator */
+.prog-wrap {
+    padding: 12px 16px;
+    background: var(--bg1);
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    animation: slideUp 0.3s ease-out;
+}
+
+/* Deliberately quiet: cancelling is an escape hatch, not the expected action, so it must be
+   findable without competing with the progress it sits under. Turns red only on hover, when
+   the engineer has already decided. */
+.prog-cancel {
+    align-self: flex-end;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--txt2, #9aa4b2);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.prog-cancel:hover {
+    color: #fff;
+    background: rgba(220, 60, 60, .18);
+    border-color: rgba(220, 60, 60, .55);
+}
+
+.prog-lbl {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--blue2);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.prog-lbl::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    background: var(--blue);
+    border-radius: 50%;
+    display: inline-block;
+    animation: pulse-dot 1.5s infinite;
+}
+
+.prog-bar {
+    height: 4px;
+    background: var(--bg3);
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+}
+
+.prog-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--blue), var(--blue2));
+    /* THIS BAR IS ALWAYS DETERMINATE NOW.
+       It used to rest at width 30% with a `progress-slide` shuttle animating transform, and
+       fall back to that whenever a phase had no milestones to count — which is how a
+       multi-minute answer ended up under a segment sliding back and forth with no figure on
+       it. There is a clock behind every phase now (createSmoothProgress), so the resting
+       state is an empty fill waiting for a percentage. The keyframes went with it.
+       Transitioning width makes each step glide rather than jump; the JS suppresses the
+       transition for the one write that goes backwards, a phase reset to 0%. */
+    width: 0;
+    border-radius: 2px;
+    position: absolute;
+    left: 0;
+    transform: none;
+    transition: width .35s ease;
+}
+
+@keyframes slideUp {
+    from { transform: translateY(10px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+/* ---- JIRA generation modal: determinate (real) progress bar ---- */
+.jira-prog-pct {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--blue2);
+    margin: 8px 0 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.jira-prog-bar {
+    height: 8px;
+    background: var(--bg3);
+    border-radius: 999px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: inset 0 0 0 1px rgba(129, 140, 248, 0.10);
+}
+
+.jira-prog-fill {
+    position: relative;
+    height: 100%;
+    width: 0%;
+    border-radius: 999px;
+    /* Purple (indigo) fill with a static gradient. The gradient no longer scrolls: a shifting
+       background read as the bar sliding backwards (like it was reverting/cancelling), so the
+       only ambient motion left is the glow pulse below and the forward sheen sweep. */
+    background: linear-gradient(90deg, #4f46e5 0%, #6366f1 40%, #818cf8 70%, #a5b4fc 100%);
+    /* Width is eased frame-by-frame in JS (JiraProgress), so no CSS width transition here — a
+       transition on top would only smear the rapid per-frame updates. */
+    animation: jira-glow-pulse 1.9s ease-in-out infinite;
+    will-change: width, box-shadow;
+    overflow: hidden;
+}
+
+/* A soft light sweeps across the filled portion — reads as an active "loading" shimmer even
+   while the bar is momentarily holding at a real milestone (e.g. during prompt evaluation). */
+.jira-prog-fill::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.55) 50%, transparent 80%);
+    transform: translateX(-120%);
+    animation: jira-prog-sheen 1.7s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes jira-glow-pulse {
+    0%, 100% { box-shadow: 0 0 5px 0 rgba(129, 140, 248, 0.45), 0 0 2px rgba(99, 102, 241, 0.7); }
+    50%      { box-shadow: 0 0 14px 2px rgba(129, 140, 248, 0.9), 0 0 8px rgba(99, 102, 241, 0.85); }
+}
+
+@keyframes jira-prog-sheen {
+    0%        { transform: translateX(-120%); }
+    55%, 100% { transform: translateX(120%); }
+}
+
+/* Respect users who prefer less motion: keep the bar (and a soft static glow) but drop the loops. */
+@media (prefers-reduced-motion: reduce) {
+    .jira-prog-fill {
+        animation: none;
+        box-shadow: 0 0 8px 1px rgba(129, 140, 248, 0.7);
+    }
+    .jira-prog-fill::after { animation: none; opacity: 0; }
+}
+
+.jira-prog-stage {
+    margin-top: 12px;
+    font-size: 11px;
+    color: var(--txt2);
+    min-height: 15px;
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ---- Local AI Toggle Switch ---- */
+.ai-toggle {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.ai-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute;
+}
+
+.ai-slider {
+    position: absolute;
+    inset: 0;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    border-radius: 24px;
+    transition: all 0.25s ease;
+}
+
+.ai-slider::before {
+    content: '';
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    left: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: var(--txt2);
+    border-radius: 50%;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+}
+
+.ai-toggle input:checked + .ai-slider {
+    background: var(--blue);
+    border-color: var(--blue);
+    box-shadow: 0 0 10px rgba(99, 102, 241, 0.35);
+}
+
+.ai-toggle input:checked + .ai-slider::before {
+    transform: translateX(20px) translateY(-50%);
+    background: #fff;
+}
+
+/* ---- Settings Tab Active State ---- */
+.settings-tab {
+    font-family: var(--font);
+    transition: color 0.2s, border-color 0.2s;
+}
+
+.settings-tab:hover {
+    color: var(--txt1) !important;
+}
+
+.settings-tab.active {
+    border-bottom-color: var(--blue) !important;
+    color: var(--blue) !important;
+}
+
+/* Image Preview Strip */
+.img-preview-strip {
+    display: flex;
+    gap: 8px;
+    padding: 8px 10px 4px;
+    overflow-x: auto;
+    flex-wrap: wrap;
+}
+
+.img-thumb {
+    width: 56px;
+    height: 56px;
+    border-radius: 6px;
+    /* A light ground under the picture. A screenshot with transparency used to composite
+       against whatever was behind the tile — the panel's near-black — which reads as a broken
+       image even when the file is perfectly good. */
+    background: #f2f5f9;
+    border: 1px solid var(--border2);
+    position: relative;
+    flex-shrink: 0;
+    cursor: pointer;
+    overflow: hidden;
+    transition: transform 0.15s;
+}
+
+/* The picture itself is an element now, not a background — see renderImgs. */
+.img-thumb-pic {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    border-radius: 5px;
+}
+
+/* A file that is not a decodable image says so, instead of showing as a dark square. */
+.img-thumb-broken {
+    background: rgba(239, 68, 68, .12);
+    border-color: rgba(239, 68, 68, .45);
+}
+.img-thumb-broken::after {
+    content: '⚠';
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    color: #ff9a8b;
+}
+
+.img-thumb:hover { transform: scale(1.05); }
+
+/* ============================================================
+   THE SCREENSHOT VIEWER — the tile at full size, with its OCR
+   ============================================================ */
+.img-view-back {
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    background: rgba(4, 8, 14, .78);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+    backdrop-filter: blur(2px);
+}
+.img-view-box {
+    display: flex;
+    flex-direction: column;
+    max-width: 100%;
+    max-height: 100%;
+    width: 100%;
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: 10px;
+    overflow: auto;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, .55);
+}
+.img-view-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--border);
+}
+.img-view-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: #eef3fa;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.img-view-close {
+    flex: 0 0 auto;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, .05);
+    color: #dfe7f2;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+}
+.img-view-close:hover { background: rgba(239, 68, 68, .18); border-color: rgba(239, 68, 68, .5); }
+.img-view-pic {
+    display: block;
+    max-width: 100%;
+    /* A white mat, so a screenshot with a transparent background is readable rather than
+       swallowed by the dark panel. */
+    background: #fff;
+    border-bottom: 1px solid var(--border);
+}
+.img-view-broken {
+    padding: 18px 12px;
+    font-size: 11.5px;
+    color: #ff9a8b;
+    text-align: center;
+}
+.img-view-ocr { padding: 10px; font-size: 11px; color: #b9c8dc; }
+.img-view-ocr-lbl {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .5px;
+    text-transform: uppercase;
+    color: #92a7c0;
+    margin-bottom: 5px;
+}
+.img-view-ocr-txt {
+    margin: 0;
+    max-height: 40vh;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10.5px;
+    line-height: 1.5;
+    color: #dbe5f1;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px;
+}
+
+.img-thumb.processing {
+    opacity: 0.6;
+    animation: pulse-dot 1.5s infinite;
+}
+
+.img-ocr-tag {
+    position: absolute;
+    bottom: 2px;
+    left: 2px;
+    background: rgba(99,102,241,0.85);
+    color: #fff;
+    font-size: 8px;
+    font-weight: 700;
+    padding: 1px 4px;
+    border-radius: 3px;
+    letter-spacing: 0.3px;
+}
+
+.img-del {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--red);
+    color: #fff;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    line-height: 1;
+    font-weight: 700;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+    transition: transform 0.15s;
+}
+
+.img-del:hover { transform: scale(1.2); }
+
+/* --- Self-learning feedback row (👍/👎 under AI analyses) --- */
+.fb-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--txt2);
+}
+
+.fb-hint { opacity: 0.8; }
+
+.fb-btn {
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    padding: 3px 9px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--txt1);
+    transition: transform 0.12s, background 0.12s;
+}
+
+.fb-btn:hover { transform: scale(1.12); background: var(--bg2); }
+
+.fb-input {
+    flex: 1;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 11px;
+    color: var(--txt1);
+    outline: none;
+}
+
+.fb-done { color: var(--green); font-size: 11px; }
+
+/* Copy row on button-generated answers (cleaned notes / case summary) */
+/* THREE BUTTONS ON A CASE SUMMARY, not one — Copy, and the two that file it on the case.
+   They wrap rather than shrink: in a side panel the row is ~300px wide and squeezing three
+   labels onto one line is how "Write a Post" becomes "Write a…". */
+.copy-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+}
+.copy-btn {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 12px;
+}
+.copy-btn:hover { transform: none; border-color: var(--blue); }
+
+/* ==========================================================================
+   POWER MONITOR
+   ==========================================================================
+   The topbar pill is a live readout of what the app is costing the machine, and
+   the panel behind it explains the number: the derived budget, what is being
+   held right now, the throttles currently in force, and the internal AI
+   performance log. Colour is the only status signal that survives a glance, so
+   the level (ok / warm / high / critical) drives it everywhere.
+   ========================================================================== */
+
+.power-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 9px 3px 7px;
+    border-radius: var(--r20);
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--txt2);
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .2px;
+    cursor: pointer;
+    transition: background .15s, border-color .15s, color .15s;
+    white-space: nowrap;
+}
+
+.power-pill:hover { background: var(--bg3); border-color: var(--border2); color: var(--txt1) }
+
+.power-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    flex-shrink: 0;
+    box-shadow: 0 0 0 2px rgba(34, 197, 94, .15);
+}
+
+/* Level colouring, shared by the pill dot and the meters. */
+.power-pill.lvl-warm { border-color: rgba(245, 158, 11, .35); color: var(--warn) }
+.power-pill.lvl-warm .power-dot { background: var(--warn); box-shadow: 0 0 0 2px rgba(245, 158, 11, .18) }
+.power-pill.lvl-high { border-color: rgba(245, 158, 11, .5); color: var(--warn); background: rgba(245, 158, 11, .08) }
+.power-pill.lvl-high .power-dot { background: var(--warn); box-shadow: 0 0 0 2px rgba(245, 158, 11, .25) }
+.power-pill.lvl-critical { border-color: rgba(239, 68, 68, .5); color: #fca5a5; background: rgba(239, 68, 68, .1) }
+.power-pill.lvl-critical .power-dot { background: var(--red); box-shadow: 0 0 0 2px rgba(239, 68, 68, .28); animation: power-pulse 1.4s ease-in-out infinite }
+
+@keyframes power-pulse {
+    0%, 100% { opacity: 1 }
+    50% { opacity: .35 }
+}
+
+.modal.m-power {
+    max-width: 560px;
+    max-height: 88vh;
+    overflow-y: auto;
+}
+
+.pwr-section { margin-bottom: 16px }
+
+.pwr-section-title {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .7px;
+    color: var(--txt2);
+    margin-bottom: 8px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--border);
+}
+
+.pwr-sub { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--txt3) }
+
+.pwr-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 6px 14px;
+}
+
+.pwr-item { display: flex; justify-content: space-between; gap: 10px; font-size: 11px; padding: 2px 0 }
+.pwr-item-k { color: var(--txt2) }
+.pwr-item-v { color: var(--txt1); font-family: var(--mono); font-weight: 600; text-align: right }
+.pwr-item-v.good { color: var(--green) }
+.pwr-item-v.warn { color: var(--warn) }
+.pwr-item-v.bad { color: #fca5a5 }
+
+.pwr-note {
+    margin-top: 8px;
+    font-size: 10px;
+    line-height: 1.55;
+    color: var(--txt3);
+    background: rgba(255, 255, 255, .03);
+    border: 1px solid var(--border);
+    border-radius: var(--r6);
+    padding: 7px 9px;
+}
+
+.pwr-meter-row { margin-bottom: 10px }
+
+.pwr-meter-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--txt2);
+    margin-bottom: 4px;
+}
+
+.pwr-meter-label span:last-child { font-family: var(--mono); color: var(--txt1); font-weight: 600 }
+
+.pwr-meter {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--bg0);
+    border: 1px solid var(--border);
+    overflow: hidden;
+}
+
+.pwr-meter-fill {
+    height: 100%;
+    width: 0;
+    border-radius: 3px;
+    background: var(--green);
+    transition: width .35s ease, background .35s ease;
+}
+
+.pwr-meter-fill.warm { background: var(--warn) }
+.pwr-meter-fill.high { background: var(--warn) }
+.pwr-meter-fill.critical { background: var(--red) }
+
+.pwr-table-wrap { overflow-x: auto }
+.pwr-scroll { max-height: 220px; overflow-y: auto }
+
+.pwr-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10px;
+    font-family: var(--mono);
+}
+
+.pwr-table th {
+    text-align: left;
+    font-family: var(--font);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    color: var(--txt3);
+    font-weight: 700;
+    padding: 4px 8px 4px 0;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg1);
+}
+
+.pwr-table td {
+    padding: 4px 8px 4px 0;
+    color: var(--txt1);
+    border-bottom: 1px solid rgba(255, 255, 255, .04);
+    white-space: nowrap;
+}
+
+.pwr-table td.dim { color: var(--txt3) }
+.pwr-table td.num { text-align: right }
+.pwr-table tr.err td { color: #fca5a5 }
+.pwr-table tr.reclaim td { color: var(--blue2) }
+
+.pwr-empty { font-size: 11px; color: var(--txt3); padding: 10px 0; font-style: italic }
+
+/* ============================================================
+   COLLAPSIBLE SUB-SECTIONS INSIDE THE CASE INFO PANEL
+   "Case Details" and "Logs" both live in Case Info now, each
+   closed by default so the panel opens short instead of as a
+   twelve-field wall. Styled a step quieter than the panel
+   header (.ph) so the hierarchy reads panel > section.
+   ============================================================ */
+.subsec {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.subsec-ph {
+    padding: 8px 10px;
+    background: var(--bg2);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+    transition: background .2s;
+}
+
+.subsec-ph:hover { background: var(--bg3); }
+
+/* A HEADING, NOT A CONTROL. Case Details no longer collapses, so its header must stop
+   advertising that it does: no pointer, no hover lift, nothing to click. Kept as a header
+   rather than deleted because the section still needs naming. */
+.subsec-ph-static { cursor: default; }
+.subsec-ph-static:hover { background: var(--bg2); }
+
+.subsec-ph-left {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--txt1);
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.subsec-ph-collapse { font-size: 10px; color: var(--txt2); }
+
+.subsec-pb {
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* ============================================================
+   HOME PANEL — Quick Options + Meeting Notes on the main window
+   A sibling of .welcome inside .chat-msgs, so it sits directly
+   under "How to get started" on first load and remains available
+   once the conversation starts.
+   ============================================================ */
+.home-panel {
+    width: 100%;
+    max-width: 460px;
+    margin: 0 auto 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+/* The .home-panel .qa-* rules are gone with the panel that needed them: Quick Options no
+   longer has a home in the chat area, so a rounded card treatment for it there matched
+   nothing. It is a sidebar section now and takes the sidebar's own styling. */
+
+.mn-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.mn-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* The placeholder is a worked EXAMPLE of good notes, so it needs to read as
+   guidance rather than as text the user has already typed: dimmer than real
+   input, and italic so the distinction survives at a glance. */
+/* Tall enough that the whole worked example is visible without scrolling — a
+   standard you have to scroll to read is not a standard. Still user-resizable. */
+/* Tall enough for the whole worked example with NO scrolling. That matters for more
+   than looks: the example layer is positioned, so if the textarea scrolled beneath
+   it the two would drift and a click would put the caret in the wrong section.
+   12 lines x 17.25px + padding + borders = ~229px; 240px leaves slack. */
+.mn-txt { min-height: 240px; }
+
+/* Both layers must advance by exactly the same number of pixels per line, so the
+   line box is stated explicitly rather than left to `normal` on two element types. */
+.mn-txt, .mn-ghost { line-height: 1.5; }
+
+.mn-txt::placeholder {
+    color: var(--txt3);
+    opacity: .75;
+    font-style: italic;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+/* Disabled state for the case-gated Professionalise button */
+.btn-clean-notes:disabled,
+.btn-clean-notes[aria-disabled="true"] {
+    opacity: .45;
+    cursor: not-allowed;
+}
+
+/* ============================================================
+   MAIN-WINDOW SPACING
+   The How-to box is the last thing in the welcome block now the
+   feature cards are gone, so its trailing margin — plus the
+   welcome's generous bottom padding and its vertical auto-
+   centering — opened a ~100px gap before Quick Options. Close it
+   up so the dropdown reads as the next step, not a separate area.
+   ============================================================ */
+.welcome {
+    padding: 40px 20px 10px;
+    margin: 0 auto;
+}
+
+.welcome .w-howto { margin-bottom: 0; }
+
+/* ============================================================
+   MEETING NOTES — real headings, worked example behind them
+   The textarea genuinely contains "Summary: / Troubleshooting
+   steps: / Next steps:", so the structure survives into the case
+   record. The example lives in an overlay layer. While the field
+   is still untouched the textarea's own text is transparent and
+   the example shows through; on the first keystroke the example
+   is removed and the real headings appear. Only ever one of the
+   two is visible, so the two layers can never mis-align.
+   ============================================================ */
+.mn-wrap { position: relative; }
+
+.mn-ghost {
+    position: absolute;
+    inset: 0;
+    padding: 10px;
+    font-family: inherit;
+    font-size: 11.5px;
+    /* pre, NOT pre-wrap: a wrapped example line would occupy two rows here but one
+       in the textarea, and every heading below it would then sit a row out from the
+       caret. Clipping a long line is the lesser evil; the lines are written short
+       enough that it does not happen at normal panel widths. */
+    white-space: pre;
+    overflow: hidden;
+    pointer-events: none;   /* clicks land in the textarea underneath */
+    border: 1px solid transparent;
+    border-radius: var(--r6);
+}
+
+/* The headings read as real text — because they ARE: the same headings are sitting
+   in the textarea's value underneath, they are simply painted here while the
+   example is up. */
+.mn-g-head {
+    color: var(--txt1);
+    font-style: normal;
+    font-weight: 600;
+}
+
+/* The example itself: clearly guidance, not something you typed. */
+.mn-g-eg {
+    color: var(--txt3);
+    opacity: .8;
+    font-style: italic;
+}
+
+.mn-g-blank { color: transparent; }
+
+/* Untouched: hide the real text so the example reads cleanly. The caret stays
+   visible so clicking in still shows where typing will go. */
+.mn-txt.mn-pristine {
+    color: transparent;
+    caret-color: var(--blue);
+}
+
+/* ---------------------------------------------------------------------------
+ * OPEN CASES — the Salesforce queue, shown instead of the chat layout.
+ * Rows are cards rather than a table: the side panel is ~350px wide and a real
+ * table forces a horizontal scroll, which makes scanning the queue harder than
+ * reading it in Salesforce would have been.
+ * ------------------------------------------------------------------------- */
+.oc-view {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg0, #0e1116);
+}
+.oc-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px 8px;
+    flex-wrap: wrap;
+}
+.oc-title { font-size: 13px; font-weight: 700; color: #fff; display: flex; align-items: baseline; gap: 8px; }
+.oc-meta { font-size: 10.5px; font-weight: 500; color: var(--txt2, #9aa4b2); }
+.oc-hint {
+    margin: 0 14px 10px;
+    padding: 8px 10px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--txt2, #9aa4b2);
+    background: rgba(255, 255, 255, .03);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+/* ---- Narrowing the queue: search box + tier chips ---- */
+.oc-filters { padding: 0 14px 10px; display: flex; flex-direction: column; gap: 8px; }
+/* Search and sort share a line. min-width:0 on the input is what lets it give way — a flex
+   item will not shrink below its content width without it, and the select gets pushed out. */
+.oc-filter-row { display: flex; gap: 6px; align-items: center; }
+.oc-filter-row .oc-search { flex: 1; min-width: 0; }
+.oc-sort {
+    flex-shrink: 0;
+    max-width: 42%;
+    padding: 6px 8px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--txt2);
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    outline: none;
+}
+.oc-sort:hover { color: var(--txt1); border-color: var(--border2); }
+.oc-sort:focus { border-color: var(--blue); }
+.oc-search {
+    width: 100%;
+    padding: 6px 10px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--txt1);
+    font-family: inherit;
+    font-size: 11.5px;
+    outline: none;
+}
+.oc-search::placeholder { color: var(--txt3); }
+.oc-search:focus { border-color: var(--blue); }
+.oc-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.oc-chip {
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, .05);
+    border: 1px solid var(--border);
+    color: var(--txt2);
+    cursor: pointer;
+    transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.oc-chip:hover { color: var(--txt1); border-color: var(--border2); }
+.oc-chip.active { color: #fff; background: rgba(99, 102, 241, .22); border-color: var(--blue); }
+.oc-chip:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+
+/* One colour per tier, used by the chip, the group heading and the row's left stripe, so
+   the three read as the same thing rather than as three unrelated decorations. */
+.oc-chip.tier-enterprise, .oc-group.tier-enterprise { color: #7ee0b8; }
+.oc-chip.tier-premium,    .oc-group.tier-premium    { color: #c9a6ff; }
+.oc-chip.tier-standard,   .oc-group.tier-standard   { color: #8ab6ff; }
+/* The one tier with no colour of its own. It was left on the palette's dimmest step, which
+   made "No entitlement listed" the hardest row in the list to read — both as the filter chip
+   and as the heading over its own block of cases. Given a neutral that is quiet WITHOUT
+   disappearing; the three coloured tiers still read as the categories, this as the absence. */
+.oc-chip.tier-other,      .oc-group.tier-other,
+.oc-chip.tier-none,       .oc-group.tier-none       { color: #aabdd3; }
+.oc-chip.tier-enterprise.active { background: rgba(34, 197, 94, .18); border-color: rgba(34, 197, 94, .55); color: #fff; }
+.oc-chip.tier-premium.active    { background: rgba(160, 110, 240, .20); border-color: rgba(160, 110, 240, .55); color: #fff; }
+.oc-chip.tier-standard.active   { background: rgba(80, 130, 230, .20); border-color: rgba(80, 130, 230, .55); color: #fff; }
+
+/* The heading over each tier's block. */
+.oc-group {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    padding: 10px 2px 3px;
+    /* Was .85, on top of colours that were already muted — the two discounts compounded. The
+       heading is the only thing separating one tier's cases from the next; it carries its own
+       colour and needs no second dimming. */
+    opacity: 1;
+}
+.oc-group:first-child { padding-top: 2px; }
+
+.oc-list { flex: 1; overflow-y: auto; padding: 0 14px 14px; display: flex; flex-direction: column; gap: 4px; }
+
+/* ONE LINE PER CASE. The row is a flex line holding the case and its expander toggle;
+   the description wraps to a second line only when it is open (flex-basis:100%). */
+.oc-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px 6px 10px;
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    transition: border-color .15s ease, background .15s ease;
+}
+.oc-row:hover { border-color: var(--blue2); background: rgba(255, 255, 255, .04); }
+
+/* WAITING ON SOTI — this case is on you.
+   The left border is the entitlement tier and stays that colour, so the red is carried by
+   the other three borders and a tint, which reads as "this row" without claiming to be the
+   tier. Deliberately a wash rather than a solid fill: several of these in a row must still
+   be readable, and red text on red is not. */
+.oc-row.needs-soti {
+    background: rgba(239, 68, 68, .10);
+    border-top-color: rgba(239, 68, 68, .55);
+    border-right-color: rgba(239, 68, 68, .55);
+    border-bottom-color: rgba(239, 68, 68, .55);
+}
+.oc-row.needs-soti:hover {
+    background: rgba(239, 68, 68, .17);
+    border-top-color: rgba(239, 68, 68, .9);
+    border-right-color: rgba(239, 68, 68, .9);
+    border-bottom-color: rgba(239, 68, 68, .9);
+}
+.oc-row.needs-soti .oc-num { color: #ff9a8b; }
+/* The same red on the status tag inside the expander, so the row's colour is explained the
+   moment you open it rather than left as a mystery marking. */
+.oc-tag.needs-soti { color: #ff9a8b; border-color: rgba(239, 68, 68, .5); background: rgba(239, 68, 68, .12); }
+
+/* The tier stripe. border-left rather than a pseudo-element so it cannot overlap the
+   row's own rounded corners. */
+.oc-row.tier-enterprise { border-left: 3px solid rgba(34, 197, 94, .75); }
+.oc-row.tier-premium    { border-left: 3px solid rgba(160, 110, 240, .75); }
+.oc-row.tier-standard   { border-left: 3px solid rgba(80, 130, 230, .75); }
+.oc-row.tier-other,
+.oc-row.tier-none       { border-left: 3px solid var(--txt4); }
+
+.oc-desc-label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--txt3);
+    margin-bottom: 3px;
+}
+.oc-desc-label + .oc-desc-body { margin-top: 0; }
+.oc-desc > .oc-desc-label:not(:first-child) { margin-top: 9px; }
+/* A tag that is a link. The arrow is what says so — a coloured pill on its own reads as a
+   label, and every other tag beside it is exactly that. */
+.oc-tag-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.oc-tag-link:hover {
+    color: #fff;
+    border-color: var(--blue2);
+    background: rgba(80, 130, 230, .25);
+}
+.oc-tag-link:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.oc-tag-ext { font-size: 9px; opacity: .75; line-height: 1; }
+.oc-tag-link:hover .oc-tag-ext { opacity: 1; }
+
+.oc-tag.ent-enterprise { color: #7ee0b8; border-color: rgba(34, 197, 94, .45); background: rgba(34, 197, 94, .10); }
+.oc-tag.ent-premium    { color: #c9a6ff; border-color: rgba(160, 110, 240, .45); background: rgba(160, 110, 240, .10); }
+.oc-tag.ent-standard   { color: #8ab6ff; border-color: rgba(80, 130, 230, .45); background: rgba(80, 130, 230, .10); }
+
+/* The clickable half — everything except the expander toggle. min-width:0 is what lets
+   the subject inside it shrink; without it a flex item refuses to go below its content
+   width and the tags are pushed off the row instead of the subject truncating. */
+/* overflow:hidden is the backstop. The cells are fixed-width and refuse to shrink (they have
+   to, or they stop lining up with the strip above), so on a panel dragged narrower than the
+   chosen columns need, something has to give. Clipping AT THIS EDGE is the least bad answer:
+   the edge is exactly where the expander and remove buttons begin, so the alternative is
+   cells drawn on top of two controls — which is not merely ugly, it is a mis-click. */
+.oc-row-main {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    cursor: pointer;
+}
+/* The min-width is shared with .oc-colhead-num, and both read the same variable, so dragging
+   the "Case" heading widens the column and its numbers together. */
+.oc-num { font-size: 12px; font-weight: 700; color: var(--blue2); flex-shrink: 0; min-width: var(--ocw-casenum, 62px); }
+
+/* The one part that gives way when the panel is narrow — it is also the one part the
+   expander below can show in full, so nothing is actually lost to the ellipsis. */
+/* min-width holds a floor under the subject. Without it flex:1 lets it shrink to nothing
+   the moment the tags want the space, and the row ends up showing metadata about a case
+   it never names — which is exactly what the first version of this row did. */
+/* 26px, not the 90px it was. With the columns configurable there can now be six cells to the
+   right of it, and a floor that high pushed them off the end of the row entirely. What is
+   left is a word or so — enough that the row is never nothing but metadata about a case it
+   will not name — and the tooltip and the expander carry the rest.
+   The heading strip's own subject cell carries the SAME floor, so the two lines run out of
+   room together and the headings stay over their columns at every panel width. */
+/* THE ZERO BASIS IS WHAT KEEPS THE HEADINGS OVER THEIR COLUMNS.
+   `flex-basis: auto` sizes this cell from its own text first, and its text differs between
+   the two lines — a case subject on the row, the word "Subject" on the strip. Flex then hands
+   out the leftover (or takes back the shortfall) in proportion to those bases, so the two
+   lines resolved to different widths and every heading sat a few pixels off the column it
+   named. Basis 0 removes the text from the arithmetic entirely: on both lines this cell is
+   simply "whatever is left over", which is the same number on both.
+   It also gives the right order when there is not enough room — the subject is squeezed to
+   its floor before any cell moves, and the subject is the one part the expander can show in
+   full, while the cells are a grid that has to keep lining up. */
+/* THE GROW FACTOR IS A VARIABLE TOO, and that is what makes the subject resizable without
+   giving up the "whatever is left over" behaviour it has by default. Untouched, the pair
+   resolve to `flex: 1 1 0` — exactly what is described above. Drag the Subject heading and
+   startColumnResize sets the grow factor to 0 and the basis to the width you dragged to, at
+   which point the subject stops absorbing the leftover and the leftover goes to the right of
+   the row instead. Reset puts both back and the old behaviour returns. */
+.oc-subject, .oc-colhead-subject {
+    flex: var(--ocw-subject-grow, 1) 1 var(--ocw-subject, 0px);
+    min-width: 26px;
+    font-size: 11.5px;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* The cells on a row are DIRECT children of .oc-row-main, not wrapped in a box of their own —
+   see fillOpenCaseRowMain. What is left here is the expander's free-flowing tags, which are
+   prose-ish and wrap on purpose. */
+.oc-desc-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+
+/* The expander. A bare chevron: it sits on every row, so anything heavier would read as
+   24 buttons rather than as a margin. */
+.oc-desc-toggle {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    color: var(--txt3);
+    font-size: 10px;
+    line-height: 1;
+    cursor: pointer;
+    transition: color .15s ease, background .15s ease;
+}
+.oc-desc-toggle:hover { color: var(--txt1); background: rgba(255, 255, 255, .07); }
+.oc-desc-toggle:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+
+/* REMOVE THIS CASE FROM THE QUEUE. Same size and shape as the expander chevron beside it,
+   because they are peers on the row — but it only takes its colour on hover, so a list of
+   two dozen rows is not a column of red crosses inviting a mis-click. */
+.oc-row-del {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    color: var(--txt4);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: .55;
+    transition: color .15s ease, background .15s ease, opacity .15s ease;
+}
+.oc-row-del:hover {
+    opacity: 1;
+    color: #ff9a8b;
+    background: rgba(239, 68, 68, .14);
+}
+.oc-row-del:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+
+/* SYNC THIS ONE CASE. Lives in the expander, not on the row: it opens a window and reads a
+   record, which is work — and a control that does work must not sit a stray click away from
+   the thing you press to read a subject. */
+.oc-sync-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+}
+.oc-sync-btn {
+    background: rgba(80, 130, 230, .14);
+    border: 1px solid rgba(80, 130, 230, .45);
+    color: var(--txt1);
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 6px;
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.oc-sync-btn:hover:not(:disabled) { border-color: var(--blue2); background: rgba(80, 130, 230, .26); }
+.oc-sync-btn:disabled { opacity: .55; cursor: default; }
+.oc-sync-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.oc-sync-note { font-size: 10.5px; color: var(--txt3); }
+
+/* flex-basis:100% breaks the description onto its own line under the case it belongs to,
+   without taking the row out of flex layout. */
+.oc-desc {
+    flex-basis: 100%;
+    margin-top: 6px;
+    padding: 8px 10px;
+    background: rgba(0, 0, 0, .22);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    max-height: 260px;
+    overflow-y: auto;
+}
+.oc-desc-subject { font-size: 11.5px; font-weight: 600; color: #fff; line-height: 1.45; word-break: break-word; }
+/* pre-wrap: the analysis column is prose an engineer wrote, and its line breaks are
+   meaning — "Case Summary:" and "Next Steps:" are headings inside it. */
+.oc-desc-body {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--txt2);
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.oc-desc-none { font-size: 11px; color: var(--txt3); line-height: 1.5; }
+/* The dates spelled out, under the tags. Small and grey: it explains the numbers on the
+   row rather than competing with the description above it. */
+.oc-desc-when { margin-top: 6px; font-size: 10px; line-height: 1.5; color: var(--txt3); }
+.oc-tag {
+    font-size: 9.5px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 20px;
+    color: var(--txt2, #9aa4b2);
+    background: rgba(255, 255, 255, .05);
+    border: 1px solid var(--border);
+    white-space: nowrap;
+}
+/* Severity is the one field worth colouring — it is how the queue gets triaged. */
+.oc-tag.sev-high { color: #ff9a8b; border-color: rgba(220, 90, 70, .5); background: rgba(220, 90, 70, .12); }
+.oc-tag.sev-med  { color: #ffd08a; border-color: rgba(220, 170, 60, .45); background: rgba(220, 170, 60, .10); }
+.oc-tag.sev-jira { color: #a7c7ff; border-color: rgba(80, 130, 230, .45); background: rgba(80, 130, 230, .12); }
+.oc-open { font-size: 11.5px; color: var(--txt2, #9aa4b2); text-align: center; padding: 18px 10px; }
+
+/* Severity 1 and Severity 4, which now have letters of their own to colour. Critical is a
+   solid red where High is a wash, because "H" prints for both and the colour is the only
+   thing left distinguishing them. Low is deliberately quiet — a queue where every row
+   shouts has no way left to shout. */
+.oc-tag.sev-crit { color: #fff; border-color: rgba(220, 60, 50, .85); background: rgba(220, 60, 50, .40); font-weight: 700; }
+.oc-tag.sev-low  { color: var(--txt2); border-color: var(--border); background: transparent; }
+
+/* A column with nothing in it. Present, so the grid does not shift under the headings, but
+   faint, so a row of dashes never competes with the values beside it. */
+.oc-tag.oc-tag-empty { color: var(--txt4); border-color: transparent; background: transparent; }
+
+/* Nobody has heard from us in a week. The one number on the row that is a judgement rather
+   than a fact, so it is the one that changes colour. */
+.oc-tag.reach-stale { color: #ffb27a; border-color: rgba(230, 140, 60, .45); background: rgba(230, 140, 60, .12); }
+
+/* ============================================================
+   SALESFORCE'S LAST-COMPLETED-ACTIVITY DOT
+   ============================================================
+   Not a tag. Every other cell on the row is a pill — a border, a
+   background, a word inside it — and wrapping a coloured dot in
+   one of those gives you two concentric rings where the colour
+   is meant to be the whole message. So the pill chrome is taken
+   off and what is left is the glyph itself, sized up to where it
+   reads as a status light rather than as punctuation.
+
+   The colours are Salesforce's, matched to the icons the field
+   serves, and lifted a little for a dark background: the stock
+   green and red are chosen against white and go muddy here. The
+   glow is what stops a 12px dot disappearing into a row of grey
+   text — it is the same trick the severity wash uses, at the
+   only size this cell has room for.
+   ============================================================ */
+.oc-tag.oc-act-dot {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font-size: 13px;
+    line-height: 1;
+    letter-spacing: 0;
+}
+.oc-tag.oc-act-green  { color: #46d17f; text-shadow: 0 0 6px rgba(70, 209, 127, .55); }
+.oc-tag.oc-act-yellow { color: #f2c14e; text-shadow: 0 0 6px rgba(242, 193, 78, .55); }
+.oc-tag.oc-act-red    { color: #f4685c; text-shadow: 0 0 6px rgba(244, 104, 92, .55); }
+/* No column on this list view. An empty ring rather than a gap: the row is a grid, and a
+   missing cell would slide every tag after it one place left and put the heading strip out
+   of step with the whole row. Faint enough not to read as a fourth colour. */
+.oc-tag.oc-act-none   { color: var(--txt4); text-shadow: none; opacity: .55; }
+
+/* The dot column, on the row and on the heading over it. */
+.oc-col-activity { flex: 0 0 var(--ocw-activity, 16px); min-width: 12px; text-align: center; padding-left: 0; padding-right: 0; }
+
+/* ============================================================
+   THE COLUMN GRID
+   Each key sets the SAME basis on the row's tag and on its
+   heading in the strip above, which is what makes the strip
+   line up with the rows instead of merely sitting over them.
+   ============================================================ */
+/* THESE WIDTHS ARE A BUDGET, not a preference. A Chrome side panel is about 400px, and the
+   five default columns plus the case number plus a readable subject have to fit inside it.
+   Measured against a rendered row rather than chosen.
+
+   WHO GIVES WAY WHEN IT DOES NOT FIT. The subject first (it is the one part the expander can
+   show in full), then the WORD columns — a JIRA key or an account name can be ellipsised and
+   still be recognisable. The four narrow ones never shrink: they hold a letter or two digits,
+   and a proportional squeeze on those is not a smaller value, it is an unreadable one.
+
+   The floors are the same on the row and on the heading strip, and that is what keeps the two
+   aligned at every width rather than only at the width they were designed at: both lines then
+   run out of room at the same point and give the same pixels away. */
+/* Severity is wider than its own content needs. "H" would fit in twenty pixels — the column
+   is sized for the word SEVERITY above it, because a single letter with no heading is a code
+   nobody can read, and that heading is the whole reason the strip exists. It gives those
+   pixels back first when the panel is narrow, down to what the letter itself needs. */
+/* EVERY BASIS BELOW IS A DEFAULT, NOT A FIXED WIDTH.
+   The figure in each `var()` fallback is the measured default described above; the variable
+   is what a drag on the heading's right edge overwrites (see startColumnResize). It is set on
+   #ocView, which is the ancestor of BOTH the heading strip and every row, so one assignment
+   moves the heading and its column together and they cannot drift apart.
+   The min-width floors are deliberately NOT variables. They are what keeps a narrow panel
+   legible, and a column dragged to 200px on a wide window must still give way when the same
+   panel is dragged to 320px — otherwise a resize made once, comfortably, silently breaks the
+   layout later. The chosen width is what the column gets when there is room for it. */
+.oc-col-severity    { flex: 0 1 var(--ocw-severity, 46px); min-width: 24px; text-align: center; padding-left: 2px; padding-right: 2px; }
+.oc-col-age         { flex: 0 1 var(--ocw-age, 34px); min-width: 28px; text-align: center; padding-left: 2px; padding-right: 2px; }
+/* 58px, not the 48px it was: the heading is "Last Sent" now rather than "Reach", and a column
+   sized for its VALUES ("12d") that ellipsises its own name back to "Last S…" is the exact
+   failure the heading strip exists to fix. */
+.oc-col-reachout    { flex: 0 1 var(--ocw-reachout, 58px); min-width: 40px; text-align: center; padding-left: 2px; padding-right: 2px; }
+.oc-col-lastmsg     { flex: 0 1 var(--ocw-lastmsg, 48px); min-width: 40px; text-align: center; padding-left: 2px; padding-right: 2px; }
+/* Sized for MCMR-44187 plus its ↗ — 83px of content, measured — which is the longest thing
+   this column routinely holds. */
+.oc-col-jira        { flex: 0 1 var(--ocw-jira, 86px); min-width: 44px; }
+.oc-col-status      { flex: 0 1 var(--ocw-status, 88px); min-width: 44px; }
+.oc-col-owner       { flex: 0 1 var(--ocw-owner, 66px); min-width: 40px; }
+.oc-col-account     { flex: 0 1 var(--ocw-account, 96px); min-width: 44px; }
+.oc-col-entitlement { flex: 0 1 var(--ocw-entitlement, 80px); min-width: 40px; }
+.oc-col-contact     { flex: 0 1 var(--ocw-contact, 86px); min-width: 44px; }
+
+/* ============================================================
+   DRAGGING A COLUMN WIDER
+   ============================================================
+   A five-pixel strip on the right edge of every heading. It is
+   in the heading strip only — there is exactly one of those,
+   and putting a grip on every ROW would be two dozen identical
+   handles for one setting.
+
+   Invisible until the pointer is on the strip, then a hairline
+   under the cursor. A permanent set of rules between the
+   headings would turn a quiet label row into a spreadsheet
+   frame, and the strip is 9.5px tall — there is no room in it
+   for decoration that is not doing anything. */
+.oc-colhead-cell, .oc-colhead-subject, .oc-colhead-num { position: relative; }
+/* top/bottom 0 rather than a negative inset: the heading cells clip their own overflow (that
+   is what ellipsises a long heading), so a strip hanging outside the box is simply cut off —
+   the taller grab target would be a lie. 6px wide is the compromise between "grabbable" and
+   "sitting on top of the heading's last character". */
+.oc-colgrip {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 6px;
+    bottom: 0;
+    cursor: col-resize;
+    /* Above the heading's own text, so the grip is grabbable even where a long heading
+       ellipsises right up to the edge. */
+    z-index: 2;
+    background: transparent;
+    transition: background .12s ease;
+    touch-action: none;
+}
+.oc-colhead:hover .oc-colgrip { background: rgba(255, 255, 255, .10); }
+.oc-colgrip:hover, .oc-colgrip.is-dragging { background: var(--blue) !important; }
+/* While a drag is in progress the pointer must stay col-resize wherever it travels, and no
+   text anywhere may select — a drag across a list of case subjects otherwise highlights half
+   the queue. Set on <body> for the life of the drag. */
+body.oc-resizing { cursor: col-resize !important; user-select: none !important; }
+/* Every fixed cell truncates rather than growing: one long account name must not push the
+   whole grid out of step for its row alone. */
+.oc-row-main > .oc-tag,
+.oc-colhead > .oc-colhead-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The headings strip. Same padding and the same gaps as .oc-row, plus a spacer standing in
+   for the two round buttons at the end of every row. */
+.oc-colhead {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    /* 13px left = the row's 3px tier stripe plus its 10px padding, so "Case" starts exactly
+       over the case numbers. */
+    padding: 2px 8px 4px 13px;
+    margin: 0 14px;
+    /* Sentence case, and no letter-spacing. The app's other micro-labels are spaced capitals,
+       and SEVERITY set that way is half again as wide as Severity — which is the difference
+       between a heading that fits over its column and one that ellipsises to "SEV…". The
+       strip is the one place where fitting beats matching. */
+    /* THE SIZE STAYS AT 9.5px. The note above is right — this strip's headings have to fit
+       over columns that are a couple of characters wide, and "Last Sent" ellipsises to
+       "Last Se…" at 10.5px. What was actually wrong with it was the COLOUR: --txt3 against
+       this background is under half the contrast a heading needs, and these five words are
+       the only thing that says what the H/M/L pill, the day count and the ticket key on each
+       row ARE. Brightness costs no width; a heading nobody can read turns the whole strip
+       back into a code to be hovered. */
+    font-size: 9.5px;
+    font-weight: 700;
+    color: #c2d1e3;
+    border-bottom: 1px solid var(--border2);
+}
+/* 62px is the rendered width of a SOTI case number at this weight and size, which is what
+   the row's own .oc-num comes out at. It is a measurement of the thing below, not a guess. */
+.oc-colhead-num { flex: 0 0 auto; min-width: var(--ocw-casenum, 62px); }
+/* The flex sizing is shared with .oc-subject above — deliberately, see the note there. The
+   font is NOT: that rule paints a case subject white at 11.5px, and these are headings. */
+.oc-colhead-subject {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 9.5px;
+    color: #c2d1e3;
+}
+/* 2px, matching the narrow cells' own padding, so a heading gets the whole column to fit in.
+   Six was enough to ellipsise "Severity" on its own. */
+.oc-colhead-cell { padding: 0 2px; }
+/* Stands in for the expander chevron and the remove cross at the end of every row: two 20px
+   buttons and the 6px gap between them, plus the row's 1px right border, which the strip
+   does not have. */
+.oc-colhead-spacer { flex: 0 0 47px; }
+
+/* THE ROW THAT WAS JUST ADDED, for a couple of seconds. The list is grouped by tier, so a
+   case added at the top of the queue is frequently drawn at the bottom of the screen —
+   without this, adding one looks exactly like nothing happening. */
+.oc-row.oc-row-new {
+    border-color: var(--blue) !important;
+    box-shadow: 0 0 0 1px var(--blue);
+    animation: ocRowNew 2.2s ease-out;
+}
+@keyframes ocRowNew {
+    0%   { background: rgba(99, 102, 241, .30); }
+    100% { background: transparent; }
+}
+
+/* A case that is in this list but not in the last sync of it. A dot, because it must not
+   cost a column — the row is already a grid and this is a footnote on it. */
+.oc-pin { flex: 0 0 auto; font-size: 8px; color: var(--txt4); line-height: 1; cursor: help; }
+.oc-pin.oc-pin-manual { color: var(--blue2); }
+
+/* The gutter where the subject would be, when the subject column is switched off. */
+.oc-subject-empty { flex: 1 1 auto; min-width: 0; }
+
+/* ============================================================
+   THE CASES TOOLBAR — add, sync, and the ⋮ menu
+   ============================================================ */
+.oc-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 14px 8px;
+    flex-wrap: wrap;
+}
+.oc-toolbar .btn { flex-shrink: 0; }
+/* One sync button, which takes the rest of the row. This used to need a
+   `:not(.sf-refresh)` exclusion: the ↻ welded onto the end of it carried `btn btn-sf`
+   too — it had to, or it would not have been the same blue — so this selector matched
+   it at specificity (0,2,0) against `.sf-refresh`'s (0,1,0), won, and handed a 36px icon
+   button `flex: 1; min-width: 150px`. min-width outranks width, so not even
+   `width: 36px !important` could hold it, and it rendered 150px wide. The ↻ is gone
+   now, and with it the reason for the exclusion. */
+.oc-toolbar .btn-sf { flex: 1; min-width: 150px; justify-content: center; }
+.btn-add { background: var(--blue); color: #fff; border: none; }
+.btn-add:hover { filter: brightness(1.1); }
+
+/* The two small menus. Anchored to their button so they open where they were pressed. */
+.oc-add-wrap { position: relative; flex-shrink: 0; }
+.oc-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    min-width: 258px;
+    max-width: min(320px, calc(100vw - 28px));
+    padding: 4px;
+    background: var(--bg1);
+    border: 1px solid var(--border2, var(--border));
+    border-radius: 10px;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, .5);
+}
+.oc-menu-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 10px;
+    background: none;
+    border: none;
+    border-radius: 7px;
+    text-align: left;
+    cursor: pointer;
+    transition: background .15s ease;
+}
+.oc-menu-item:hover { background: rgba(255, 255, 255, .06); }
+.oc-menu-item:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.oc-menu-t { font-size: 11.5px; font-weight: 600; color: var(--txt1, #fff); }
+/* The second line is what stops these being four verbs with no consequences attached —
+   "Clear all" and "Sync now — all cases" both do something big enough to want explaining
+   before it is pressed rather than after. */
+.oc-menu-s { font-size: 10px; line-height: 1.45; color: var(--txt3); }
+
+/* ============================================================
+   ACTIONS ON THE WHOLE LIST
+   ============================================================
+   Sync every case, save a list-view link, choose the columns,
+   empty the list. All four were behind a ⋮ menu, which is the
+   right home for things nobody needs often — and these turned
+   out to be the opposite.
+
+   Styled as a quiet BLOCK rather than as four more primary
+   buttons: the two loud ones at the top of the view (Add Case,
+   Sync from Salesforce) are what you press on most visits, and
+   promoting these to the same weight would leave six shouting
+   controls above a list nobody can see any more.
+
+   ONE LINE. They were four stacked full-width rows, which came
+   to about a hundred pixels of a panel whose whole job is the
+   list underneath — three cases' worth, spent on four controls
+   that are each one short phrase. Sharing a line costs the
+   labels a word or two; the full sentence is in every title,
+   and the row wraps rather than clipping when the panel is
+   dragged too narrow to hold four.
+   ============================================================ */
+.oc-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding: 0 14px 8px;
+}
+
+.oc-act {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 8px;
+    background: rgba(255, 255, 255, .035);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--txt2);
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.oc-act:hover {
+    background: rgba(129, 140, 248, .14);
+    border-color: rgba(129, 140, 248, .45);
+    color: #fff;
+}
+.oc-act:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.oc-act:disabled { opacity: .5; cursor: default; }
+.oc-act:disabled:hover { background: rgba(255, 255, 255, .035); border-color: var(--border); color: var(--txt2); }
+.oc-act-i { font-size: 11px; line-height: 1; opacity: .85; flex-shrink: 0; }
+
+/* THE COG, ALONE. `flex: 0 0 auto` is the whole point of the rule: the other three actions
+   share the leftover width between them, and a button holding one glyph must not take a
+   third of the row to do it. Square, so it reads as an icon button rather than as a label
+   whose text failed to load. */
+.oc-act-icon {
+    flex: 0 0 auto;
+    width: 28px;
+    padding: 0;
+    gap: 0;
+}
+.oc-act-icon .oc-act-i { font-size: 12px; opacity: .9; }
+
+/* CLEAR ALL. Findable, never inviting — it is the one control here that can lose something
+   no sync brings back, because a case added by hand is in no Salesforce list view. It sits
+   in the same grey as its neighbour until the pointer is on it, and only then admits what
+   it is. */
+.oc-act-danger { color: var(--txt3); }
+.oc-act-danger:hover {
+    background: rgba(239, 68, 68, .13);
+    border-color: rgba(239, 68, 68, .45);
+    color: #ff9a8b;
+}
+
+/* ============================================================
+   SAVED LIST-VIEW LINKS
+   ============================================================ */
+/* A COLUMN, NOT A ROW — the heading on its own line and the saved views under it.
+   Inline, the heading was the first thing on a wrapping line of chips, so on a narrow panel
+   with several views saved it read as one run-on strip and a long view name wrapped around
+   the label itself. */
+.oc-links {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+    /* THE GAP ABOVE IS THE POINT OF THE TOP MARGIN. Add Case / Sync from Salesforce sit
+       directly over this strip and the two were four pixels apart, which read as one block of
+       controls — so "Current View" looked like a third button rather than a heading over the
+       thing below it. The space is what separates "what you can do" from "what you are
+       looking at". */
+    margin-top: 10px;
+    padding: 0 14px 10px;
+}
+.oc-links-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .4px;
+    text-transform: uppercase;
+    color: #b7c7db;
+}
+/* The chips' own line. Wraps among themselves and never around the heading. */
+.oc-links-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
+    width: 100%;
+}
+.oc-link-chip {
+    display: inline-flex;
+    align-items: stretch;
+    border: 1px solid rgba(80, 130, 230, .40);
+    background: rgba(80, 130, 230, .10);
+    border-radius: 999px;
+    overflow: hidden;
+}
+.oc-link-go {
+    padding: 3px 9px;
+    background: none;
+    border: none;
+    font-size: 10.5px;
+    color: #a7c7ff;
+    cursor: pointer;
+    white-space: nowrap;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.oc-link-go:hover { background: rgba(80, 130, 230, .22); color: #fff; }
+.oc-link-del {
+    padding: 0 7px 0 3px;
+    background: none;
+    border: none;
+    color: var(--txt4);
+    font-size: 12px;
+    cursor: pointer;
+}
+.oc-link-del:hover { color: #ff9a8b; background: rgba(239, 68, 68, .14); }
+
+/* ============================================================
+   THE ROW CHOOSER — a popover over the list, not a settings page
+   ============================================================ */
+.oc-cols {
+    margin: 0 14px 8px;
+    padding: 8px;
+    background: var(--bg1);
+    border: 1px solid var(--border2, var(--border));
+    border-radius: 10px;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, .4);
+}
+.oc-cols-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: .5px;
+    text-transform: uppercase;
+    color: var(--txt3);
+    padding: 0 2px 6px;
+}
+.oc-cols-close { background: none; border: none; color: var(--txt3); font-size: 15px; line-height: 1; cursor: pointer; }
+.oc-cols-close:hover { color: #fff; }
+.oc-cols-body { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 2px 10px; }
+.oc-col-opt { display: flex; align-items: center; gap: 6px; padding: 3px 2px; cursor: pointer; }
+.oc-col-opt input { margin: 0; flex-shrink: 0; }
+.oc-col-opt-t { font-size: 11px; color: var(--txt1); }
+/* The one line in this panel that is not a control. Set apart by a rule and a smaller,
+   quieter type so it does not read as a twelfth column you forgot to tick.
+   `grid-column: 1 / -1` because it is a child of the same auto-fill grid the checkboxes
+   are: without it the sentence is laid out as one more cell and wraps inside a 150px
+   column, sitting beside "Contact name" as though it were another option. */
+.oc-cols-hint {
+    grid-column: 1 / -1;
+    margin-top: 8px;
+    padding-top: 7px;
+    border-top: 1px solid var(--border);
+    font-size: 10px;
+    line-height: 1.45;
+    color: var(--txt3);
+}
+.oc-cols-foot { display: flex; justify-content: flex-end; padding-top: 7px; }
+
+/* ============================================================
+   SYNC NOW — ALL CASES: the progress line
+   ============================================================ */
+.oc-progress {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 14px 8px;
+    padding: 7px 10px;
+    background: rgba(80, 130, 230, .10);
+    border: 1px solid rgba(80, 130, 230, .35);
+    border-radius: 8px;
+}
+.oc-progress-lbl { font-size: 10.5px; color: var(--txt2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+.oc-progress-track { flex: 1; min-width: 40px; height: 4px; background: rgba(255, 255, 255, .10); border-radius: 999px; overflow: hidden; }
+.oc-progress-fill { height: 100%; width: 0; background: var(--blue2); border-radius: 999px; transition: width .3s ease; }
+.oc-progress-stop {
+    flex-shrink: 0;
+    padding: 3px 9px;
+    font-size: 10px;
+    color: var(--txt2);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+}
+.oc-progress-stop:hover { color: #ff9a8b; border-color: rgba(239, 68, 68, .5); }
+
+/* The JIRA chip sits with the tier chips and is not a tier, so it takes JIRA's own blue
+   rather than borrowing an entitlement colour it has nothing to do with. */
+.oc-chip.oc-chip-jira { color: #a7c7ff; }
+.oc-chip.oc-chip-jira.active { background: rgba(80, 130, 230, .22); border-color: rgba(80, 130, 230, .6); color: #fff; }
+
+/* ============================================================
+   CASE ACTIVITY — the two feed dates in Case Info
+   Read-only, so it is styled as a readout and not as an input:
+   nothing here can be typed into, and it must not look as if
+   it can.
+   ============================================================ */
+.case-activity {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, .03);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+/* "Last message / today / Ayodeji Augustine" and the two NPS averages. Three pieces of text
+   on one line, and two of them were painted in the dimmest colour the palette has — so the
+   line read as a value floating with no label and no author. All three are lifted, and the
+   name is no longer smaller than everything around it. */
+.case-activity-row { display: flex; align-items: baseline; gap: 6px; font-size: 11.5px; }
+.case-activity-k { flex: 0 0 auto; color: #b7c7db; font-weight: 600; }
+.case-activity-v { font-weight: 700; color: #f2f6fb; }
+.case-activity-row.is-stale .case-activity-v { color: #ffb27a; }
+.case-activity-who {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: #9fb2c8;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ===========================================================================
+   THE UPDATE SCREEN
+   ===========================================================================
+   Two versions side by side with an arrow between them, then what to do about it.
+   The comparison is the whole message — "you are here, that is there" answers the
+   question before a word of the prose below it is read — so it is the first thing in
+   the box and the only part of it that is set larger than body text.
+   ========================================================================= */
+.modal.m-upd { max-width: 560px; }
+.upd-vers {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    border-radius: var(--r8, 8px);
+    background: var(--bg2);
+    border: 1px solid var(--border);
+}
+.upd-ver { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 0; }
+.upd-ver-k {
+    font-size: 9.5px;
+    font-weight: 700;
+    color: var(--txt3);
+    text-transform: uppercase;
+    letter-spacing: .5px;
+}
+.upd-ver-v {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--txt1);
+    font-variant-numeric: tabular-nums;
+}
+/* The only coloured thing in the box, and it is the number that is worth acting on. */
+.upd-ver-v.is-newer { color: var(--blue2); }
+.upd-arrow { flex: 0 0 auto; color: var(--txt3); font-size: 15px; }
+
+/* What changed, straight out of the release body — somebody else's prose, so it is set
+   as pre-wrap text in a scrolling well rather than being interpreted as anything. */
+.upd-notes {
+    max-height: 160px;
+    overflow-y: auto;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    border-radius: var(--r6);
+    background: rgba(255, 255, 255, .03);
+    border: 1px solid var(--border);
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--txt2);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.upd-notes[hidden] { display: none !important; }
+
+/* THE STEPS. Numbered because the order is the entire safety of the procedure — backing
+   up after replacing the folder is not a backup — and empty (so, invisible) when there
+   is nothing to install. */
+.upd-steps {
+    margin: 0 0 4px;
+    padding-left: 20px;
+    font-size: 11.5px;
+    line-height: 1.65;
+    color: var(--txt2);
+}
+.upd-steps:empty { display: none; }
+.upd-steps li { margin-bottom: 6px; }
+.upd-steps li::marker { color: var(--blue2); font-weight: 700; }
+
+.upd-acts { display: flex; align-items: center; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+/* Pushes Close/Back up/Download to the right and leaves Restore on the far left — it is
+   the one control here that can destroy something, and it should not sit next to the
+   button people press without reading. */
+.upd-spacer { flex: 1 1 auto; }
+.upd-backup { border-color: rgba(80, 130, 230, .42) !important; color: var(--blue2) !important; }
+
+/* The one-value prompt (case number, list URL). */
+.mask-note { font-size: 11px; line-height: 1.55; color: var(--txt2); margin: 0 0 12px; }
+.mask-err { margin-top: 8px; font-size: 10.5px; color: #ff9a8b; }
+
+/* ===========================================================================
+   WRITE SOMETHING ONTO THE CASE — the Log a Call Note / Write a Post box
+   ===========================================================================
+   A note somebody is going to file on a customer's case is a paragraph, not a
+   field, and it is worth reading back before it goes. So this is the roomiest
+   input in the panel: 12.5px with a 1.65 line height, which is a step up from
+   the 11.5px the form fields use, and tall enough that a normal call note is on
+   screen all at once instead of scrolling under its own top line.
+
+   The count is not a limit, it is a mirror — Salesforce takes 32,000 characters
+   and nobody types that on a call. It is there because a note written into a
+   box with no feedback reads as a form that might not be listening.
+   ========================================================================= */
+.modal.m-note { max-width: 560px; }
+
+/* `.mtitle` carries no rule anywhere in this stylesheet — every modal in the panel
+   uses the class and none of them is styled by it, so a title renders at body size
+   and body weight. Given as one to the note box rather than to `.mtitle` itself:
+   this dialog needs its heading to read as one (it is where the CASE NUMBER is
+   stated, which is the last thing seen before a write with no undo), and quietly
+   restyling ten other dialogs on the way past is not this change's business. */
+.m-note .mtitle {
+    font-size: 14px;
+    font-weight: 650;
+    color: var(--txt1);
+    letter-spacing: -.1px;
+    margin-bottom: 6px;
+}
+
+.note-area {
+    min-height: 190px;
+    max-height: 46vh;
+    font-size: 12.5px;
+    line-height: 1.65;
+    padding: 12px 13px;
+    background: var(--bg2);
+}
+.note-area::placeholder { color: var(--txt4); }
+
+.note-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 7px;
+    font-size: 10.5px;
+    color: var(--txt4);
+}
+/* Turns the colour of live text once there is something to save, so the state of
+   the Save button has a second, quieter signal beside it. */
+.note-count.has-text { color: var(--txt3); }
+.note-hint { white-space: nowrap; }
+
+/* ===========================================================================
+   USAGE & FEEDBACK — the report in Settings
+   ===========================================================================
+   A dense key/value list rather than charts. It has one job: let the engineer
+   read exactly what is counted about them before they decide to share it, and a
+   number beside a name does that better than a bar they have to interpret. The
+   charts live on the shared dashboard, where the comparison between people is
+   the point; here the comparison is between FEATURES on one install.
+   ========================================================================= */
+/* THE HEADING THAT FOLDS THE REST AWAY. A real <button> rather than a div with a click
+   handler — it is a control, it needs a focus ring and a keyboard, and aria-expanded has to
+   live on something that can carry it. Styled as a heading and not as a button: the border
+   and fill of .usage-btn here would read as "press me to send something", which is the one
+   thing this must not suggest. */
+.usage-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 2px 0;
+    margin-bottom: 2px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: var(--font);
+    text-align: left;
+}
+/* text-transform/letter-spacing stated OUTRIGHT rather than inherited. Everything in this
+   dialog sits inside .fld, whose label styling is uppercase and letter-spaced, and the span
+   this button replaced carried the same two overrides inline. Without them the heading came
+   out as "USAGE & FEEDBACK" beside "Bookings Links" and "Salesforce Knowledge Articles". */
+.usage-head-t {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--txt1);
+    text-transform: none;
+    letter-spacing: 0;
+}
+.usage-head-i { font-size: 9px; color: var(--txt3); transition: color .15s; }
+.usage-head:hover .usage-head-t { color: #fff; }
+.usage-head:hover .usage-head-i { color: var(--txt1); }
+.usage-head:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 6px; }
+
+.usage-panel {
+    max-height: 42vh;
+    overflow-y: auto;
+    padding: 10px 11px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--r8);
+    font-size: 10.5px;
+    line-height: 1.5;
+}
+.usage-head {
+    margin: 10px 0 4px;
+    font-size: 9px;
+    font-weight: 650;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--txt4);
+}
+.usage-head:first-child { margin-top: 0; }
+.usage-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 2px 0;
+}
+.usage-k { color: var(--txt2); min-width: 0; }
+.usage-v { color: var(--txt1); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* The never-pressed list is a paragraph of names, not a row of one value — it wraps,
+   and it is the one line in here somebody is meant to stop and read. */
+.usage-never .usage-k { color: var(--txt4); line-height: 1.45; }
+.usage-none { color: var(--txt4); line-height: 1.55; }
+
+.usage-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.usage-btn {
+    flex: 1 1 auto;
+    padding: 7px 10px;
+    background: rgba(129, 140, 248, .10);
+    border: 1px solid rgba(129, 140, 248, .32);
+    border-radius: var(--r8);
+    color: var(--blue2);
+    font-family: var(--font);
+    font-size: 10.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+}
+.usage-btn:hover { background: rgba(129, 140, 248, .22); color: #fff; }
+.usage-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+/* Clearing the counters cannot be undone and there is nowhere to get them back from,
+   so it takes red — the same red as the queue row's × and Close case. */
+.usage-btn-danger {
+    flex: 0 0 auto;
+    background: rgba(239, 68, 68, .10);
+    border-color: rgba(239, 68, 68, .32);
+    color: #fca5a5;
+}
+.usage-btn-danger:hover { background: rgba(239, 68, 68, .2); color: #fff; }
+
+.usage-lab {
+    display: block;
+    margin: 12px 0 4px;
+    font-size: 9px;
+    font-weight: 650;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--txt3);
+}
+/* .finput is a 160px-tall textarea by default — see .acct-subject for the same fix and
+   the same reason. */
+.usage-input { min-height: 0 !important; resize: none; font-size: 11px !important; padding: 7px 9px !important; }
+
+.usage-auto {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 11px;
+    font-size: 10.5px;
+    color: var(--txt2);
+    cursor: pointer;
+}
+.usage-auto input { accent-color: var(--blue); cursor: pointer; }
+
+/* ===========================================================================
+   BOOKINGS LINKS — the list in Settings, and the picker
+   ===========================================================================
+   A row is [name][url][×] on one line, and the name is deliberately the NARROW
+   half. It is a handful of words you choose by ("30-min triage"), while the URL
+   is a Microsoft Bookings GUID nobody reads — so the space goes to the field
+   that needs it and the name gets the fixed width, which also keeps the names
+   left-aligned down the column where they can be compared.
+   ========================================================================= */
+.bk-rows { display: flex; flex-direction: column; gap: 6px; }
+.bk-rows:empty { display: none; }
+
+.bk-row { display: flex; align-items: center; gap: 6px; }
+.bk-row .finput {
+    /* .finput is sized for a form field on its own line; in a row of three it has to
+       stop being 100% wide and stop carrying its own bottom margin. */
+    margin: 0 !important;
+    min-width: 0;
+    font-size: 11px !important;
+    padding: 7px 8px !important;
+}
+.bk-name { flex: 0 0 34%; }
+.bk-url { flex: 1 1 auto; font-family: var(--mono); font-size: 10.5px !important; }
+
+/* The same × as the Quick Options extras and the Cc chips: quiet until the pointer is
+   on the row it belongs to, so it does not read as the point of the row. */
+.bk-del {
+    flex: 0 0 auto;
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--r6);
+    color: var(--txt4);
+    font-family: var(--font);
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    transition: color .15s, background .15s, border-color .15s;
+}
+.bk-row:hover .bk-del { color: var(--txt3); }
+.bk-del:hover { color: #ff9a8b; background: rgba(239, 68, 68, .14); border-color: rgba(239, 68, 68, .35); }
+.bk-del:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; color: var(--txt1); }
+
+.bk-empty {
+    padding: 9px 10px;
+    border: 1px dashed var(--border2);
+    border-radius: var(--r8);
+    color: var(--txt4);
+    font-size: 10.5px;
+    line-height: 1.55;
+}
+
+.bk-add {
+    margin-top: 7px;
+    padding: 6px 10px;
+    background: rgba(129, 140, 248, .10);
+    border: 1px solid rgba(129, 140, 248, .32);
+    border-radius: var(--r8);
+    color: var(--blue2);
+    font-family: var(--font);
+    font-size: 10.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+}
+.bk-add:hover { background: rgba(129, 140, 248, .22); color: #fff; }
+.bk-add:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.bk-add-plus { font-size: 12px; font-weight: 700; margin-right: 2px; }
+
+/* THE PICKER. Rows rather than a <select>, because each option is two lines — the
+   name you choose by and the URL that tells two identically-named pages apart — and a
+   native select can only show one. */
+.modal.m-book { max-width: 520px; }
+.m-book .mtitle {
+    font-size: 14px;
+    font-weight: 650;
+    color: var(--txt1);
+    letter-spacing: -.1px;
+    margin-bottom: 6px;
+}
+.bk-pick { display: flex; flex-direction: column; gap: 6px; max-height: 52vh; overflow-y: auto; }
+.bk-pick-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    text-align: left;
+    padding: 9px 11px;
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: var(--r8);
+    font-family: var(--font);
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+}
+.bk-pick-item:hover { background: var(--bg3); border-color: rgba(129, 140, 248, .45); }
+.bk-pick-item:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.bk-pick-name {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--txt1);
+    font-size: 12px;
+    font-weight: 600;
+}
+.bk-pick-default {
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: rgba(129, 140, 248, .16);
+    color: var(--blue2);
+    font-size: 9px;
+    font-weight: 650;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+.bk-pick-url {
+    color: var(--txt4);
+    font-family: var(--mono);
+    font-size: 9.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.bk-pick-hint { font-size: 10px; color: var(--txt4); }
+
+/* ===========================================================================
+   THE ACCOUNT EMAIL REVIEW BOX
+   ===========================================================================
+   The note box above holds one thing the engineer wrote. This one holds three
+   things the panel produced — a Cc list read off a record they have not looked
+   at, a subject, and a draft — and it is the only place any of them can be
+   checked before Salesforce is filled in. So it is laid out in the order the
+   checking happens: WHO first, then what it says.
+
+   The Cc list leads deliberately, above the subject and the message. It is the
+   part that came from somewhere the engineer cannot see, so it is the part that
+   needs looking at; the draft below it streamed into the chat a moment ago and
+   has already been read once.
+   ========================================================================= */
+.modal.m-acct { max-width: 600px; }
+
+/* Same reasoning as .m-note .mtitle — this heading names the CASE and the
+   ACCOUNT, which is the statement the engineer is checking when they glance at
+   the top of the box, so it has to read as a heading. */
+.m-acct .mtitle {
+    font-size: 14px;
+    font-weight: 650;
+    color: var(--txt1);
+    letter-spacing: -.1px;
+    margin-bottom: 6px;
+}
+
+/* WHEN SOMETHING IS MISSING, SAID BEFORE THE CONTENT RATHER THAN AFTER IT.
+   Two cases reach this: the account team could not be read at all, and the
+   account genuinely names nobody. They are different facts and neither is an
+   error — the draft is still worth putting on the case — so it takes the warn
+   colour rather than the red one, and it sits where it will be read. */
+.acct-warn {
+    margin: 0 0 12px;
+    padding: 8px 10px;
+    border: 1px solid rgba(245, 158, 11, .3);
+    border-radius: var(--r8);
+    background: rgba(245, 158, 11, .1);
+    color: var(--warn);
+    font-size: 10.5px;
+    line-height: 1.55;
+}
+
+.acct-cc-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+.acct-cc-title {
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--txt3);
+}
+/* THE COUNT, because "Cc — the account team" does not say whether there is
+   anybody on it. Same argument as the number on the + Add actions button: a
+   heading that names a list has to say how long the list is, or an empty one
+   reads as a section that has not loaded. */
+.acct-cc-count { font-size: 10.5px; color: var(--txt4); }
+
+.acct-cc {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-height: 22vh;
+    overflow-y: auto;
+}
+.acct-cc:empty { display: none; }
+
+/* ONE PERSON, THEIR ROLE, AND AN ×.
+   The role is on the chip rather than in a tooltip because it is the thing that
+   makes the name checkable: "Rafal Mitulski" says nothing about whether he
+   should be on this email and "Rafal Mitulski · Backup TAM" says all of it. */
+.acct-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    padding: 5px 5px 5px 10px;
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: 999px;
+    font-size: 11px;
+    line-height: 1.3;
+}
+.acct-chip-name {
+    color: var(--txt1);
+    font-weight: 550;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.acct-chip-role {
+    color: var(--txt4);
+    font-size: 9.5px;
+    letter-spacing: .02em;
+    white-space: nowrap;
+}
+/* The same × as the Quick Options extras and the queue rows, and quiet in the
+   same way: lit only once the pointer is on the chip it belongs to. Removing
+   somebody here costs nothing to undo — the button under the draft offers the
+   full list again — so it does not ask. */
+.acct-chip-del {
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    color: var(--txt4);
+    font-family: var(--font);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    transition: color .15s, background .15s, border-color .15s;
+}
+.acct-chip:hover .acct-chip-del { color: var(--txt3); }
+.acct-chip-del:hover { color: #ff9a8b; background: rgba(239, 68, 68, .14); border-color: rgba(239, 68, 68, .35); }
+.acct-chip-del:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; color: var(--txt1); }
+
+.acct-cc-empty {
+    padding: 8px 10px;
+    border: 1px dashed var(--border2);
+    border-radius: var(--r8);
+    color: var(--txt4);
+    font-size: 10.5px;
+    line-height: 1.5;
+}
+
+.acct-lab {
+    display: block;
+    margin: 14px 0 5px;
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--txt3);
+}
+
+/* .ftxt carries min-height:160px because everything else wearing it is a
+   textarea. On a one-line subject field that is a 160px-tall input, so it is
+   unset here rather than by weakening the rule for the twenty fields that want
+   it. */
+.acct-subject {
+    min-height: 0;
+    resize: none;
+    font-size: 12px;
+}
+
+/* Shorter than .note-area's 190px: this box has the Cc list and a subject field
+   above the message, and a modal capped at 95vh has to give that room back from
+   somewhere. Still four or five paragraphs on screen at once. */
+.acct-body {
+    min-height: 150px;
+    max-height: 34vh;
+}
+
+/* CLOSE THE WORKING CASE, in the queue row's expander beside Sync now. Shaped like its
+   neighbour because they are peers — both act on this one case — but it takes red on hover,
+   because this one throws a conversation away and the other one reads a field. */
+.oc-close-btn {
+    color: var(--txt3);
+    background: rgba(255, 255, 255, .04);
+    border-color: var(--border);
+}
+.oc-close-btn:hover:not(:disabled) {
+    color: #ff9a8b;
+    background: rgba(239, 68, 68, .14);
+    border-color: rgba(239, 68, 68, .45);
+}
+
+/* ============================================================
+   THE CASES BUTTON
+   ============================================================
+   It is the only thing in this row now, so it has stopped being
+   a tab in a strip and become a control in its own right — and
+   it was still dressed as the former: a small grey rectangle
+   with an emoji in it, sized to sit beside siblings it no
+   longer has.
+
+   A pill, because there is nothing for a tab shape to abut. Two
+   states that are genuinely different rather than two shades of
+   the same one: FILLED while you are looking at the list (this
+   is where you are), and an outline while you are in a case
+   (this is the way back). A count, because the number of cases
+   waiting is the question the button exists to answer and it
+   should not need a click. A dot when any of them are on SOTI.
+   ============================================================ */
+/* PADDING DEPENDS ON WHETHER THE COUNT IS THERE.
+   The right padding is small because the count chip has a background of its own, and that
+   chip's own rounded edge is what holds the pill's right margin. With no cases there is no
+   chip, and the same small padding left "Cases" hard against the right edge while the icon
+   sat 11px off the left — the label read as shoved over rather than centred. So the empty
+   pill is padded evenly instead, and .has-count (set in updateCasesTabBadge) puts the tight
+   right edge back the moment there is a chip to hold it. */
+.tab-item.tab-pinned {
+    position: relative;
+    height: 30px;
+    padding: 0 12px;
+    gap: 7px;
+    max-width: none;
+    border-radius: 999px;
+    background: linear-gradient(135deg, rgba(99, 102, 241, .16), rgba(99, 102, 241, .05));
+    border: 1px solid rgba(129, 140, 248, .30);
+    color: var(--txt1);
+    letter-spacing: .2px;
+    /* The inset highlight is what stops a flat translucent fill reading as a hole in the
+       bar. One pixel, top edge only — the same trick the pill borrows from a real key. */
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
+    transition: background .18s ease, border-color .18s ease, box-shadow .18s ease,
+                color .18s ease, transform .12s ease;
+}
+.tab-item.tab-pinned.has-count { padding: 0 5px 0 11px; }
+.tab-item.tab-pinned:hover {
+    background: linear-gradient(135deg, rgba(99, 102, 241, .28), rgba(99, 102, 241, .10));
+    border-color: rgba(129, 140, 248, .55);
+    color: #fff;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .10), 0 2px 10px rgba(99, 102, 241, .22);
+}
+/* A pixel, not a bounce. The row is 36px tall and the pill is 30 of them, so anything more
+   than this clips against the border below it. */
+.tab-item.tab-pinned:active { transform: translateY(1px); }
+
+/* HERE, rather than somewhere to go. Solid, so the difference between the two states is
+   read at a glance instead of compared. */
+.tab-item.tab-pinned.active {
+    background: linear-gradient(135deg, var(--blue), #7f86f2);
+    border-color: transparent;
+    color: #fff;
+    box-shadow: 0 2px 12px rgba(99, 102, 241, .40), inset 0 1px 0 rgba(255, 255, 255, .18);
+}
+.tab-item.tab-pinned.active:hover {
+    background: linear-gradient(135deg, #6f72f4, #8b92f6);
+    box-shadow: 0 3px 14px rgba(99, 102, 241, .52), inset 0 1px 0 rgba(255, 255, 255, .22);
+}
+.tab-item.tab-pinned:focus-visible { outline: 2px solid var(--blue2); outline-offset: 2px; }
+
+.tab-cases-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    /* currentColor on the stroke, so it changes with the pill rather than sitting there as
+       a fixed colour while everything around it moves. */
+    opacity: .9;
+}
+.tab-item.tab-pinned.active .tab-cases-icon { opacity: 1; }
+.tab-item.tab-pinned .tab-name { flex: 0 0 auto; font-weight: 700; }
+
+/* The count. Sits inside the pill on the right, in a well of its own so it reads as a
+   quantity attached to the button rather than as part of its name. */
+.tab-cases-count {
+    flex-shrink: 0;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: rgba(129, 140, 248, .22);
+    color: var(--blue2);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-variant-numeric: tabular-nums;
+}
+.tab-item.tab-pinned:hover .tab-cases-count { background: rgba(129, 140, 248, .32); color: #fff; }
+.tab-item.tab-pinned.active .tab-cases-count { background: rgba(255, 255, 255, .22); color: #fff; }
+
+/* SOMETHING IS WAITING ON US. The ring is the bar's own background, so the dot reads as
+   sitting on top of the pill rather than punched into it — the same treatment a notification
+   dot gets anywhere else. Deliberately not animated: it is true of most queues most of the
+   time, and a permanent pulse in the corner of the screen is a thing people learn to stop
+   seeing. */
+.tab-cases-dot {
+    position: absolute;
+    top: -1px;
+    right: -1px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--red);
+    box-shadow: 0 0 0 2px var(--bg0), 0 0 6px rgba(239, 68, 68, .7);
+}
+
+/* ============================================================
+   THE HIDDEN ADMIN CORNER — bottom-left of AI Settings
+   ============================================================
+   Invisible at rest, and a faint dot under the cursor. Not *completely* invisible on
+   hover, on purpose: a target you cannot tell you are on is one you click twice, and the
+   second click of a toggle undoes the first. The dot is the acknowledgement that you have
+   found it, and it appears only for a pointer already resting in an empty corner — which
+   is nobody who was not looking for it.
+
+   NO POINTER CURSOR. `cursor: pointer` is how a browser advertises "this is a control",
+   and advertising it is exactly what this must not do. The cursor stays the default and
+   the dot does the talking.
+
+   LIT WHEN ADMIN MODE IS ON. .is-admin is set by setUsageAdmin(), so the corner reads back
+   the state it controls — otherwise the only way to know whether the toggle is on is to
+   scroll up and look for a section, and the way to turn it OFF is undiscoverable.
+   ============================================================ */
+.admin-spot {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    flex: 0 0 auto;
+    background: none;
+    border: none;
+    border-radius: 50%;
+    /* The default arrow, deliberately — see above. */
+    cursor: default;
+    /* The dot itself, drawn as a centred radial rather than as a child element: one box,
+       nothing to align, and opacity animates on the compositor. */
+    background-image: radial-gradient(circle at 50% 50%,
+                      var(--txt4) 0 2.5px, transparent 2.5px);
+    opacity: 0;
+    transition: opacity .22s ease;
+}
+.admin-spot:hover { opacity: .55; }
+.admin-spot:active { opacity: .9; }
+/* ON. Bright enough to be found again by somebody who wants to switch it back off, quiet
+   enough that it is still a dot in a corner and not a control with a claim on attention. */
+.admin-spot.is-admin {
+    background-image: radial-gradient(circle at 50% 50%,
+                      var(--blue2) 0 2.5px, transparent 2.5px);
+    opacity: .5;
+}
+.admin-spot.is-admin:hover { opacity: .95; }
+/* Nothing to reduce for a user who asked for less motion — the fade is the whole effect,
+   so it is removed rather than shortened. */
+@media (prefers-reduced-motion: reduce) {
+    .admin-spot { transition: none; }
+}
+
+/* ============================================================
+   THE STATS TAB — the pill, and the screen behind it
+   ============================================================
+   A SECOND PILL, DRAWN QUIETER THAN THE FIRST. Cases and Stats sit next to each other and
+   only one of them is the job: the queue is what the panel is for, the report is something
+   you look at between cases. So Stats borrows the shape — same height, same radius, same
+   active treatment, so the row reads as one control with two positions — and drops the
+   indigo fill for the bar's own surface. The difference is deliberate and it is small: two
+   identical pills would make the row a choice between equals, and it is not one.
+   ============================================================ */
+.tab-item.tab-stats {
+    position: relative;
+    height: 30px;
+    padding: 0 12px;
+    gap: 7px;
+    max-width: none;
+    border-radius: 999px;
+    background: var(--bg2);
+    border: 1px solid var(--border2, var(--border));
+    color: var(--txt2);
+    font-weight: 700;
+    letter-spacing: .2px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04);
+    transition: background .18s ease, border-color .18s ease, box-shadow .18s ease,
+                color .18s ease, transform .12s ease;
+}
+.tab-item.tab-stats:hover {
+    background: var(--bg3);
+    border-color: rgba(129, 140, 248, .40);
+    color: var(--txt1);
+}
+.tab-item.tab-stats:active { transform: translateY(1px); }
+/* Lit exactly like the Cases pill when you are on it — "here" has to look the same
+   wherever you are, or the row stops being one control. */
+.tab-item.tab-stats.active {
+    background: linear-gradient(135deg, var(--blue), #7f86f2);
+    border-color: transparent;
+    color: #fff;
+    box-shadow: 0 2px 12px rgba(99, 102, 241, .40), inset 0 1px 0 rgba(255, 255, 255, .18);
+}
+.tab-item.tab-stats.active:hover {
+    background: linear-gradient(135deg, #6f72f4, #8b92f6);
+    box-shadow: 0 3px 14px rgba(99, 102, 241, .52), inset 0 1px 0 rgba(255, 255, 255, .22);
+}
+.tab-item.tab-stats:focus-visible { outline: 2px solid var(--blue2); outline-offset: 2px; }
+.tab-stats-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    opacity: .9;
+}
+.tab-item.tab-stats.active .tab-stats-icon { opacity: 1; }
+.tab-item.tab-stats .tab-name { flex: 0 0 auto; font-weight: 700; }
+
+/* The screen itself. Same skeleton as .oc-view — it is shown in the same slot, instead of
+   .layout, and anything that differed in the box model would make switching tabs shift the
+   whole panel by a pixel. */
+.stats-view {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg0, #0e1116);
+}
+.stats-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px 8px;
+    flex-shrink: 0;
+}
+.stats-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.stats-title-t {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--txt1);
+    letter-spacing: .2px;
+}
+.stats-title-s {
+    font-size: 10px;
+    color: var(--txt2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.stats-acts { display: flex; gap: 6px; flex-shrink: 0; }
+.stats-btn {
+    height: 26px;
+    padding: 0 11px;
+    border-radius: var(--r6);
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--txt2);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .15s, color .15s, border-color .15s;
+}
+.stats-btn:hover { background: var(--bg3); color: var(--txt1); border-color: var(--border2, var(--border)); }
+/* The way out, and it is the one that always works — so it is the one that is filled in. */
+.stats-btn-go {
+    background: rgba(99, 102, 241, .16);
+    border-color: rgba(129, 140, 248, .38);
+    color: var(--blue2);
+}
+.stats-btn-go:hover {
+    background: rgba(99, 102, 241, .28);
+    border-color: rgba(129, 140, 248, .60);
+    color: #fff;
+}
+
+/* THE THREE SUB-TABS — mine, my region's, everybody's.
+   ============================================================
+   SEGMENTED, not a row of separate buttons and not a copy of the tab pills at the top of
+   the panel. Those pills answer "which mode am I in" and are the panel's top-level
+   navigation; these three are one control with three positions, and the difference has to
+   be visible or the screen looks like it has two tab rows stacked on each other. So they
+   share a single track with a hairline between them and exactly one of them is ever lit —
+   which is also the only honest picture, because exactly one report is ever framed.
+
+   Full width and equal thirds. The labels are short and of similar length, and a segmented
+   control whose segments size themselves to their text jumps about as the wording changes. */
+.stats-tabs {
+    display: flex;
+    gap: 2px;
+    margin: 0 14px 8px;
+    padding: 2px;
+    border-radius: var(--r8, 8px);
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.stats-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 24px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: var(--r6);
+    background: transparent;
+    color: var(--txt3);
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .2px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background .15s, color .15s;
+}
+.stats-tab:hover { color: var(--txt1); background: rgba(255, 255, 255, .05); }
+.stats-tab:focus-visible { outline: 2px solid var(--blue); outline-offset: -1px; }
+/* The lit one is a raised chip inside the track, which is what makes the track read as a
+   groove rather than as three buttons that happen to be touching. */
+.stats-tab.is-on {
+    background: rgba(99, 102, 241, .28);
+    color: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .35);
+}
+.stats-tab.is-on:hover { background: rgba(99, 102, 241, .34); }
+
+/* ONE LINE, ALWAYS ON. Not a warning — nothing has gone wrong — so it is drawn as a note
+   and not as an alert. It is here because the failure it describes is INVISIBLE from this
+   side of the frame; see the comment on #statsView. */
+.stats-note {
+    margin: 0 14px 8px;
+    padding: 7px 10px;
+    border-radius: var(--r6);
+    background: rgba(99, 102, 241, .08);
+    border: 1px solid rgba(129, 140, 248, .22);
+    color: var(--txt2);
+    font-size: 10.5px;
+    line-height: 1.5;
+    flex-shrink: 0;
+}
+.stats-note b { color: var(--txt1); font-weight: 700; }
+/* Spelled out rather than left to the UA sheet: .stats-note is a flex child with its own
+   box, and any later rule that gives it a `display` would silently beat `[hidden]`. */
+.stats-note[hidden] { display: none !important; }
+.stats-note code {
+    font-family: 'Cascadia Code', Consolas, monospace;
+    font-size: 10px;
+    padding: 0 3px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, .08);
+    color: var(--txt1);
+}
+
+/* THE TWO STATES THE STRIP CAN TAKE ON. The default is a note, and it stays a note: the
+   colour is only spent on the two things that are NOT the ordinary case, so an engineer who
+   glances at this screen every morning does not learn to ignore a red box. See
+   statsFrameSetState — 'bad' is a frame this extension's own policy refused (which is a
+   fact, not a guess), 'wait' is a frame that has not loaded in twelve seconds (which is). */
+.stats-note-wait {
+    background: rgba(245, 158, 11, .10);
+    border-color: rgba(245, 158, 11, .30);
+}
+.stats-note-bad {
+    background: rgba(239, 68, 68, .10);
+    border-color: rgba(239, 68, 68, .32);
+}
+.stats-note-bad b { color: var(--red); }
+
+.stats-frame-wrap {
+    flex: 1;
+    min-height: 0;
+    margin: 0 14px 14px;
+    border-radius: var(--r8, 8px);
+    border: 1px solid var(--border);
+    overflow: hidden;
+    /* WHITE, DELIBERATELY, and it is the one place in this panel that is. A Power BI report
+       is a white canvas whatever the panel around it is wearing, and a dark box that turns
+       white when the frame paints reads as a flash on every load. Painting the well the
+       colour the frame will be makes the load a fade-in instead. */
+    background: #fff;
+}
+.stats-frame {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    display: block;
+}
+
+/* ============================================================
+   STICKY NOTES & REMINDERS
+   ============================================================
+   The notes are the one part of this panel that deliberately does NOT wear the
+   app's colours. A sticky note is a physical object — pastel paper, dark ink,
+   a slight lift off the surface — and the whole reason for colouring one is
+   that you can pick it out of a board at a glance. Painting them in the dark
+   theme's greys would make six identical rectangles.
+
+   The paper and ink are set per card as custom properties by buildNoteCard,
+   from NOTE_COLORS, so the palette lives in one place in the JS rather than
+   being duplicated as six rules here.
+   ============================================================ */
+.notes-modal {
+    max-width: 720px;
+    width: 96%;
+    height: 88vh;
+    max-height: 88vh;
+    padding: 16px;
+    gap: 12px;
+    overflow: hidden;          /* the BOARD scrolls, not the dialog */
+}
+.notes-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex: 0 0 auto;
+}
+.notes-close {
+    background: none;
+    border: none;
+    color: var(--txt2);
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+}
+.notes-close:hover { color: #ff9a8b; }
+
+.notes-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+}
+.notes-search {
+    flex: 1 1 180px;
+    min-width: 120px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--r6);
+    color: var(--txt1);
+    font-family: inherit;
+    font-size: 11.5px;
+    padding: 6px 9px;
+    outline: none;
+}
+.notes-search:focus { border-color: var(--blue); }
+.notes-filter {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--r6);
+    color: var(--txt1);
+    font-family: inherit;
+    font-size: 11.5px;
+    padding: 6px 8px;
+    outline: none;
+    cursor: pointer;
+}
+.notes-btn {
+    background: rgba(255, 255, 255, .05);
+    border: 1px solid var(--border);
+    border-radius: var(--r6);
+    color: #c2d1e3;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 6px 10px;
+    cursor: pointer;
+    transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.notes-btn:hover { background: rgba(255, 255, 255, .10); color: #fff; border-color: var(--border2); }
+.notes-btn-new {
+    background: rgba(99, 102, 241, .22);
+    border-color: rgba(99, 102, 241, .55);
+    color: #fff;
+}
+.notes-btn-new:hover { background: rgba(99, 102, 241, .34); }
+
+/* THE BOARD. Two columns where there is room and one on a narrow side panel —
+   `auto-fill` rather than a fixed count, so the same markup works at 400px and
+   at 720px without a media query per width. */
+.notes-board {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 10px;
+    align-content: start;
+    padding: 2px;
+}
+.notes-empty {
+    grid-column: 1 / -1;
+    padding: 28px 16px;
+    text-align: center;
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: #9fb2c8;
+}
+
+.note-card {
+    background: var(--note-paper, #fdf0a8);
+    color: var(--note-ink, #4a3d07);
+    border-radius: 8px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    /* The lift is what makes it read as paper on a surface rather than as a
+       coloured div. Kept subtle — there can be thirty of them on screen. */
+    box-shadow: 0 3px 10px rgba(0, 0, 0, .45);
+    position: relative;
+}
+.note-card.is-pinned { box-shadow: 0 3px 10px rgba(0, 0, 0, .45), 0 0 0 2px var(--blue); }
+/* A note whose reminder has come due says so from across the board. */
+.note-card.is-due { box-shadow: 0 3px 10px rgba(0, 0, 0, .45), 0 0 0 2px #ef4444; }
+
+.note-top { display: flex; align-items: center; gap: 4px; }
+.note-colors { display: flex; gap: 3px; flex: 1 1 auto; }
+.note-color {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, .25);
+    padding: 0;
+    cursor: pointer;
+    opacity: .72;
+    transition: opacity .12s ease, transform .12s ease;
+}
+.note-color:hover { opacity: 1; transform: scale(1.15); }
+.note-color.is-on { opacity: 1; box-shadow: 0 0 0 2px rgba(0, 0, 0, .45); }
+
+.note-pin, .note-del {
+    flex: 0 0 auto;
+    background: rgba(0, 0, 0, .07);
+    border: none;
+    border-radius: 5px;
+    color: inherit;
+    font-family: inherit;
+    font-size: 11px;
+    line-height: 1;
+    padding: 3px 5px;
+    cursor: pointer;
+    opacity: .5;
+    transition: opacity .12s ease, background .12s ease;
+}
+.note-pin:hover, .note-del:hover { opacity: 1; background: rgba(0, 0, 0, .14); }
+.note-pin.is-on { opacity: 1; background: rgba(0, 0, 0, .18); }
+.note-del { font-size: 14px; padding: 1px 6px 3px; }
+/* Armed for deletion — the second press is the one that does it. */
+.note-del.is-armed {
+    opacity: 1;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 6px;
+    background: #d92d20;
+    color: #fff;
+}
+
+.note-text {
+    width: 100%;
+    min-height: 64px;
+    resize: vertical;
+    background: rgba(255, 255, 255, .35);
+    border: 1px solid rgba(0, 0, 0, .10);
+    border-radius: 5px;
+    color: inherit;
+    /* THE UI FONT, not a handwriting face. A sticky note wants to LOOK handwritten and
+       these do — pastel paper, dark ink, a lift off the board. But what is written on
+       one here is a customer's name, a case number and a time, read in a hurry off a
+       narrow panel, and Segoe Print costs more legibility than the charm is worth. */
+    font-family: var(--font);
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 6px 7px;
+    outline: none;
+}
+.note-text:focus { border-color: rgba(0, 0, 0, .32); background: rgba(255, 255, 255, .55); }
+.note-text::placeholder { color: currentColor; opacity: .45; }
+
+.note-case { display: flex; gap: 4px; align-items: center; }
+.note-case-in {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: rgba(255, 255, 255, .35);
+    border: 1px solid rgba(0, 0, 0, .10);
+    border-radius: 5px;
+    color: inherit;
+    font-family: inherit;
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 4px 6px;
+    outline: none;
+}
+.note-case-in::placeholder { color: currentColor; opacity: .45; font-weight: 400; }
+.note-case-use {
+    flex: 0 0 auto;
+    background: rgba(0, 0, 0, .10);
+    border: none;
+    border-radius: 5px;
+    color: inherit;
+    font-family: inherit;
+    font-size: 9.5px;
+    font-weight: 700;
+    padding: 4px 6px;
+    cursor: pointer;
+    opacity: .7;
+    white-space: nowrap;
+}
+.note-case-use:hover { opacity: 1; background: rgba(0, 0, 0, .18); }
+
+.note-rem { display: flex; gap: 4px; align-items: center; }
+.note-rem-kind, .note-rem-at {
+    background: rgba(255, 255, 255, .35);
+    border: 1px solid rgba(0, 0, 0, .10);
+    border-radius: 5px;
+    color: inherit;
+    font-family: inherit;
+    font-size: 10px;
+    padding: 4px 5px;
+    outline: none;
+    min-width: 0;
+}
+.note-rem-kind { flex: 0 0 auto; cursor: pointer; }
+.note-rem-at { flex: 1 1 auto; }
+/* The browser's own calendar glyph is drawn near-black on light chrome; on pastel
+   paper it needs no inversion, but it does need to stop being the widest thing in
+   the row on a narrow panel. */
+.note-rem-at::-webkit-calendar-picker-indicator { opacity: .55; cursor: pointer; }
+.note-rem-clear {
+    flex: 0 0 auto;
+    background: rgba(0, 0, 0, .10);
+    border: none;
+    border-radius: 5px;
+    color: inherit;
+    font-size: 13px;
+    line-height: 1;
+    padding: 2px 6px 4px;
+    cursor: pointer;
+    opacity: .55;
+}
+.note-rem-clear:hover { opacity: 1; background: rgba(0, 0, 0, .18); }
+
+.note-presets { display: flex; flex-wrap: wrap; gap: 3px; }
+.note-preset {
+    background: rgba(0, 0, 0, .08);
+    border: none;
+    border-radius: 20px;
+    color: inherit;
+    font-family: inherit;
+    font-size: 9.5px;
+    font-weight: 700;
+    padding: 3px 7px;
+    cursor: pointer;
+    opacity: .72;
+}
+.note-preset:hover { opacity: 1; background: rgba(0, 0, 0, .16); }
+
+.note-meta {
+    font-size: 9.5px;
+    font-weight: 600;
+    opacity: .62;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.notes-foot {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 10.5px;
+    color: #9fb2c8;
+}
+.notes-count { font-weight: 700; }
+.notes-count.is-due { color: #ff9a8b; }
+.notes-hint { opacity: .8; }
+
+/* The merge-or-replace question, over the board it is about. */
+.notes-ask { z-index: 1100; }
+.notes-ask-box { max-width: 420px; }
+.notes-ask-act { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.notes-ask-danger { color: #ff9a8b; border-color: rgba(239, 68, 68, .45); }
+.notes-ask-danger:hover { background: rgba(239, 68, 68, .16); }
+
+/* ---- THE REMINDER, ON SCREEN --------------------------------------------- */
+.remind-modal { max-width: 460px; z-index: 1200; }
+.backdrop#mRemind { z-index: 1200; }
+.remind-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.remind-bell { font-size: 20px; }
+.remind-body { display: flex; flex-direction: column; gap: 8px; max-height: 56vh; overflow-y: auto; }
+.remind-row {
+    background: var(--bg3);
+    border: 1px solid rgba(239, 68, 68, .35);
+    border-left: 3px solid #ef4444;
+    border-radius: 8px;
+    padding: 9px 10px;
+}
+.remind-row-head { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+.remind-kind { font-size: 11px; font-weight: 700; color: #f2f6fb; }
+.remind-case {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--blue2);
+    background: rgba(99, 102, 241, .16);
+    border-radius: 4px;
+    padding: 1px 5px;
+}
+.remind-when { font-size: 10px; color: #ffb27a; margin-left: auto; }
+.remind-text {
+    margin-top: 6px;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: #dbe5f1;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 8.5em;
+    overflow-y: auto;
+}
+.remind-row-act { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.remind-act-btn {
+    background: rgba(255, 255, 255, .06);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    color: #c2d1e3;
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 4px 9px;
+    cursor: pointer;
+}
+.remind-act-btn:hover { background: rgba(255, 255, 255, .12); color: #fff; }
+.remind-act-btn.is-done {
+    background: rgba(34, 197, 94, .18);
+    border-color: rgba(34, 197, 94, .5);
+    color: #a7f3c4;
+}
+.remind-act-btn.is-done:hover { background: rgba(34, 197, 94, .3); color: #fff; }
+.remind-act { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+
+/* HOW MANY REMINDERS ARE WAITING, on the Quick Options row itself — so a reminder
+   that came due while the board was shut is visible without opening anything.
+   Absent, not zero, when there is nothing due. */
+.qa-extra-badge {
+    flex: 0 0 auto;
+    /* The row is align-items:stretch for the button and its ×; a pill that stretched to
+       the row's full height would read as a third control rather than as a count. */
+    align-self: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 9px;
+    background: #ef4444;
+    color: #fff;
+    font-size: 9.5px;
+    font-weight: 800;
+    line-height: 16px;
+    text-align: center;
+}
+
+/* THE PARAGRAPH GAP INSIDE A CHAT ANSWER — see MD_PARA_GAP in sidepanel.js.
+   The spacer is a real line carrying a non-breaking space, because an empty block
+   is invisible to the clipboard and a copied answer arrived in Salesforce with its
+   paragraphs welded together. Its height is pinned to the 18px the old margin-only
+   spacer produced, so the panel looks exactly as it did — and pinned rather than
+   inherited so a future change to the bubble's line-height cannot silently widen
+   every paragraph gap in the app. */
+.md-gap {
+    height: 18px;
+    line-height: 18px;
+    margin: 0;
+    /* Nothing is drawn in it and nothing should ever be dragged out of it by accident,
+       but it MUST stay part of the selection — that is the entire point. */
+    font-size: 1px;
+}
+
+/* THE COPY BUTTON THAT IS ON EVERY ANSWER.
+   The four quick-action buttons name what they copy ("Copy summary") and are worth
+   the weight; this one sits under every answer in the conversation, so it is quiet
+   until the pointer is on the message. Loud enough to find, never loud enough to
+   read as the point of what was just said. */
+.copy-row-quiet {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top-color: transparent;
+    opacity: .45;
+    transition: opacity .15s ease, border-color .15s ease;
+}
+.msg:hover .copy-row-quiet,
+.copy-row-quiet:focus-within {
+    opacity: 1;
+    border-top-color: var(--border);
+}
+.copy-btn-quiet {
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 3px 10px;
+    background: rgba(255, 255, 255, .05);
+    color: #b7c7db;
+}
+.copy-btn-quiet:hover { background: rgba(255, 255, 255, .10); color: #fff; }
+/* A touch screen has no hover, so the button would never come out of hiding. */
+@media (hover: none) {
+    .copy-row-quiet { opacity: 1; border-top-color: var(--border); }
+}

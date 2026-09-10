@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "QA Tool",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Case quality assurance for the SOTI Support team — reads cases from Salesforce and scores how they were handled.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtzXvO7l0Y0H66HPyogQ/16ujwW2buMHSOHXriuo8nvVThIOeXUHscHwoFtUcT6eTIFFQJqtzwHqKM3muIzoyi2GCIPYI3AZ7JV+gHwDqMQ1G32ai9wpLzvlDIJu0DYECZe9sJcAT9F2LJ3zHD64un7WhDg+u2EWkBCrCBQumtFYooiDIDtoLLN5JUtDIHpa+SOtGgJXdn7HhcH1i39DFepJgArlr2R2hZOlq8rg5i+tnjFQN9+NCKgC8YesAT2hxHDszzBqWzWtfg+TEn/uEGHP/mXBmlGkMo+iFNSpGEfwb7+ww46i3uGYImGkv/lMeq7fzzf2eN90R73ZZdZCZrQIDAQAB",
   "permissions": [
@@ -15,11 +15,11 @@
   ],
   "host_permissions": [
     "https://*.salesforce.com/*",
-    "https://*.force.com/*"
+    "https://*.force.com/*",
+    "https://api.github.com/*"
   ],
   "optional_host_permissions": [
-    "https://m365.cloud.microsoft/*",
-    "https://api.github.com/*"
+    "https://m365.cloud.microsoft/*"
   ],
   "background": {
     "service_worker": "background.js"

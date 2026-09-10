@@ -451,6 +451,20 @@
      * renders fast enough to answer one of them. A flat 800ms before even the first look is
      * eight tenths of a second per case spent on nothing, thirty times over.
      * ========================================================================= */
+    /* The tail of the queue of readers waiting to scrape. Each takes a lease, does its
+     * painted scrape, and releases; the next is waiting on that release rather than on the
+     * escalation that preceded it. */
+    let scrapeGate = Promise.resolve();
+
+    async function takeScrapeLease() {
+        let release;
+        const held = new Promise((res) => { release = res; });
+        const ahead = scrapeGate;
+        scrapeGate = ahead.then(() => held, () => held);
+        await ahead.catch(() => {});
+        return release;
+    }
+
     async function readCase(url, opts = {}) {
         const {
             readyMs = 30000,     // how long to wait for the record itself to render
@@ -498,6 +512,7 @@
 
         await acquire();
         let unpaint = null;
+        let releaseScrape = null;
 
         try {
             tabId = await openTab(url);
@@ -527,7 +542,17 @@
                 };
             }
 
-            // PHASE TWO — once. See the header above.
+            /* PHASE TWO — once, PAINTED, and one at a time. See the notes on the paint
+             * above and on takeScrapeLease: the feed cannot load in a tab the browser is
+             * not rendering, and two readers painting at once take the foreground off each
+             * other. The lease is released in the `finally` on every path, including the
+             * scrape timing out — a lease that leaks would stop the rest of the run dead. */
+            releaseScrape = await takeScrapeLease();
+            if (!unpaint) {
+                unpaint = paintTab(tabId);
+                try { await unpaint.ready; } catch (e) { /* the scrape below is the real test */ }
+                await wakeTab(tabId);
+            }
             const data = await ask({ action: 'GET_SALESFORCE_QA_CASE' }, scrapeMs);
             if (!data) {
                 return { ok: false, error: 'The case page did not answer the QA read — it may still have been loading its feed.' };
@@ -545,6 +570,9 @@
              * loading in a window nobody can see. The escalation is released before the tab is
              * closed so the window can go back to minimized, and the lease last of all, which
              * starts the idle countdown. */
+            // FIRST of all, in fact: every other reader in the run is waiting on this one, and
+            // a lease still held while the tab is closed is a run that has stopped.
+            if (releaseScrape) { try { releaseScrape(); } catch (e) {} }
             if (unpaint) unpaint();
             closeTab(tabId);
             release();

@@ -575,10 +575,51 @@ function parseSalesforceDate(raw, now = Date.now()) {
         if (!Number.isNaN(d.getTime())) return d.getTime();
     }
 
-    // 4. Anything with a month NAME in it — "24 Jul 2025, 12:33", "Jul 24, 2025".
+    /* 4. Anything with a month NAME in it — "24 Jul 2025, 12:33", "Jul 24, 2025".
+     *
+     * Date.parse first, because it handles the shapes it handles perfectly well. The two
+     * fallbacks below exist because the two shapes SALESFORCE'S OWN CASE FEED renders are
+     * both shapes Date.parse refuses outright:
+     *
+     *   · "25 August 2026 at 15:10" — the word "at" between the date and the time makes
+     *     the entire string NaN. This is the timestamp on every post in the compact feed
+     *     on a UK-locale org, so the effect was a case read with NO usable dates in it at
+     *     all: no first response time, no silence gaps, and a logged call that could not
+     *     be counted as a meeting because it had no instant to sit at. It reported as
+     *     "n of n posts carried no readable timestamp", which reads like a page that
+     *     failed to load rather than a date format nobody had taught this function.
+     *
+     *   · "1 September at 09:59" — Salesforce drops the year on posts from the current
+     *     one, and Date.parse reads a year-less date as the year 2001. That is worse than
+     *     failing: it is a confident timestamp twenty-five years out, which would place
+     *     every recent post before the case was opened.
+     *
+     * The assumed year is this one, rolled back a year if that would put the post in the
+     * future — which is what happens to a December post read in January.
+     */
     if (/[a-z]{3}/i.test(t)) {
-        const ms = Date.parse(t);
-        if (Number.isFinite(ms)) return ms;
+        const direct = Date.parse(t);
+        if (Number.isFinite(direct)) return direct;
+
+        const s = t.replace(/(\d)(?:st|nd|rd|th)\b/gi, '$1')   // "25th August" → "25 August"
+                   .replace(/\s+at\s+/i, ' ')                  // "… 2026 at 15:10" → "… 2026 15:10"
+                   .replace(/\s+/g, ' ')
+                   .trim();
+        const hasYear = /\b\d{4}\b/.test(s);
+        if (hasYear) {
+            const ms = Date.parse(s);
+            if (Number.isFinite(ms)) return ms;
+        } else {
+            const year = new Date(now).getFullYear();
+            const dated = s.replace(/^(\d{1,2} [a-z]{3,9})\b/i, `$1 ${year}`)        // "1 September 09:59"
+                           .replace(/^([a-z]{3,9} \d{1,2})\b,?/i, `$1, ${year}`);    // "September 1 09:59"
+            const ms = Date.parse(dated);
+            if (Number.isFinite(ms)) {
+                // A year we assumed, not one we were told. If it lands in the future the
+                // post is from last year, not next.
+                return ms > now + 86400000 ? new Date(ms).setFullYear(new Date(ms).getFullYear() - 1) : ms;
+            }
+        }
     }
     return null;
 }
@@ -1693,25 +1734,83 @@ async function expandFeedPosts(root, feed) {
     if (expandAll.length) {
         expandAll[0].click();
         await sleep(900);
-    } else {
-        // Fallback: click each post's own collapsed chevron.
-        //
-        // `aria-expanded="false"` is the markup for ANY collapsed disclosure control, not
-        // just a post — the ⓘ that expands an email's recipients is one, and this swept it
-        // up with the rest. The post chevrons are what this is for; anything that opens a
-        // panel is not a post.
-        const chevrons = Array.from(feed.querySelectorAll('a[role="button"][aria-expanded="false"]'))
-            .filter(el => !opensSomethingElse(el));
-        if (chevrons.length) {
-            chevrons.forEach(c => { try { c.click(); } catch (_) {} });
-            await sleep(900);
-        }
     }
+
+    /* AND THEN EVERY ITEM STILL SHUT — always, not as a fallback.
+     *
+     * This used to be the `else` branch, and that is what hid every case transfer from the
+     * QA read. "Expand all visible posts" opens POSTS; it leaves the record-change entries
+     * alone, and a collapsed compact feed item has NO BODY IN THE DOM — Lightning renders
+     * it on expand. The "Case updated / Case Owner: HQ - Support Queue to <name>" entry is
+     * one of those, and it is the start of the first response clock. Missing it does not
+     * make the measurement approximate; it makes it wrong in one direction, against the
+     * agent, by however long the case sat in a queue before anybody was given it. */
+    await expandCollapsedFeedItems(feed);
+
+    /* AND THE CLUMPS, once their entries are open — see expandRecordChanges. This runs
+     * AFTER the chevron sweep because a clump that is still collapsed has no "Show All
+     * Updates" link to click: the link is inside the body Lightning renders on expand. */
+    await expandRecordChanges(feed);
 
     // Always, on BOTH paths. "Expand all" is the common one and it opens posts only —
     // returning early after it, as this used to, would have left every hidden reply
     // hidden on exactly the layout most cases use.
     await expandFeedComments(feed);
+}
+
+/* OPEN THE FEED ITEMS THAT ARE STILL CLOSED.
+ *
+ * Scoped to each item's OWN header chevron rather than to every collapsed control on the
+ * page: `aria-expanded="false"` is the markup for any disclosure widget, and the ⓘ that
+ * opens an email's recipient list is one of them. opensSomethingElse rejects the popovers
+ * and menus; the closest() test rejects anything belonging to a nested item.
+ *
+ * TWO ROUNDS, because expanding an item can render another collapsed one inside it, and
+ * because a click that lands while Lightning is still painting is a click that did
+ * nothing. Best-effort throughout: this runs on a live record page, and a chevron that
+ * will not open should cost the read nothing.
+ */
+async function expandRecordChanges(feed) {
+    if (!feed || typeof feed.querySelectorAll !== 'function') return 0;
+    let opened = 0;
+    for (let round = 0; round < 3; round++) {
+        const links = [];
+        for (const a of feed.querySelectorAll('.cuf-ftcLink a, .cuf-ftcList a, a[title]')) {
+            const label = ((a.textContent || '') + ' ' + (a.getAttribute('title') || ''))
+                .replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+            // Narrow on purpose. This clicks things on a live record page, so it acts on the
+            // one control it can name and nothing that merely looks like it.
+            if (!/^(show all updates ?)+$/i.test(label)) continue;
+            if (a.closest && !a.closest('.cuf-ftcList, .cuf-ftcLink, ' + FEED_ITEM_SELECTOR)) continue;
+            links.push(a);
+        }
+        if (!links.length) break;
+        for (const a of links) { try { a.click(); opened++; } catch (e) { /* best effort */ } }
+        await sleep(600);
+    }
+    if (opened) console.log(`SOTI AI Analyser: opened ${opened} clumped record-change list(s)`);
+    return opened;
+}
+
+async function expandCollapsedFeedItems(feed) {
+    if (!feed || typeof feed.querySelectorAll !== 'function') return 0;
+    let opened = 0;
+    for (let round = 0; round < 2; round++) {
+        const shut = [];
+        for (const item of feed.querySelectorAll(FEED_ITEM_SELECTOR)) {
+            for (const chev of item.querySelectorAll('a[role="button"][aria-expanded="false"]')) {
+                if (opensSomethingElse(chev)) continue;
+                if (chev.closest && chev.closest(FEED_ITEM_SELECTOR) !== item) continue;
+                shut.push(chev);
+                break;   // one item, one chevron — its own
+            }
+        }
+        if (!shut.length) break;
+        for (const c of shut) { try { c.click(); opened++; } catch (e) { /* best effort */ } }
+        await sleep(700);
+    }
+    if (opened) console.log(`SOTI AI Analyser: opened ${opened} collapsed feed item(s)`);
+    return opened;
 }
 
 /*
@@ -7690,6 +7789,123 @@ function qaItemIsCall(item) {
     return !!item.querySelector('.slds-icon-standard-log-a-call, [title*="Log a Call"], [title*="Call"]');
 }
 
+/* THE MOMENT THE CASE LANDED ON SOMEBODY'S DESK.
+ *
+ * "Case Owner — Enterprise Support Queue to Ayodeji Augustine", which Salesforce writes
+ * into the feed as a TrackedChange whenever the owner field moves. It is not a message and
+ * it is not activity; it is the START OF THE CLOCK, and it is why this is read at all.
+ *
+ * The first response target does not run from the moment a case was opened. It runs from
+ * the moment the case was TRANSFERRED TO THE ENGINEER WHO OWNS IT. A case that sat in the
+ * Enterprise Support Queue for a fortnight before anyone was given it would otherwise be
+ * read as a fortnight of that engineer's silence — and the email they sent two hours after
+ * picking it up would be reported as a two-week miss against a two-hour target, on the
+ * record of somebody who answered inside it.
+ *
+ * READ OFF THE THREE ELEMENTS, NOT OFF THE SENTENCE. Salesforce renders the change as a
+ * field-change row: the field's label, the old value, the new value. The sentence that
+ * joins them ("… to …") is localised and the class names are not.
+ */
+// A field label, normalised. Salesforce nests the words inside a uiOutputText span, pads
+// them with non-breaking spaces on some layouts, and renders "Case Owner" as "Case Owner:"
+// on others — none of which changes which field it is.
+function qaFieldLabelIs(text, name) {
+    const t = String(text || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').replace(/[:：]\s*$/, '').trim();
+    return new RegExp('^(case )?' + name + '$', 'i').test(t);
+}
+
+function qaOwnerChangesOf(item) {
+    const out = [];
+    if (!item) return out;
+    const rows = item.querySelectorAll('.cuf-ftcDrillInItem, .cuf-ftcItem, .forceChatterFtcList li');
+    for (const row of rows) {
+        const label = row.querySelector('.cuf-ftcFieldLabel');
+        const field = (label && (label.innerText || label.textContent)) || '';
+        /* "Case Owner" on a case, "Owner" on some layouts. NOTHING ELSE — and "Temporary
+         * Case Owner" in particular is not it. A temporary owner is cover while somebody is
+         * away; the first response target belongs to the owner of record, and starting the
+         * clock at a stand-in's name would measure the wrong person's silence. */
+        if (!qaFieldLabelIs(field, 'owner')) continue;
+        const to = row.querySelector('.cuf-ftcFieldNewValue');
+        const from = row.querySelector('.cuf-ftcFieldOldValue');
+        const toName = ((to && (to.innerText || to.textContent)) || '').trim();
+        if (toName) {
+            out.push({ to: toName, from: ((from && (from.innerText || from.textContent)) || '').trim(), how: 'fields' });
+            continue;
+        }
+        /* THE SPANS WERE NOT THERE. Read the row's own sentence instead — "HQ - Support
+         * Queue to Ayodeji Augustine" — taking everything after the field label. The join
+         * word is localised, so the split is on the LAST " to " rather than the first: a
+         * queue called "Escalations to Development" would otherwise be cut in half. */
+        const said = qaOwnerChangeFromText((row.innerText || row.textContent || ''), field);
+        if (said) out.push(said);
+    }
+    if (out.length) return out;
+    /* AND IF THERE WERE NO FIELD-CHANGE ROWS AT ALL. Some layouts render the whole change as
+     * one line in the item body. Only tried when the item says it is a record change, so a
+     * customer email that happens to contain the words "case owner" cannot start a clock. */
+    const type = (item.getAttribute && item.getAttribute('data-type')) || '';
+    if (/trackedchange|caseownerchange|fieldchange/i.test(type) || (item.className || '').includes('cuf-clumpItem')) {
+        const whole = (item.innerText || item.textContent || '');
+        for (const line of whole.split(/\n+/)) {
+            if (!/\bcase owner\b/i.test(line)) continue;
+            if (/\btemporary\b/i.test(line)) continue;
+            const said = qaOwnerChangeFromText(line, 'Case Owner');
+            if (said) out.push(said);
+        }
+    }
+    return out;
+}
+
+/* "Case Owner  HQ - Support Queue to Ayodeji Augustine" → { from, to }.
+ *
+ * Deliberately narrow. The new value must look like a PERSON — Salesforce writes a full
+ * name here — because the alternative reading of a loose match is a status change or a
+ * sentence out of an email starting somebody's first response clock. */
+function qaOwnerChangeFromText(text, label) {
+    let t = String(text || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!t) return null;
+    const lab = String(label || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+    if (lab && t.toLowerCase().startsWith(lab.toLowerCase())) t = t.slice(lab.length).trim();
+    t = t.replace(/^[:\-–—]\s*/, '');
+    const at = t.toLowerCase().lastIndexOf(' to ');
+    if (at <= 0) return null;
+    const from = t.slice(0, at).trim();
+    const to = t.slice(at + 4).trim();
+    if (!to || to.length > 80) return null;
+    // A name, not a sentence: two to four words of letters, with the punctuation a name is
+    // allowed to carry. "Ayodeji Augustine" yes; "the customer for an update" no.
+    if (!/^[\p{L}\p{M}'’.\- ]{2,}$/u.test(to)) return null;
+    if (to.split(' ').filter(Boolean).length > 4) return null;
+    return { to, from, how: 'text' };
+}
+
+/* A RECORD CHANGE RATHER THAN A MESSAGE — "Case updated", and the field rows under it.
+ * Counted so the engine can tell a feed with no field changes in it (filtered out, or
+ * still collapsed) from a case that genuinely was never transferred. */
+function qaItemIsRecordChange(item) {
+    if (!item) return false;
+    const type = (item.getAttribute && item.getAttribute('data-type')) || '';
+    if (/trackedchange|fieldchange|caseownerchange/i.test(type)) return true;
+    // A CLUMP — several changes made in one moment, rendered as one entry. It carries no
+    // data-type of its own, which is why the type test above does not see it.
+    if ((item.className || '').includes('cuf-clumpItem')) return true;
+    return !!item.querySelector('.cuf-ftcList, .cuf-ftcDrillInItem, .forceChatterFtcList');
+}
+
+// Which fields a record-change entry says it changed. Names only — the values are nobody's
+// business here, and this exists to answer "was an owner change among them".
+function qaChangedFieldsOf(item) {
+    const out = [];
+    if (!item || typeof item.querySelectorAll !== 'function') return out;
+    for (const label of item.querySelectorAll('.cuf-ftcFieldLabel')) {
+        const name = ((label.innerText || label.textContent) || '')
+            .replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').replace(/[:：]\s*$/, '').trim();
+        if (name && name.length <= 60 && !out.includes(name)) out.push(name);
+    }
+    return out;
+}
+
 // An EMAIL as opposed to a Chatter post. The body element is the tell: Salesforce renders
 // an email's text through its own component, and a post's through the plain feed body.
 function qaItemIsEmail(item) {
@@ -7745,7 +7961,14 @@ function qaItemBody(item, readText) {
  */
 function readQaFeedItems(root, opts = {}) {
     const now = Date.now();
-    const out = { user: '', domains: [], items: [], seen: 0, dated: 0, classified: 0, reason: 'no-feed' };
+    /* `changeItems` and `changedFields` are diagnostics, and they earn their place: when no
+     * transfer is found there are two completely different reasons for it, and they need
+     * different fixes. Either the feed carried no record-change entries at all — they are
+     * filtered out, or still collapsed — or it carried some and none of them was an owner
+     * change, which means the case really was never transferred. Without this the finding
+     * can only say "not readable", which is the one thing that helps nobody. */
+    const out = { user: '', domains: [], items: [], ownerChanges: [], changeItems: 0, changedFields: [],
+                  seen: 0, dated: 0, classified: 0, bodyless: 0, reason: 'no-feed' };
 
     let items = findInShadows(FEED_ITEM_SELECTOR, root || document, false);
     if (!items.length && root && root !== document) items = findInShadows(FEED_ITEM_SELECTOR, document, false);
@@ -7789,7 +8012,6 @@ function readQaFeedItems(root, opts = {}) {
     for (const item of scope) {
         out.seen++;
         const { ms, label } = feedItemTimestamp(item, now);
-        if (ms) out.dated++;
 
         const text = (item.innerText || item.textContent || '').trim();
         const sender = feedItemSender(item) || 'Unknown';
@@ -7817,7 +8039,29 @@ function readQaFeedItems(root, opts = {}) {
             body: c.body
         }));
 
-        if (!body && !replies.length) continue;   // a record-change entry, not a message
+        /* A RECORD CHANGE IS NOT A MESSAGE, but ONE of them is a measurement: the transfer
+         * of the case to its owner, which is where the first response clock starts. Taken
+         * before the drop below, and kept out of `items` deliberately — every gap and reply
+         * time in qa-engine.js is a duration between two things somebody SAID, and a field
+         * change sitting in that list would answer a customer's email with a status update. */
+        /* EVERY owner change on this entry, not the first. A clump can carry a chain of
+         * them — "A to B" and "B to C" — under one timestamp, and the one that matters is
+         * whichever lands on the current owner. `how` rides along so a reviewer chasing a
+         * wrong first response time can see whether it was read off the field-change spans
+         * or out of the sentence. */
+        for (const ownerChange of qaOwnerChangesOf(item)) {
+            out.ownerChanges.push({ at: ms, label, by: sender, to: ownerChange.to, from: ownerChange.from, how: ownerChange.how || '' });
+        }
+        for (const f of qaChangedFieldsOf(item)) if (!out.changedFields.includes(f)) out.changedFields.push(f);
+        if (qaItemIsRecordChange(item)) out.changeItems++;
+
+        // A record change is not a message — it is a field moving, and it is already
+        // captured above as an owner transfer where it is one.
+        if (qaItemIsRecordChange(item)) continue;
+        // Nor is an item with no timestamp AND no text AND no replies: that is chrome.
+        const bodyUnread = !body && !replies.length;
+        if (bodyUnread && ms === null) continue;
+        if (bodyUnread) out.bodyless++;
 
         out.items.push({
             at: ms,
@@ -7827,6 +8071,10 @@ function readQaFeedItems(root, opts = {}) {
             internal,
             fromUs,
             body,
+            // The text could not be read — an email rendered into an iframe, or an item
+            // the page would not open. The timing, the author and the direction are still
+            // known, so it counts; its words simply cannot be quoted.
+            bodyUnread,
             replies,
             // Read here rather than in the engine so the test runs against the post's WHOLE
             // rendered text — headers, subject line and all — which is where "WebEx invite"
@@ -7845,7 +8093,18 @@ function readQaFeedItems(root, opts = {}) {
         if (b.at === null) return -1;
         return a.at - b.at;
     });
+    // Same order, same reason: the engine takes the FIRST transfer to the owner, so a
+    // newest-first feed must not be allowed to hand it the last one.
+    out.ownerChanges.sort((a, b) => {
+        if (a.at === b.at) return 0;
+        if (a.at === null) return 1;
+        if (b.at === null) return -1;
+        return a.at - b.at;
+    });
 
+    // Counted over what was KEPT rather than over every article walked, so the numbers
+     // the panel prints describe the transcript the review was written from.
+    out.dated = out.items.filter(i => i.at).length;
     out.reason = !out.items.length ? 'no-items'
         : !out.dated ? 'no-dates'
         : !out.classified ? 'not-attributed'
@@ -7908,6 +8167,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             const data = await scrapeSalesforce({ loadFullFeed: true });
             const root = getActiveWorkspaceRoot();
             data.qaFeed = readQaFeedItems(root, { owner: data.caseOwner, contact: data.contactName });
+            // What the scroll thought it achieved, kept beside what the read found. "80
+            // rounds, exhausted-rounds, 3 items" and "3 rounds, no-new-posts, 3 items" are
+            // a stuck feed and a short case, and they look identical from the count alone.
+            if (data.feedLoad) data.qaFeed.load = data.feedLoad;
             data.qaOpened = readCaseOpenedAt(root);
             data.qaReadAt = Date.now();
             console.log(`SOTI QA Tool: read ${data.caseNumber || 'case'} — `

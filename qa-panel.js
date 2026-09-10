@@ -49,12 +49,24 @@
         rules: 'qa_rules',
         roster: 'qa_roster',
         lastList: 'qa_last_list',
+        /* THE REVIEWER'S OWN SALESFORCE LIST VIEWS, saved by hand — separate from lastList,
+         * which is only ever a record of where the last sync happened to come from. One is
+         * a memory, the other is a choice, and a sync from somewhere else must not quietly
+         * rewrite the queues somebody chose to keep. */
+        lists: 'qa_lists',
         month: 'qa_sheet_month',
         // The per-case chats, and the material they stand on. Separate keys because they
         // have different lifetimes: a chat is the reviewer's own work and is only ever
         // deleted deliberately, while a context is a cache of a scrape and is pruned.
         chats: 'qa_chats',
-        context: 'qa_context'
+        context: 'qa_context',
+        /* WHAT A ROW SHOWS, AND HOW WIDE EACH COLUMN IS — the reviewer's own layout.
+         * Three keys rather than one: the chosen columns, the columns that EXISTED when that
+         * choice was made (which is how a later build tells a column somebody switched off
+         * from one they were never offered — see loadColumnPrefs), and the dragged widths. */
+        columns: 'qa_columns',
+        columnsSeen: 'qa_columns_seen',
+        colWidths: 'qa_col_widths'
     };
 
     /* THE TEAM, as the coaching sheet has it. A default, not a fixture: it is
@@ -69,10 +81,17 @@
     let RULES = Object.assign({ workers: 2 }, E.DEFAULT_RULES);
     let ROSTER = DEFAULT_ROSTER.slice();
     let LAST_LIST = null;              // { url, name, at }
+    let LISTS = [];                    // [{ id, name, url, at }] — the saved Salesforce list views
     let SHEET_MONTH = '';
     let SELECTED = new Set();
     let VIEW = 'cases';
     let FILTER = 'all';
+    // Which entitlement tier is showing. Deliberately not persisted, like the search box: a
+    // filter you cannot see the reason for is how a queue comes back looking half-empty.
+    let TIER = 'all';
+    // "Which of these has a defect open against it" — see the JIRA chip in renderTierChips.
+    // Not persisted, for the same reason TIER is not.
+    let ONLY_JIRA = false;
 
     /* THE CHAT, AND WHAT IT STANDS ON.
      *
@@ -243,6 +262,11 @@
             const err = box.querySelector('.qa-modal-err');
             const close = (value) => { back.remove(); resolve(value); };
 
+            /* A SUGGESTED ANSWER. Used by the "name this list" step, where the suggestion is
+             * right most of the time. Selected below, after the focus, so the first keystroke
+             * replaces it rather than being appended to it. */
+            if (input && opts.value) input.value = opts.value;
+
             box.querySelector('.qa-modal-cancel').onclick = () => close(null);
             box.querySelector('.qa-modal-ok').onclick = () => {
                 const v = input ? input.value.trim() : true;
@@ -255,7 +279,8 @@
                 if (e.key === 'Escape') close(null);
                 if (e.key === 'Enter' && input) box.querySelector('.qa-modal-ok').click();
             };
-            if (input) input.focus(); else box.querySelector('.qa-modal-ok').focus();
+            if (input) { input.focus(); if (opts.value) input.select(); }
+            else box.querySelector('.qa-modal-ok').focus();
         });
     }
 
@@ -297,22 +322,29 @@
      * ------------------------------------------------------------------- */
     async function boot() {
         const got = await load([K.cases, K.reviews, K.coaching, K.rules, K.roster, K.lastList,
-                                K.month, K.chats, K.context]);
+                                K.lists, K.month, K.chats, K.context,
+                                K.columns, K.columnsSeen, K.colWidths]);
         if (got[K.cases] && Array.isArray(got[K.cases].cases)) CASES = got[K.cases];
         if (Array.isArray(got[K.reviews])) REVIEWS = got[K.reviews];
         if (Array.isArray(got[K.coaching])) COACHING = got[K.coaching];
         if (got[K.rules]) RULES = Object.assign(RULES, got[K.rules]);
         if (Array.isArray(got[K.roster]) && got[K.roster].length) ROSTER = got[K.roster];
         if (got[K.lastList]) LAST_LIST = got[K.lastList];
+        if (Array.isArray(got[K.lists])) LISTS = got[K.lists].filter(l => l && l.url);
         SHEET_MONTH = got[K.month] || defaultMonth();
         if (got[K.chats] && typeof got[K.chats] === 'object') CHATS = got[K.chats];
         if (got[K.context] && typeof got[K.context] === 'object') CONTEXT = got[K.context];
+        // Before the first render, so the queue is drawn in the reviewer's own layout rather
+        // than drawn in the default and then rearranged under them.
+        loadColumnPrefs(got);
+        applyColWidths();
 
         if (window.SotiAI) { try { await window.SotiAI.load(); } catch (e) { /* defaults */ } }
 
         applyVersion();
         wire();
         fillSettings();
+        renderQaColumns();
         renderAll();
     }
 
@@ -375,12 +407,880 @@
         const c = $('tabCasesCount');
         if (c) c.textContent = CASES.cases.length ? String(CASES.cases.length) : '';
         const r = $('tabReviewsCount');
-        if (r) r.textContent = REVIEWS.length ? String(REVIEWS.length) : '';
+        if (r) {
+            const bad = REVIEWS.filter(incomplete).length;
+            r.textContent = REVIEWS.length ? String(REVIEWS.length) : '';
+            r.classList.toggle('qa-count-bad', bad > 0);
+            r.title = bad ? `${bad} of ${REVIEWS.length} could not be written up — open Reviews to re-run them.` : '';
+        }
         const ch = $('tabChatCount');
         if (ch) {
             const live = Object.values(CHATS).filter(c => c && c.msgs && c.msgs.length).length;
             ch.textContent = live ? String(live) : '';
         }
+    }
+
+    /* =====================================================================
+     * WHAT A ROW SHOWS — the queue's tiers, colours and columns
+     * =====================================================================
+     * Lifted from the analyser's queue, because it is the same queue: the same
+     * Salesforce list view, read by the same scraper, and a reviewer who has
+     * learnt to find a case by its tier stripe and its severity pill there
+     * should not have to learn a second, poorer list here.
+     *
+     * What is NOT lifted is anything this tool has no data for. The analyser's
+     * "Last Sent" and "Last msg" columns are read from a case's FEED, which a
+     * QA run reads but a list sync does not, so they are not offered — a column
+     * that can only ever print an em dash is worse than no column at all. In
+     * their place are the two columns this tool has and the analyser does not:
+     * the 30/60/90 milestone and the QA score.
+     * ------------------------------------------------------------------- */
+
+    /* ENTITLEMENT TIERS. Salesforce names these per contract — "Enterprise Service" and
+     * "Enterprise Plus Service" are two entitlements and one tier — so matching is on the
+     * tier word rather than the whole string. Order is the order they are worked in, not
+     * alphabetical, and anything unrecognised goes last under its own heading rather than
+     * being forced into a tier it may not belong to: a case shown as Enterprise when it is
+     * not is worse than one shown as unclassified. */
+    const TIERS = [
+        { key: 'enterprise', label: 'Enterprise', match: /enterprise/i },
+        { key: 'premium',    label: 'Premium',    match: /premium/i },
+        { key: 'standard',   label: 'Standard',   match: /standard/i }
+    ];
+    const TIER_OTHER = { key: 'other', label: 'Other entitlements', match: null };
+    const TIER_NONE  = { key: 'none',  label: 'No entitlement listed', match: null };
+
+    function entitlementTier(name) {
+        const t = String(name || '').trim();
+        if (!t) return TIER_NONE;
+        return TIERS.find(x => x.match.test(t)) || TIER_OTHER;
+    }
+
+    // The tier's working order, then unrecognised, then unlisted. The order INSIDE a tier is
+    // left to whatever sort the reviewer chose — see renderCases.
+    function tierRank(rec) {
+        const key = entitlementTier(rec.entitlement).key;
+        const i = TIERS.findIndex(t => t.key === key);
+        if (i >= 0) return i;
+        return key === 'other' ? TIERS.length : TIERS.length + 1;
+    }
+
+    /* SEVERITY. Read off the picklist rather than assumed: SOTI writes "High (Severity 2)",
+     * and an org that has renamed the values still carries the word. Severity 1 gets its own
+     * colour because it prints as "H" like a Severity 2, so the colour is the only thing left
+     * carrying the difference between "high" and "drop what you are doing". */
+    const SEVERITY_UNKNOWN = 99;
+
+    function severityRank(priority) {
+        const t = String(priority || '');
+        const n = t.match(/severity\s*(\d+)/i);
+        if (n) return parseInt(n[1], 10);
+        if (/critical|urgent/i.test(t)) return 1;
+        if (/high/i.test(t)) return 2;
+        if (/medium|normal/i.test(t)) return 3;
+        if (/low/i.test(t)) return 4;
+        return SEVERITY_UNKNOWN;
+    }
+
+    function severityShort(priority) {
+        const rank = severityRank(priority);
+        if (rank <= 2) return 'H';
+        if (rank === 3) return 'M';
+        if (rank === 4) return 'L';
+        return '?';
+    }
+
+    function severityTagClass(priority) {
+        const rank = severityRank(priority);
+        if (rank === 1) return 'sev-crit';
+        if (rank === 2) return 'sev-high';
+        if (rank === 3) return 'sev-med';
+        if (rank === 4) return 'sev-low';
+        return '';
+    }
+
+    // "Waiting on SOTI" — the ball is with us. It washes the row red, which is the one thing
+    // worth seeing on a queue without opening anything.
+    function statusIsOnSoti(status) {
+        return /waiting\s+on\s+soti|with\s+soti|soti\s+response/i.test(String(status || ''));
+    }
+
+    /* THE STATUS AS A NUMBER, for the "on SOTI first" sort. On us, then blocked on
+     * engineering, then waiting on the customer, then anything this does not recognise, then
+     * the rows with no status at all. The unrecognised rank sits AFTER the three known ones
+     * and before the blanks on purpose: a status nobody wrote a rule for is still a status. */
+    function statusRank(status) {
+        const t = String(status || '').trim();
+        if (!t) return 99;
+        if (statusIsOnSoti(t)) return 1;
+        if (/develop|engineering|r&d|jira/i.test(t)) return 2;
+        if (/customer|client|user/i.test(t)) return 3;
+        return 50;
+    }
+
+    /* SALESFORCE'S DOT AS A NUMBER. Overdue is 0 so it sorts first; a row with no dot is null
+     * so it sorts last. Read through activityIcon so a colour Salesforce adds later, or a
+     * value an older build stored, comes back "not known" rather than quietly scoring 0. */
+    const ACTIVITY_RANK = { red: 0, yellow: 1, green: 2 };
+
+    function activityRank(rec) {
+        const v = activityIcon(rec);
+        return Object.prototype.hasOwnProperty.call(ACTIVITY_RANK, v) ? ACTIVITY_RANK[v] : null;
+    }
+
+    /* THE TWO "PUT THE ONES WE CANNOT ANSWER FOR AT THE BOTTOM" HELPERS, and they are two
+     * rather than one because they disagree about what unknown MEANS.
+     *
+     * nullLast knows only null. unknownLast also treats SEVERITY_UNKNOWN — the 99 an
+     * unreadable severity returns — as unknown, which is right for a rank and wrong for
+     * anything counted in days: a case 99 days old is the oldest case in the queue, not a
+     * missing one, and running it through unknownLast would sort it to the bottom. */
+    function nullLast(x, y, cmp) {
+        if (x === null && y === null) return 0;
+        if (x === null) return 1;
+        if (y === null) return -1;
+        return cmp(x, y);
+    }
+
+    function unknownLast(x, y, cmp) {
+        const xu = x === null || x === SEVERITY_UNKNOWN;
+        const yu = y === null || y === SEVERITY_UNKNOWN;
+        if (xu && yu) return 0;
+        if (xu) return 1;
+        if (yu) return -1;
+        return cmp(x, y);
+    }
+
+    /* THE CHOSEN ORDER, within whatever tier group the case is in. Returns null for "list
+     * order", which means "do not sort at all" — the rows keep the order Salesforce returned
+     * them in, which is whatever sort the reviewer already chose on the list view and which
+     * this panel has no business overriding.
+     *
+     * THERE IS NO "LAST SENT: LONGEST AGO" HERE, and that is not an omission. It sorts on how
+     * long ago we last emailed the customer, which is read from a case's FEED — and a list
+     * sync never opens a case. Offering it would be a sort that quietly did nothing on every
+     * row. Same reason the Last Sent column is not in the chooser. */
+    function sortComparator(sort) {
+        const ageOf = (c) => E.ageDaysOf(c.ageDays);
+        switch (sort) {
+            case 'age-desc': return (a, b) => unknownLast(ageOf(a), ageOf(b), (x, y) => y - x);
+            case 'age-asc':  return (a, b) => unknownLast(ageOf(a), ageOf(b), (x, y) => x - y);
+            case 'sev-high': return (a, b) => unknownLast(severityRank(a.priority), severityRank(b.priority), (x, y) => x - y);
+            case 'sev-low':  return (a, b) => unknownLast(severityRank(a.priority), severityRank(b.priority), (x, y) => y - x);
+            // One direction only: "what is waiting on us" is a question, and its reverse puts
+            // the cases nobody can act on at the top.
+            case 'status':   return (a, b) => unknownLast(statusRank(a.status), statusRank(b.status), (x, y) => x - y);
+            // Worst first — red, yellow, green, then the rows with no dot. One direction, for
+            // the same reason status has one. nullLast rather than unknownLast: no dot means
+            // the list view has no such column, which is not a rank.
+            case 'activity': return (a, b) => nullLast(activityRank(a), activityRank(b), (x, y) => x - y);
+            case 'case':     return (a, b) => String(a.caseNum || '').localeCompare(String(b.caseNum || ''));
+            case 'owner':    return (a, b) => String(a.owner || a.lastModifiedBy || '').localeCompare(String(b.owner || b.lastModifiedBy || ''));
+            /* REVIEWED FIRST, WORST SCORE FIRST, everything unreviewed after them. The one
+             * sort that reads the reviews rather than the row, and the direction is the point
+             * of it: a lead opening this queue wants the cases that scored badly, because
+             * those are the ones with something to coach on. Its reverse would open with the
+             * cases nobody needs to look at, which is why there is only one direction — the
+             * same reason status and activity have only one. */
+            case 'score':    return (a, b) => {
+                const s = (c) => {
+                    const r = qaReviewFor(c);
+                    return r && r.score && r.score.value !== null ? r.score.value : null;
+                };
+                return nullLast(s(a), s(b), (x, y) => x - y);
+            };
+            default:         return null;      // 'list' — Salesforce's own order, untouched
+        }
+    }
+
+    const JIRA_BROWSE_BASE = 'https://jira.soti.net/browse/';
+    const JIRA_KEY_RE = /^[A-Za-z][A-Za-z0-9]*-\d+$/;
+
+    function jiraKeyFrom(raw) {
+        let v = String(raw || '').trim();
+        if (!v) return '';
+        // Tolerate a pasted browse URL — somebody copied the link, not the key. Anchored to
+        // the SOTI host so a link from anywhere else is not quietly rewritten into one of
+        // ours: it fails the key test below and stays plain text.
+        const fromUrl = v.match(/^https?:\/\/jira\.soti\.net\/browse\/([A-Za-z][A-Za-z0-9]*-\d+)\b/i);
+        if (fromUrl) v = fromUrl[1];
+        return JIRA_KEY_RE.test(v) ? v.toUpperCase() : '';
+    }
+
+    function jiraUrlFor(raw) {
+        const key = jiraKeyFrom(raw);
+        return key ? JIRA_BROWSE_BASE + encodeURIComponent(key) : '';
+    }
+
+    /* SALESFORCE'S OWN GREEN / YELLOW / RED DOT — the "Last Completed Activity Icon" field,
+     * its judgement of how the last completed activity is ageing. Read through a guard so a
+     * value stored by an older build, or a colour Salesforce adds later, degrades to "not
+     * known" instead of painting a cell with no colour rule behind it. */
+    const ACTIVITY_LABELS = {
+        green:  'green — activity is current',
+        yellow: 'yellow — activity is falling behind',
+        red:    'red — activity is overdue'
+    };
+
+    function activityIcon(rec) {
+        const v = String((rec && rec.activityIcon) || '').toLowerCase().trim();
+        return Object.prototype.hasOwnProperty.call(ACTIVITY_LABELS, v) ? v : '';
+    }
+
+    /* THE COLUMNS THEMSELVES.
+     * ---------------------------------------------------------------------
+     * One line per case, and a side panel's line is about sixty characters wide, so the
+     * choice of what goes on it is the whole design of this list. It is a SETTING rather than
+     * a decision made once for everybody: a team lead scans by owner, somebody chasing a
+     * release scans by JIRA, and somebody working a backlog scans by score.
+     *
+     * The order below is the order they appear on the row; `on` is what a fresh install
+     * starts with. Each has a SHORT head (the strip above the list) and a long label (the
+     * chooser), because "Severity" fits over a column and "Severity (H / M / L)" does not.
+     *
+     * The width is shared with the CSS: .oc-col-<key> sets the same basis on the cell and on
+     * its heading, which is what makes the strip line up with the rows instead of merely
+     * sitting above them. */
+    const QA_COLUMNS = [
+        { key: 'subject',     head: 'Subject',   label: 'Subject',                                  on: true  },
+        /* FIRST AMONG THE CELLS because it is a colour rather than a word: the eye finds it
+         * without reading the row, which is the entire reason the field exists in Salesforce,
+         * and putting it anywhere else would turn a glanceable signal back into something you
+         * have to look for. It costs almost nothing to be on — it is one dot wide. */
+        { key: 'activity',    head: '●',         label: 'Last completed activity (Salesforce dot)', on: true  },
+        { key: 'severity',    head: 'Severity',  label: 'Severity (H / M / L)',                     on: true  },
+        { key: 'age',         head: 'Age',       label: 'Case age, in days',                        on: true  },
+        /* THE 30/60/90 FLAG — this tool's own column, and the reason the age is on the row at
+         * all. Computed from the age, never guessed; see QaEngine.milestoneFor. */
+        { key: 'milestone',   head: '30/60/90',  label: '30 / 60 / 90-day review flag',             on: true  },
+        { key: 'jira',        head: 'JIRA',      label: 'JIRA number',                              on: false },
+        // The other column this tool has and the analyser does not: whether the case has been
+        // reviewed, and how it went.
+        { key: 'qa',          head: 'QA',        label: 'QA score',                                 on: true  },
+        /* ON, because this queue is worked by agent — "everything Imran touched this month"
+         * is the second way a reviewer picks work, and the owner select above the list is the
+         * first. THE ROW HAS 57px LESS TO SPEND THAN THE ANALYSER'S, though: a tick box
+         * before the case number and a chat button after the last cell, neither of which that
+         * list carries, and both of which come out of the subject. Squeezed into a narrow
+         * side panel this is the first column worth turning off — its job is already done
+         * twice above the list, by a search box that matches the owner and the alias and by a
+         * dropdown that filters to one person by name. */
+        { key: 'owner',       head: 'Owner',     label: 'Case owner',                               on: true  },
+        { key: 'status',      head: 'Status',    label: 'Case status',                              on: false },
+        { key: 'account',     head: 'Account',   label: 'Account name',                             on: false },
+        { key: 'entitlement', head: 'Tier',      label: 'Entitlement',                              on: false },
+        { key: 'contact',     head: 'Contact',   label: 'Contact name',                             on: false }
+    ];
+
+    /* HOW WIDE EACH COLUMN IS — a starting point, not a fixture.
+     * ---------------------------------------------------------------------
+     * The figures are a budget measured against a rendered row, so the default columns, the
+     * case number and a readable subject all fit a ~400px Chrome side panel. Dragging the
+     * right edge of any heading overwrites one, and the value is applied as a CSS custom
+     * property on the view — the ancestor of BOTH the heading strip and every row — which is
+     * what keeps a heading over its own column instead of merely near it.
+     *
+     * `def` MUST match the var() fallback in the stylesheet for that key. Two copies of one
+     * number, and the only way to avoid it would be to read the computed style of a cell that
+     * may not be rendered yet. `min` is the same floor the CSS sets and is enforced here as
+     * well, so a drag cannot produce a width the layout then refuses. */
+    const COL_SIZES = {
+        casenum:     { def: 62, min: 48 },
+        subject:     { def: 0,  min: 26 },   // 0 = "whatever is left over" (flex-grow 1)
+        activity:    { def: 16, min: 12 },
+        severity:    { def: 46, min: 24 },
+        age:         { def: 34, min: 28 },
+        milestone:   { def: 46, min: 30 },   // wide enough for its own heading, not just "90d"
+        jira:        { def: 86, min: 44 },
+        qa:          { def: 36, min: 30 },   // two digits, under a two-letter heading
+        owner:       { def: 66, min: 40 },
+        status:      { def: 88, min: 44 },
+        account:     { def: 96, min: 44 },
+        entitlement: { def: 80, min: 40 },
+        contact:     { def: 86, min: 44 }
+    };
+    // A ceiling, because the row clips at its right edge rather than scrolling: a column
+    // dragged past this would push the ones after it off the row and out of reach, with no
+    // way back except Reset.
+    const COL_MAX_W = 360;
+
+    function defaultColumns() { return QA_COLUMNS.filter(c => c.on).map(c => c.key); }
+
+    // The chosen set, always in QA_COLUMNS order whatever order it was stored in — the row's
+    // layout is this list's, not the order somebody happened to tick the boxes.
+    let COLUMNS = defaultColumns();
+    // Column key → chosen width in px. Only the columns actually dragged appear here, so a
+    // column added in a later build starts at its designed width rather than at whatever a
+    // stale stored value happened to say.
+    let COL_WIDTHS = {};
+
+    function columnOn(key) { return COLUMNS.includes(key); }
+    function enabledColumns() { return QA_COLUMNS.filter(c => COLUMNS.includes(c.key)); }
+
+    /* READING THE SAVED LAYOUT.
+     *
+     * Both halves are validated on the way in. A stored key from a build that had a column
+     * this one does not would otherwise sit in the list forever, counted by the chooser and
+     * rendered by nothing; a stored width outside what the layout can hold would be written
+     * onto the view where nothing could correct it.
+     *
+     * A COLUMN ADDED IN A LATER BUILD MUST STILL REACH SOMEBODY WHO ALREADY HAS A SAVED
+     * CHOICE — which is everybody except a fresh install. The stored array is their answer to
+     * "which columns do you want", and it is the right answer for every column that existed
+     * when they gave it. It is the wrong answer for one that did not: they never said no to
+     * the new column, they were never asked. So the keys that EXISTED at save time are stored
+     * beside the choice, and anything in QA_COLUMNS that is not among them is new to this
+     * reviewer — its default applies, inserted in QA_COLUMNS order rather than appended, so
+     * the row stays in the layout's order. A column they then switch off is in the known set
+     * from that moment, so this can only ever fire once per column. */
+    function loadColumnPrefs(got) {
+        const widths = got && got[K.colWidths];
+        if (widths && typeof widths === 'object') {
+            const clean = {};
+            for (const [k, v] of Object.entries(widths)) {
+                const size = COL_SIZES[k];
+                const n = Number(v);
+                if (size && Number.isFinite(n)) clean[k] = Math.max(size.min, Math.min(COL_MAX_W, Math.round(n)));
+            }
+            COL_WIDTHS = clean;
+        }
+        const saved = got && got[K.columns];
+        if (!Array.isArray(saved)) return;
+
+        const valid = saved.filter(k => QA_COLUMNS.some(c => c.key === k));
+        COLUMNS = valid.length ? valid : defaultColumns();
+
+        const known = Array.isArray(got[K.columnsSeen]) ? got[K.columnsSeen] : saved;
+        const fresh = QA_COLUMNS.filter(c => c.on && !known.includes(c.key) && !COLUMNS.includes(c.key));
+        if (fresh.length) {
+            const want = new Set([...COLUMNS, ...fresh.map(c => c.key)]);
+            COLUMNS = QA_COLUMNS.filter(c => want.has(c.key)).map(c => c.key);
+            // Persisted immediately, along with the now-current known set, so the decision is
+            // recorded rather than re-made on every start.
+            saveColumns();
+        } else if (!Array.isArray(got[K.columnsSeen])) {
+            // Nothing to add, but the known set still needs writing once so the next column
+            // added does not look new to a build that has already seen it.
+            saveColumns();
+        }
+    }
+
+    function saveColumns() {
+        // EVERY column that existed when this choice was made, not the chosen ones — it is
+        // what lets a later build tell "switched off" from "did not exist yet".
+        return store({ [K.columns]: COLUMNS, [K.columnsSeen]: QA_COLUMNS.map(c => c.key) });
+    }
+
+    function saveWidths() { return store({ [K.colWidths]: COL_WIDTHS }); }
+
+    /* PUSH THE CHOSEN WIDTHS ONTO THE VIEW.
+     *
+     * One assignment per column, on #viewCases, and that is the whole mechanism: the heading
+     * strip and every row read the same custom property, so there is no code that sizes a
+     * heading and separate code that sizes its cells — which is how the two would otherwise
+     * drift apart.
+     *
+     * A column with no stored width has its property REMOVED rather than set to the default,
+     * so the CSS fallback is what applies. That matters on reset: setting 46px explicitly and
+     * letting the stylesheet say 46px look identical until the stylesheet's number changes in
+     * a later build, at which point every install that had ever pressed Reset would be pinned
+     * to the old figure. */
+    function applyColWidths() {
+        const view = $('viewCases');
+        if (!view) return;
+        for (const key of Object.keys(COL_SIZES)) {
+            const w = COL_WIDTHS[key];
+            if (key === 'subject') {
+                /* The subject is "whatever is left over" until it is dragged; then it is a
+                 * fixed width and the leftover goes elsewhere. Both halves have to move
+                 * together — a basis with the grow factor still at 1 would be ignored the
+                 * moment there is any spare room on the row. */
+                if (w) {
+                    view.style.setProperty('--ocw-subject', w + 'px');
+                    view.style.setProperty('--ocw-subject-grow', '0');
+                } else {
+                    view.style.removeProperty('--ocw-subject');
+                    view.style.removeProperty('--ocw-subject-grow');
+                }
+                continue;
+            }
+            if (w) view.style.setProperty('--ocw-' + key, w + 'px');
+            else view.style.removeProperty('--ocw-' + key);
+        }
+    }
+
+    /* THE HEADINGS OVER THE COLUMNS.
+     *
+     * Built from the same list the rows are, so it cannot name a column that is not there or
+     * miss one that is. It is what turns "H" into Severity — a single letter in a queue is a
+     * code until something says what it is a code FOR, and hovering every cell to find out is
+     * not a design, it is a puzzle.
+     *
+     * The two spacers stand in for the controls at either end of a row: the tick box before
+     * the case number, and the chat button after the last cell. Without them every heading
+     * sits a control's width away from the column it names. */
+    function renderQaColumnHeader() {
+        const head = $('ocColHead');
+        if (!head) return;
+        const any = (CASES.cases || []).length;
+        head.style.display = any ? '' : 'none';
+        if (!any) return;
+
+        head.textContent = '';
+        // Whatever was chosen last time, before anything is measured — a grip reads the
+        // cell's RENDERED width when the drag starts, so the stored width has to already be
+        // on the view.
+        applyColWidths();
+
+        const check = document.createElement('span');
+        check.className = 'qa-colhead-check';
+        check.setAttribute('aria-hidden', 'true');
+        head.appendChild(check);
+
+        const num = document.createElement('span');
+        num.className = 'oc-colhead-num';
+        num.textContent = 'Case';
+        addColumnGrip(num, 'casenum', 'Case number');
+        head.appendChild(num);
+
+        const subj = document.createElement('span');
+        subj.className = 'oc-colhead-subject';
+        subj.textContent = columnOn('subject') ? 'Subject' : '';
+        // No grip when the subject is off: the element is still there (it is the gutter that
+        // keeps everything after it lined up) but it is not a column anybody is looking at,
+        // and a handle on an empty cell is a control with nothing behind it.
+        if (columnOn('subject')) addColumnGrip(subj, 'subject', 'Subject');
+        head.appendChild(subj);
+
+        for (const c of enabledColumns()) {
+            if (c.key === 'subject') continue;
+            const cell = document.createElement('span');
+            cell.className = 'oc-colhead-cell oc-col-' + c.key;
+            cell.textContent = c.head;
+            cell.title = c.label + ' — drag the right edge to resize this column.';
+            addColumnGrip(cell, c.key, c.head);
+            head.appendChild(cell);
+        }
+
+        const spacer = document.createElement('span');
+        spacer.className = 'oc-colhead-spacer';
+        spacer.setAttribute('aria-hidden', 'true');
+        head.appendChild(spacer);
+    }
+
+    /* THE SCROLLBAR IS WORTH A FEW PIXELS, AND THE STRIP IS NOT INSIDE IT.
+     *
+     * The rows live in .oc-list, which scrolls; the heading strip sits above it and does not.
+     * So the moment the queue is long enough to scroll, every row is a scrollbar's width
+     * narrower than the strip above it, and every heading drifts right of the column it names
+     * — by four pixels on Windows, which is small enough to look like sloppy alignment rather
+     * than like a cause.
+     *
+     * Measured rather than assumed: a scrollbar is 0px on a trackpad-style overlay, ~15px on
+     * an old theme, and it appears and disappears as the queue is filtered. The row's own
+     * right border is the remaining pixel — the strip has no border. Called after the rows are
+     * in, because a list that has not overflowed yet has no scrollbar to measure. */
+    function alignColumnHeader() {
+        const head = $('ocColHead');
+        const list = $('ocList');
+        if (!head || !list) return;
+        const bar = Math.max(0, list.offsetWidth - list.clientWidth);
+        head.style.paddingRight = (8 + bar + 1) + 'px';
+    }
+
+    /* THE FIVE PIXELS ON THE RIGHT EDGE OF A HEADING.
+     *
+     * appendChild, never innerHTML — the heading's text is set with textContent immediately
+     * above and would wipe a child written before it.
+     *
+     * Keyboard as well as pointer. The grip is focusable and the arrow keys nudge the column
+     * four pixels at a time, because "drag a five-pixel strip" is not a control everybody can
+     * operate, and this is the only way to change a width. Home resets that one column. */
+    function addColumnGrip(cell, key, name) {
+        if (!cell || !COL_SIZES[key]) return;
+        const grip = document.createElement('span');
+        grip.className = 'oc-colgrip';
+        grip.tabIndex = 0;
+        grip.setAttribute('role', 'separator');
+        grip.setAttribute('aria-orientation', 'vertical');
+        grip.setAttribute('aria-label', `Resize the ${name} column`);
+        grip.title = `Drag to resize ${name} — double-click to reset it`;
+        grip.onpointerdown = (e) => startColumnResize(e, cell, key, grip);
+        // Double-click on a divider means "back to the default" in every table anybody has used.
+        grip.ondblclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (COL_WIDTHS[key] === undefined) return;
+            delete COL_WIDTHS[key];
+            applyColWidths();
+            saveWidths();
+        };
+        grip.onkeydown = (e) => {
+            const step = e.key === 'ArrowRight' ? 4 : e.key === 'ArrowLeft' ? -4 : 0;
+            if (step) {
+                e.preventDefault();
+                setColumnWidth(key, (COL_WIDTHS[key] || Math.round(cell.getBoundingClientRect().width)) + step);
+                saveWidths();
+                return;
+            }
+            if (e.key === 'Home') {
+                e.preventDefault();
+                delete COL_WIDTHS[key];
+                applyColWidths();
+                saveWidths();
+            }
+        };
+        cell.appendChild(grip);
+    }
+
+    // Clamp and apply. The floor and the ceiling live in one place so the pointer path, the
+    // keyboard path and the stored-value validator cannot disagree about what is allowed.
+    function setColumnWidth(key, px) {
+        const size = COL_SIZES[key];
+        if (!size) return;
+        COL_WIDTHS[key] = Math.max(size.min, Math.min(COL_MAX_W, Math.round(px)));
+        applyColWidths();
+    }
+
+    /* THE DRAG ITSELF.
+     *
+     * Pointer events with setPointerCapture rather than mousemove on window: capture is what
+     * keeps the drag alive when the pointer leaves the five-pixel strip — which it does
+     * immediately, because the whole point is to move away from where you pressed — and it
+     * delivers the release even if that happens outside the panel entirely.
+     *
+     * The width is measured from the RENDERED cell, not from the stored value: a column that
+     * has never been dragged has no stored value, and one being squeezed by a narrow panel is
+     * not as wide as its stored value says. Starting from what is on screen is what makes the
+     * first pixel of the drag move the edge by one pixel. */
+    function startColumnResize(e, cell, key, grip) {
+        if (e.button !== undefined && e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const startX = e.clientX;
+        const startW = Math.round(cell.getBoundingClientRect().width);
+        grip.classList.add('is-dragging');
+        document.body.classList.add('oc-resizing');
+        try { grip.setPointerCapture(e.pointerId); } catch (err) { /* older engines */ }
+
+        const move = (ev) => setColumnWidth(key, startW + (ev.clientX - startX));
+        const up = () => {
+            grip.classList.remove('is-dragging');
+            document.body.classList.remove('oc-resizing');
+            grip.onpointermove = null;
+            grip.onpointerup = null;
+            grip.onpointercancel = null;
+            try { grip.releasePointerCapture(e.pointerId); } catch (err) { /* never captured */ }
+            saveWidths();
+        };
+        grip.onpointermove = move;
+        grip.onpointerup = up;
+        grip.onpointercancel = up;
+    }
+
+    /* THE CHOOSER, behind the cog. One tick box per column, plus the one thing the grips
+     * cannot say for themselves: they are five invisible pixels on the edge of a heading,
+     * which is the right way for them to BEHAVE and the wrong way to be DISCOVERED. */
+    function renderQaColumns() {
+        const body = $('ocColsBody');
+        if (!body) return;
+        body.textContent = '';
+
+        for (const col of QA_COLUMNS) {
+            const row = document.createElement('label');
+            row.className = 'oc-col-opt';
+
+            const box = document.createElement('input');
+            box.type = 'checkbox';
+            box.checked = columnOn(col.key);
+            box.onchange = () => {
+                const wanted = new Set(COLUMNS);
+                if (box.checked) wanted.add(col.key); else wanted.delete(col.key);
+                // Rebuilt from QA_COLUMNS so the stored order is always the row's order — the
+                // alternative is a list in tick order, and rows that reshuffle themselves
+                // depending on which box somebody touched last.
+                COLUMNS = QA_COLUMNS.filter(c => wanted.has(c.key)).map(c => c.key);
+                saveColumns();
+                renderCases();
+            };
+            row.appendChild(box);
+
+            const text = document.createElement('span');
+            text.className = 'oc-col-opt-t';
+            text.textContent = col.label;
+            row.appendChild(text);
+
+            body.appendChild(row);
+        }
+
+        const hint = document.createElement('div');
+        hint.className = 'oc-cols-hint';
+        hint.textContent = 'Drag the right edge of any heading to resize a column. '
+            + 'Double-click an edge to reset just that one.';
+        body.appendChild(hint);
+    }
+
+    /* THE TIER CHIPS. Counts reflect the search, the owner and the milestone filters but NOT
+     * the tier itself, so the chips keep saying how many cases each tier would show — a chip
+     * reading 0 because of the tier you already picked tells you nothing.
+     *
+     * A tier with no cases in it is not offered: a chip whose only outcome is an empty list is
+     * a control that costs a press to teach you nothing. */
+    function renderTierChips() {
+        const wrap = $('ocTierChips');
+        if (!wrap) return;
+        const all = CASES.cases || [];
+        wrap.style.display = all.length ? '' : 'none';
+        if (!all.length) { wrap.textContent = ''; return; }
+
+        /* HOW MANY THE JIRA CHIP WOULD SHOW, measured FIRST and with that filter ignored, so
+         * it answers "how many would I see if I pressed you" rather than restating how many
+         * are already on screen.
+         *
+         * It has to be counted before anything else is, because of what happens when the
+         * answer is none: the chip is then not drawn at all, and a filter with no visible
+         * control to clear it would strand the queue. So the flag lets go here — and doing it
+         * BEFORE the pool below is counted is the whole reason this is not further down. Count
+         * the pool first and every other chip is measured through a filter that is about to
+         * disappear, which showed as "All 0" over a list with a row in it. */
+        const withJira = visibleCases({ ignoreTier: true, ignoreJira: true })
+            .filter(rec => jiraKeyFrom(rec.jira)).length;
+        if (!withJira) ONLY_JIRA = false;
+
+        const pool = visibleCases({ ignoreTier: true });
+        const counts = new Map();
+        for (const rec of pool) {
+            const k = entitlementTier(rec.entitlement).key;
+            counts.set(k, (counts.get(k) || 0) + 1);
+        }
+
+        wrap.textContent = '';
+        const add = (key, label, count) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'oc-chip' + (TIER === key ? ' active' : '') + (key !== 'all' ? ' tier-' + key : '');
+            b.textContent = `${label} ${count}`;
+            b.title = key === 'all'
+                ? 'Every entitlement tier, grouped in the order they are worked'
+                : `Show only the ${label} cases`;
+            b.onclick = () => {
+                // Clicking the active chip clears it — otherwise the only way back to the
+                // whole queue is to find "All" again, and that is one more thing to look for.
+                TIER = (TIER === key) ? 'all' : key;
+                renderCases();
+            };
+            wrap.appendChild(b);
+        };
+        add('all', 'All', pool.length);
+        for (const t of [...TIERS, TIER_OTHER, TIER_NONE]) {
+            if (counts.get(t.key)) add(t.key, t.label, counts.get(t.key));
+        }
+
+        /* THE JIRA CHIP — a filter, beside the tier filters, because that is what it is.
+         *
+         * "Which of these cases has a defect open against it" is asked constantly and there
+         * was no way to ask it: the JIRA number was a column you had to switch on and then
+         * read down. Pressing this narrows the queue to the cases that have one AND turns the
+         * JIRA column on, so the answer is the list itself — every case with its key beside
+         * it — rather than a list you then have to go looking through.
+         *
+         * Not offered when nothing in the queue has a JIRA: a chip reading "JIRA 0" is a
+         * control whose only outcome is an empty list. Its count was taken at the top of this
+         * function; see the note there for why it had to be.
+         *
+         * The tier counts above deliberately do NOT ignore this filter, where its own count
+         * does: each chip answers that question about ITSELF, and while JIRA is on,
+         * "Enterprise 14" over a list of five would be the chips contradicting the queue. */
+        if (!withJira) return;
+
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'oc-chip oc-chip-jira' + (ONLY_JIRA ? ' active' : '');
+        b.textContent = `JIRA ${withJira}`;
+        b.title = ONLY_JIRA
+            ? 'Showing only the cases with a JIRA. Click to show them all again.'
+            : 'Show only the cases with a JIRA raised, each with its key.';
+        b.onclick = () => {
+            ONLY_JIRA = !ONLY_JIRA;
+            /* Turning the filter on turns the column on with it — filtering to "cases with a
+             * JIRA" and then not showing the JIRA would be the one view where that column is
+             * certain to be wanted. Turning the filter back off LEAVES it on: it is a column
+             * the reviewer has now seen and may want to keep, and a layout that rearranges
+             * itself when a filter is cleared is a layout nobody trusts. */
+            if (ONLY_JIRA && !columnOn('jira')) {
+                COLUMNS = QA_COLUMNS.filter(c => c.key === 'jira' || COLUMNS.includes(c.key)).map(c => c.key);
+                saveColumns();
+                renderQaColumns();
+            }
+            renderCases();
+        };
+        wrap.appendChild(b);
+    }
+
+    /* ONE COLUMN'S CELL ON ONE ROW.
+     *
+     * Every branch draws a cell even when the value is missing, and that is the point: a
+     * fixed grid of columns is only readable if the columns stay in the same place from row
+     * to row. Skipping the empty ones would slide every later cell one place left on that
+     * row, and the heading strip above would then be lying about all of them.
+     *
+     * The empty cell is an em dash with a title saying WHY it is empty, which for several of
+     * these is a real instruction rather than a shrug — most list views do not carry every
+     * column, and the fix is in Salesforce. */
+    function addColumnCell(into, key, rec) {
+        const cell = (text, cls, title) => {
+            const t = document.createElement('span');
+            t.className = 'oc-tag oc-col-' + key + (cls ? ' ' + cls : '') + (text === '—' ? ' oc-tag-empty' : '');
+            t.textContent = text;
+            if (title) t.title = title;
+            into.appendChild(t);
+            return t;
+        };
+
+        switch (key) {
+            /* THE SALESFORCE DOT. Rendered as a dot rather than as the word, because that is
+             * what it is in Salesforce and because the word would cost six characters of
+             * subject to say something the colour already says. A row with no colour still
+             * draws — an empty ring, not a gap — and its tooltip says the list view has no
+             * such column and what to do about it. */
+            case 'activity': {
+                const state = activityIcon(rec);
+                const t = cell(state ? '●' : '○', 'oc-act-dot oc-act-' + (state || 'none'),
+                    state
+                        ? `Last completed activity: ${ACTIVITY_LABELS[state]}`
+                        : 'No "Last Completed Activity Icon" column on this list view — add it in '
+                          + 'Salesforce and sync again.');
+                t.setAttribute('aria-label', state
+                    ? `Last completed activity ${ACTIVITY_LABELS[state]}`
+                    : 'Last completed activity unknown');
+                break;
+            }
+            case 'severity': {
+                const p = rec.priority || '';
+                // The letter on the row, the whole picklist value on hover — "H" is the shape
+                // of the queue, "High (Severity 2)" is the fact, and only one of them fits.
+                cell(p ? severityShort(p) : '—', severityTagClass(p),
+                     p ? `Severity: ${p}` : 'No severity on this case');
+                break;
+            }
+            case 'age': {
+                const n = E.ageDaysOf(rec.ageDays);
+                cell(n === null ? '—' : `${Math.round(n)}d`, '',
+                     n === null ? 'No case age on this row' : `Case age: ${Math.round(n)} days`);
+                break;
+            }
+            /* THE 30/60/90 FLAG. Colour is doing the work: at a glance down the list the eye
+             * should find the 90s without reading a single age. A case not yet at its first
+             * review still draws a cell, and its tooltip says how far off it is — which is the
+             * question somebody looking at an empty flag is actually asking. */
+            case 'milestone': {
+                const ms = milestoneOf(rec);
+                const n = E.ageDaysOf(rec.ageDays);
+                if (ms) {
+                    cell(ms + 'd', 'qa-ms qa-ms-' + ms,
+                         `This case is ${Math.round(n)} days old — it is due its ${ms}-day management review.`);
+                } else {
+                    cell('—', '', n === null
+                        ? 'No case age on this row, so no milestone can be worked out'
+                        : `${Math.round(n)} days old — not yet at its 30-day review`);
+                }
+                break;
+            }
+            case 'jira': {
+                const jk = jiraKeyFrom(rec.jira);
+                if (jk) addJiraCell(into, jk);
+                else cell('—', '', 'No JIRA raised off this case');
+                break;
+            }
+            /* ALREADY REVIEWED, AND HOW IT WENT. The band's colour behind the number: a
+             * colour and a number are both readable running down a list, and "72" on its own
+             * is not.
+             *
+             * A REVIEW WITH NO SCORE IS NO LONGER A THING THAT HAPPENS — every reviewed case
+             * carries one, worked out from the measured facts when the write-up gave none
+             * (see deriveScore). What is left in the second branch is the case that was read
+             * but never written up at all, and that is not a tick: a tick beside a case whose
+             * review is a refusal is the panel saying "done" about work that is not. */
+            case 'qa': {
+                const rev = qaReviewFor(rec);
+                if (rev && rev.score && rev.score.value !== null) {
+                    cell(String(rev.score.value),
+                         'qa-score band-' + scoreBand(rev.score) + (rev.score.derived ? ' qa-score-derived' : ''),
+                         rev.score.derived
+                            ? `QA score ${rev.score.value}/100 — ${rev.score.band}, worked out from the measured facts because the write-up gave none. Reviewed ${E.fmtDateTime(rev.at)}.`
+                            : `QA score ${rev.score.value}/100 — ${rev.score.band}. Reviewed ${E.fmtDateTime(rev.at)}.`);
+                } else if (rev && incomplete(rev)) {
+                    cell('!', 'qa-score qa-score-bad',
+                         `Read ${E.fmtDateTime(rev.at)}, but the write-up did not come back. Open Reviews to see why and re-run it.`);
+                } else if (rev) {
+                    cell('✓', 'qa-score', `Reviewed ${E.fmtDateTime(rev.at)}.`);
+                } else {
+                    cell('—', '', 'Not reviewed yet — tick it and press QA selected.');
+                }
+                break;
+            }
+            /* WHOSE CASE IS THIS. The owner when the list view carries one, and whoever last
+             * touched it when it does not — the Owner field on a SOTI case is routinely a
+             * queue rather than a person. The cell's tooltip names the field it actually
+             * read, so the heading is the team's vocabulary and the hover is the record's. */
+            case 'owner': {
+                const who = rec.owner || rec.lastModifiedBy || '';
+                cell(who || '—', '',
+                    who
+                        ? (rec.owner ? `Case owner: ${who}` : `Last modified by: ${who}`)
+                        : 'No owner on this list view — add a Case Owner or Last Modified By Alias column.');
+                break;
+            }
+            case 'status':
+                cell(rec.status || '—', statusIsOnSoti(rec.status) ? 'needs-soti' : '',
+                     rec.status ? `Status: ${rec.status}` : 'No status on this row');
+                break;
+            case 'account':
+                cell(rec.account || '—', '', rec.account ? `Account: ${rec.account}` : 'No account on this row');
+                break;
+            case 'entitlement': {
+                const tier = entitlementTier(rec.entitlement);
+                cell(rec.entitlement ? tier.label : '—', 'ent-' + tier.key,
+                     rec.entitlement || 'No entitlement listed');
+                break;
+            }
+            case 'contact':
+                cell(rec.contact || '—', '', rec.contact ? `Contact: ${rec.contact}` : 'No contact on this row');
+                break;
+            default:
+                break;
+        }
+    }
+
+    /* THE JIRA CELL IS A LINK. A real href so it can be copied or middle-clicked, but inside
+     * the extension the click opens a browser tab, because a side panel that navigates itself
+     * to Jira has thrown away the queue somebody was working. */
+    function addJiraCell(into, key) {
+        const url = jiraUrlFor(key);
+        const a = document.createElement('a');
+        a.className = 'oc-tag oc-col-jira sev-jira oc-tag-link';
+        a.href = url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.title = 'Open ' + url;
+        a.textContent = key;
+
+        const icon = document.createElement('span');
+        icon.className = 'oc-tag-ext';
+        icon.textContent = '↗';
+        icon.setAttribute('aria-hidden', 'true');
+        a.appendChild(icon);
+
+        // The row itself opens the case in Salesforce, so this must stop the event: a click
+        // on a ticket key means the ticket, never "open the case".
+        a.onclick = (e) => {
+            e.stopPropagation();
+            if (isExt() && window.QaReader && window.QaReader.createTab) {
+                e.preventDefault();
+                window.QaReader.createTab({ url, active: true }, () => {});
+            }
+        };
+        into.appendChild(a);
     }
 
     /* ---------------------------------------------------------------------
@@ -402,7 +1302,14 @@
         return E.milestoneFor(rec && rec.ageDays, RULES);
     }
 
-    function visibleCases() {
+    /* WHICH CASES ARE ON SCREEN.
+     *
+     * `opts.ignoreTier` is for the tier chips themselves: their counts have to answer "how
+     * many would this chip show", which is a question about every OTHER filter and not about
+     * the tier you are already standing in. Everything else reads it with no options at all. */
+    function visibleCases(opts) {
+        const ignoreTier = !!(opts && opts.ignoreTier);
+        const ignoreJira = !!(opts && opts.ignoreJira);
         const q = ($('ocSearch').value || '').trim().toLowerCase();
         const owner = ($('ocOwner').value || '').trim().toLowerCase();
         const sort = $('ocSort').value || 'age-desc';
@@ -419,6 +1326,12 @@
             list = list.filter(c => [c.caseNum, c.subject, c.account, c.owner, c.lastModifiedBy, c.status, c.jira]
                 .some(v => String(v || '').toLowerCase().includes(q)));
         }
+        if (!ignoreTier && TIER !== 'all') {
+            list = list.filter(c => entitlementTier(c.entitlement).key === TIER);
+        }
+        if (!ignoreJira && ONLY_JIRA) {
+            list = list.filter(c => jiraKeyFrom(c.jira));
+        }
         if (FILTER !== 'all') {
             list = list.filter(c => {
                 const ms = milestoneOf(c);
@@ -429,23 +1342,17 @@
             });
         }
 
-        const age = (c) => {
-            const n = E.ageDaysOf(c.ageDays);
-            return n === null ? -1 : n;
-        };
-        list.sort((a, b) => {
-            if (sort === 'age-asc') return age(a) - age(b);
-            if (sort === 'case') return String(a.caseNum || '').localeCompare(String(b.caseNum || ''));
-            if (sort === 'owner') return String(a.owner || a.lastModifiedBy || '').localeCompare(String(b.owner || b.lastModifiedBy || ''));
-            if (sort === 'score') {
-                const s = (c) => {
-                    const r = qaReviewFor(c);
-                    return r && r.score && r.score.value !== null ? r.score.value : 1000;
-                };
-                return s(a) - s(b);
-            }
-            return age(b) - age(a);            // oldest first — the default a QA queue wants
-        });
+        /* NO SORT AT ALL under "List order" — not a sort that happens to be a no-op. Array
+         * .sort is stable in every engine this runs on, so sorting by a comparator that
+         * returns 0 would give the same answer; skipping it says what is meant, which is that
+         * Salesforce's own order is the answer and nothing here should touch it.
+         *
+         * A missing age, severity or status sorts LAST whichever direction is chosen, rather
+         * than being counted as zero. A case whose row carried no severity is not the least
+         * severe case in the queue — it is one this tool cannot answer for, and putting it at
+         * the top of "high first" would be the list inventing a fact. See unknownLast. */
+        const cmp = sortComparator(sort);
+        if (cmp) list.sort(cmp);
         return list;
     }
 
@@ -454,13 +1361,37 @@
         if (!list) return;
         list.textContent = '';
 
+        // Repainted with the queue, not only when one is added: the chip for the view that is
+        // currently on screen is marked, and which view that is changes with every sync.
+        renderLists();
+        // The tier chips and the heading strip are both built from what the sync returned, so
+        // they are repainted with it: a queue that has just gained its first Premium case must
+        // gain the chip for it, and a column switched on must gain its heading.
+        renderTierChips();
+        renderQaColumnHeader();
+
         const shown = visibleCases();
+        /* THE COUNT AND WHEN IT WAS READ, and nothing before them.
+         *
+         * The synced list view's own name used to open this line, on the reasoning that
+         * "My Open Cases" says more than a bare number. Two things were wrong with that.
+         *
+         * The name arrives through the CASE FIELD cleaner, which splits on Salesforce's action
+         * words — and "Open" is one of them. So "My Open Cases" was cut at its first word and
+         * the queue was headed by "My", sitting there looking deliberate rather than looking
+         * truncated.
+         *
+         * And there is nothing for it to say even when it is right. The tab is already called
+         * Cases, and which list these came from is named on its own chip in the saved-views
+         * strip a few lines below. A name here is a word standing where a number should be.
+         *
+         * CASES.listName is still scraped and still stored — it is the record of where the
+         * queue came from, and the sync uses it. Nothing reads it onto the screen. */
         const meta = $('ocMeta');
         if (meta) {
             const when = CASES.scrapedAt ? `, read ${E.fmtDateTime(CASES.scrapedAt)}` : '';
-            const name = CASES.listName ? `${CASES.listName} — ` : '';
             meta.textContent = CASES.cases.length
-                ? `${name}${shown.length} of ${CASES.cases.length} case${CASES.cases.length === 1 ? '' : 's'}${when}`
+                ? `${shown.length} of ${CASES.cases.length} case${CASES.cases.length === 1 ? '' : 's'}${when}`
                 : '';
         }
         fillOwnerSelect();
@@ -469,22 +1400,62 @@
             const hint = document.createElement('div');
             hint.className = 'qa-empty';
             hint.innerHTML = 'Nothing to review yet.<br><br>Open a Salesforce case <b>list view</b> — Cases &rarr; whichever queue you QA from — and press <b>Sync case list</b>. '
-                + 'After the first sync this tool remembers the list and can go back to it on its own.';
+                + 'After the first sync this tool remembers the list and can go back to it on its own.'
+                + '<br><br>Or press <b>🗂️ Add list view</b> and paste the address of that view: it is kept as a button here, '
+                + 'and pressing it opens the queue in Salesforce and syncs from it in one go.';
             list.appendChild(hint);
             renderSelection();
             renderCounts();
             return;
         }
         if (!shown.length) {
+            /* NAME EVERY FILTER THAT IS ON, not just the first. There are four of them now,
+             * and "no cases" while a tier filter is quietly also on is a message that sends
+             * the reviewer looking in the wrong place. */
+            const active = [];
+            const q = ($('ocSearch').value || '').trim();
+            const owner = $('ocOwner') ? ($('ocOwner').selectedOptions[0] || {}).textContent : '';
+            if (q) active.push(`matching “${q}”`);
+            if ($('ocOwner') && $('ocOwner').value) active.push(`owned by ${String(owner).replace(/\s*\(\d+\)$/, '')}`);
+            if (TIER !== 'all') active.push('in that tier');
+            if (ONLY_JIRA) active.push('with a JIRA');
+            if (FILTER !== 'all') active.push('under that chip');
             const hint = document.createElement('div');
             hint.className = 'qa-empty';
-            hint.textContent = 'No case matches this filter.';
+            hint.textContent = active.length
+                ? `No cases ${active.join(', ')}.`
+                : 'No case matches this filter.';
             list.appendChild(hint);
             renderSelection();
             return;
         }
 
-        for (const rec of shown) list.appendChild(caseRow(rec));
+        /* GROUPED BY ENTITLEMENT TIER, in the order the tiers are worked — but only when no
+         * single tier is picked. Once one is, every row in the list is that tier and a heading
+         * over all of them says nothing.
+         *
+         * Tier first, the reviewer's chosen sort second. Array.sort is stable, so the order
+         * inside a tier is exactly what visibleCases already put them in. */
+        const grouping = TIER === 'all';
+        const ordered = grouping ? [...shown].sort((a, b) => tierRank(a) - tierRank(b)) : shown;
+
+        const frag = document.createDocumentFragment();
+        let lastTier = null;
+        for (const rec of ordered) {
+            if (grouping) {
+                const tier = entitlementTier(rec.entitlement);
+                if (tier.key !== lastTier) {
+                    lastTier = tier.key;
+                    const h = document.createElement('div');
+                    h.className = 'oc-group tier-' + tier.key;
+                    h.textContent = tier.label;
+                    frag.appendChild(h);
+                }
+            }
+            frag.appendChild(caseRow(rec));
+        }
+        list.appendChild(frag);
+        alignColumnHeader();
         renderSelection();
         renderCounts();
     }
@@ -492,7 +1463,12 @@
     function caseRow(rec) {
         const key = keyOf(rec);
         const row = document.createElement('div');
-        row.className = 'oc-row';
+        /* THE TIER IS A COLOURED STRIPE DOWN THE ROW'S LEFT EDGE, so the grouping is still
+         * readable once you have scrolled past its heading. `needs-soti` washes the row red:
+         * the status is not otherwise on the line unless its column is switched on, and "this
+         * one is waiting on us" is the thing most worth seeing without opening anything. */
+        row.className = 'oc-row tier-' + entitlementTier(rec.entitlement).key
+            + (statusIsOnSoti(rec.status) ? ' needs-soti' : '');
         row.dataset.key = key;
 
         const state = ROW_STATE.get(key);
@@ -534,51 +1510,44 @@
         num.textContent = rec.caseNum || '(no number)';
         main.appendChild(num);
 
+        /* WHAT ELSE GOES ON THE LINE IS THE REVIEWER'S CHOICE.
+         *
+         * It used to be fixed at the milestone, the owner, the age and the score. That is
+         * still the default, and it is now only the default: the chooser behind the cog (see
+         * renderQaColumns) decides what this loop draws, and the strip above names each one.
+         * The order is QA_COLUMNS' order, never the order the boxes were ticked, so the rows
+         * line up with the headings.
+         *
+         * THE CELLS ARE DIRECT CHILDREN of .oc-row-main, not wrapped in a box of their own.
+         * A wrapper is itself a flex item sized from its own content, and the heading strip's
+         * wrapper sits beside two spacers while the row's does not — so the two would resolve
+         * to different widths and every heading would land a few pixels off the column it
+         * names. Flattened, each line is one flex line with the same items, the same rules and
+         * the same width available. */
+        /* THE SUBJECT'S SLOT IS ALWAYS FILLED, AND ALWAYS HERE.
+         *
+         * It is the cell that absorbs whatever width the fixed columns do not use, so with
+         * the subject switched off something still has to hold that slack or the fixed
+         * columns spread themselves across the row and stop being a grid. The part that
+         * matters is WHERE: the heading strip keeps its subject cell in this position whether
+         * the column is on or off, so a row that appended its spacer at the far end instead
+         * would put the slack on the other side of every cell — and each heading would then
+         * sit a subject's width away from the column it names. Same slot on both lines, or
+         * they do not line up. */
         const subject = document.createElement('span');
-        subject.className = 'oc-subject';
-        subject.textContent = rec.subject || '(no subject)';
-        subject.title = rec.subject || '';
+        if (columnOn('subject')) {
+            subject.className = 'oc-subject';
+            subject.textContent = rec.subject || '(no subject)';
+            subject.title = rec.subject || '';
+        } else {
+            subject.className = 'oc-subject oc-subject-empty';
+            subject.setAttribute('aria-hidden', 'true');
+        }
         main.appendChild(subject);
 
-        // THE 30/60/90 FLAG. Computed from the age, never guessed — see
-        // QaEngine.milestoneFor. It is the whole reason the age is on the row.
-        const ms = milestoneOf(rec);
-        if (ms) {
-            const flag = document.createElement('span');
-            flag.className = 'qa-ms qa-ms-' + ms;
-            flag.textContent = ms + 'd';
-            flag.title = `This case is ${Math.round(E.ageDaysOf(rec.ageDays))} days old — it is due its ${ms}-day management review.`;
-            main.appendChild(flag);
-        }
-
-        const owner = document.createElement('span');
-        owner.className = 'qa-owner-cell';
-        owner.textContent = rec.owner || rec.lastModifiedBy || '—';
-        owner.title = rec.owner ? `Case owner: ${rec.owner}` : rec.lastModifiedBy ? `Last modified by: ${rec.lastModifiedBy}` : 'No owner on the list view';
-        main.appendChild(owner);
-
-        const age = document.createElement('span');
-        age.className = 'qa-age-cell';
-        const ageN = E.ageDaysOf(rec.ageDays);
-        age.textContent = ageN === null ? '—' : `${Math.round(ageN)}d`;
-        age.title = 'Case age in days';
-        main.appendChild(age);
-
-        // ALREADY REVIEWED, and how it went. The band rather than the bare number: a
-        // colour and a word are readable running down a list, and "72" alone is not.
-        const rev = qaReviewFor(rec);
-        if (rev && rev.score && rev.score.value !== null) {
-            const score = document.createElement('span');
-            score.className = 'qa-score band-' + scoreBand(rev.score);
-            score.textContent = `${rev.score.value}`;
-            score.title = `QA score ${rev.score.value}/100 — ${rev.score.band}. Reviewed ${E.fmtDateTime(rev.at)}.`;
-            main.appendChild(score);
-        } else if (rev) {
-            const score = document.createElement('span');
-            score.className = 'qa-score';
-            score.textContent = 'QA’d';
-            score.title = `Reviewed ${E.fmtDateTime(rev.at)}, but the write-up carried no score.`;
-            main.appendChild(score);
+        for (const col of enabledColumns()) {
+            if (col.key === 'subject') continue;
+            addColumnCell(main, col.key, rec);
         }
 
         if (state) {
@@ -804,6 +1773,25 @@
     }
 
     async function syncCaseList() {
+        const found = await resolveListTab();
+        if (!found.tab && found.openedTabId == null) {
+            toast(found.why || 'No Salesforce case list to read.', 'e', 12000);
+            return;
+        }
+        return runSync(found, (LAST_LIST && LAST_LIST.name) || 'The case list');
+    }
+
+    /* THE SYNC ITSELF, given a tab to read it from.
+     *
+     * Split out from syncCaseList so the saved list views below can drive exactly the same
+     * job. There is only ever one of these: two ways into a sync that then read the list
+     * differently is how "Sync" and "press the chip" end up producing different queues from
+     * the same Salesforce view, and nobody would know which one to believe.
+     *
+     * `found` is what resolveListTab returns, or the same shape built by hand: a tab to read,
+     * or the id of one that has just been opened and has not finished loading yet.
+     */
+    async function runSync(found, name) {
         if (!isExt()) { toast('Syncing needs the Chrome extension.', 'e'); return; }
         const btn = $('btnSyncCaseList');
         const label = $('ocSyncLabel');
@@ -811,10 +1799,9 @@
         if (btn) btn.disabled = true;
         if (label) label.textContent = 'Syncing…';
         try {
-            const found = await resolveListTab();
             let tab = found.tab;
             if (found.openedTabId != null) {
-                toast(`${(LAST_LIST && LAST_LIST.name) || 'The case list'} was not open — opening it and syncing once the grid has loaded…`, 'i', 9000);
+                toast(`${name || 'The case list'} was not open — opening it and syncing once the grid has loaded…`, 'i', 9000);
                 const ok = await waitForGrid(found.openedTabId, Date.now() + 60000);
                 if (!ok) { toast('The list view did not finish loading. Press Sync again once it has.', 'w', 9000); return; }
                 try { tab = await chrome.tabs.get(found.openedTabId); } catch (e) { tab = null; }
@@ -848,7 +1835,13 @@
             }
 
             mergeCases(data);
-            LAST_LIST = { url: sfUrl(tab.url), name: listLabel(tab.url), at: Date.now() };
+            /* NAMED FROM THE TAB THAT WAS ACTUALLY READ, not from whatever was pressed. A
+             * sync can land on a list the reviewer was already standing on rather than the
+             * one this run set out to open, and a queue labelled with the wrong view is worse
+             * than one labelled "Case list". The reviewer's own name for the view wins when
+             * it is genuinely the same view — that is what they chose to call it. */
+            const saved = LISTS.find(l => sameList(l.url, tab.url));
+            LAST_LIST = { url: sfUrl(tab.url), name: (saved && saved.name) || listLabel(tab.url), at: Date.now() };
             await store({ [K.cases]: CASES, [K.lastList]: LAST_LIST });
             renderCases();
 
@@ -873,6 +1866,164 @@
             if (btn) btn.disabled = false;
             if (label) label.textContent = was || 'Sync case list';
         }
+    }
+
+    /* ---------------------------------------------------------------------
+     * SAVED SALESFORCE LIST VIEWS
+     * ---------------------------------------------------------------------
+     * The reviewer's own list-view addresses, e.g.
+     *   https://soti.lightning.force.com/lightning/o/Case/list?filterName=Escalations
+     * kept as chips under the toolbar. Pressing one opens that view in Salesforce AND syncs
+     * the queue from it once the grid has rendered — which is the entire point of them: the
+     * four-step "go to Salesforce, find the view, come back, press Sync" is the reason a
+     * reviewer QAs whichever queue happens to be on screen rather than the one they meant.
+     *
+     * The same feature, the same class names and the same two-step dialog as the analyser's,
+     * because a reviewer has both panels open at once and one of them behaving differently
+     * for no reason is a thing they have to remember rather than know.
+     *
+     * WHAT IS DIFFERENT HERE, and deliberately: deleting a chip does NOT delete cases. In
+     * the analyser a queue accumulates several lists at once, so a list owns its rows and
+     * takes them with it. In this tool a sync REPLACES the queue (see mergeCases) — the
+     * queue is one list's snapshot — so there are no rows that belong to the chip being
+     * deleted, and pretending otherwise would delete somebody else's list.
+     *
+     * ONLY https SALESFORCE ADDRESSES GO IN. This is a URL the panel will navigate a tab to
+     * on a click, so it is checked when it is saved rather than trusted because a person
+     * pasted it.
+     * ------------------------------------------------------------------- */
+    function renderLists() {
+        const wrap = $('ocLists');
+        if (!wrap) return;
+        wrap.textContent = '';
+        // Empty is HIDDEN, not an empty band: with nothing saved, the strip would be a
+        // heading over nothing, sitting between the toolbar and the filters.
+        wrap.style.display = LISTS.length ? '' : 'none';
+        if (!LISTS.length) return;
+
+        const label = document.createElement('div');
+        label.className = 'oc-links-label';
+        label.textContent = 'Saved list views';
+        wrap.appendChild(label);
+
+        // The chips get a row of their own so a long view name wraps among the chips rather
+        // than around the heading.
+        const row = document.createElement('div');
+        row.className = 'oc-links-row';
+        wrap.appendChild(row);
+
+        for (const link of LISTS) {
+            const chip = document.createElement('span');
+            chip.className = 'oc-link-chip';
+            // THE ONE THAT IS ON SCREEN, marked. A reviewer with four saved queues is
+            // otherwise reading the meta line to work out which of them they are looking at.
+            if (LAST_LIST && sameList(LAST_LIST.url, link.url)) chip.classList.add('active');
+
+            const go = document.createElement('button');
+            go.type = 'button';
+            go.className = 'oc-link-go';
+            go.textContent = link.name;
+            go.title = `Open ${link.url} in Salesforce and sync this queue from it`;
+            go.onclick = () => openList(link);
+            chip.appendChild(go);
+
+            const del = document.createElement('button');
+            del.type = 'button';
+            del.className = 'oc-link-del';
+            del.textContent = '×';
+            del.title = `Forget the "${link.name}" list view. The cases already synced from it stay in the queue.`;
+            del.setAttribute('aria-label', `Forget the ${link.name} list view`);
+            del.onclick = (e) => { e.stopPropagation(); deleteList(link.id); };
+            chip.appendChild(del);
+
+            row.appendChild(chip);
+        }
+    }
+
+    async function addListByUrl() {
+        const url = await ask({
+            title: 'Add a Salesforce list view',
+            note: 'Paste the address of a case list view — Cases, then whichever queue you QA from. '
+                + 'It is kept as a button here, and pressing it opens that view in Salesforce and syncs this queue from it.',
+            placeholder: 'https://your-org.lightning.force.com/lightning/o/Case/list?filterName=…',
+            ok: 'Save list view',
+            validate: (v) => {
+                if (!v) return 'Paste the list view address.';
+                if (!sfUrl(v)) return 'That is not an https Salesforce address.';
+                /* A CASE LINK PASTED HERE IS A MISTAKE WORTH NAMING, because the two buttons
+                 * sit side by side and the addresses look alike at a glance. Saying which
+                 * button it belongs to costs a line and saves the reviewer working it out. */
+                if (/\/lightning\/r\//.test(v)) {
+                    return 'That is a link to one case, not a list view. Use "Add case" for that.';
+                }
+                if (!isListUrl(v)) return 'That is not a Salesforce list view address — it should contain /lightning/o/Case/list.';
+                if (LISTS.some(l => sameList(l.url, v))) return 'That list view is already saved.';
+                return '';
+            }
+        });
+        if (!url) return;
+
+        const clean = sfUrl(url);
+        // NAMED IN A SECOND STEP rather than assumed, because the filterName Salesforce puts
+        // in the address ("Open_Cases10") is a machine's name for the view and the reviewer
+        // has their own. Cancelling here saves nothing — a half-added list is not a list.
+        const name = await ask({
+            title: 'Name this list view',
+            note: 'What it says on the button. Leave the suggestion if it is fine.',
+            value: listLabel(clean),
+            placeholder: 'Escalations',
+            ok: 'Save'
+        });
+        if (name === null) return;
+
+        LISTS.push({ id: 'ql-' + Date.now().toString(36), name: name || listLabel(clean), url: clean, at: Date.now() });
+        await store({ [K.lists]: LISTS });
+        renderLists();
+        toast('List view saved. Press it to open that queue and sync from it.', 's', 6000);
+    }
+
+    async function deleteList(id) {
+        const link = LISTS.find(l => l.id === id);
+        if (!link) return;
+        const ok = await confirmAsk(`Forget "${link.name}"?`,
+            'Only the button goes. Nothing changes in Salesforce, the cases already synced stay in the queue, '
+            + 'and the view can be added again from its address.',
+            'Forget it');
+        if (!ok) return;
+        LISTS = LISTS.filter(l => l.id !== id);
+        await store({ [K.lists]: LISTS });
+        renderLists();
+    }
+
+    /* PRESS A SAVED VIEW: go there, then sync from it.
+     *
+     * An already-open tab on the same view is REUSED rather than duplicated — a reviewer who
+     * presses the chip three times should not end up with three Salesforce tabs — and it is
+     * matched with sameList, which compares the path and the filter rather than the whole
+     * address, because Lightning rewrites its own query string as the grid is used.
+     *
+     * Never a reader tab: those hold case records open during a run, in a minimized window,
+     * and "focusing" one sends the reviewer somewhere they cannot see.
+     */
+    async function openList(link) {
+        const url = sfUrl(link && link.url);
+        if (!url) { toast('That saved list view is not a valid Salesforce address any more.', 'e'); return; }
+        if (!isExt()) { toast('Opening a list view needs the Chrome extension.', 'e'); return; }
+
+        const open = (await queryTabs({})).filter(t => t && t.url && !window.QaReader.ownsTab(t));
+        const hit = open.find(t => sameList(t.url, url));
+        if (hit) {
+            focusTab(hit);
+            toast(`${link.name} is already open — syncing it now…`, 'i', 8000);
+            return runSync({ tab: hit }, link.name);
+        }
+
+        const tab = await new Promise((res) => {
+            try { window.QaReader.createTab({ url, active: true }, (t) => res(t || null)); }
+            catch (e) { res(null); }
+        });
+        if (!tab || tab.id == null) { toast(`Could not open ${link.name} in a new tab.`, 'e', 9000); return; }
+        return runSync({ openedTabId: tab.id }, link.name);
     }
 
     /* A SYNC REPLACES THE LIST, BUT KEEPS WHAT THE LIST CANNOT SAY.
@@ -967,9 +2118,9 @@
      * and five are already loading. It is bounded by `workers`, because every
      * case being read is a whole Salesforce page in memory on a support laptop.
      * ------------------------------------------------------------------- */
-    async function startRun(kind) {
+    async function startRun(kind, only) {
         if (RUN.active) { toast('A run is already going — wait for it or press Stop.', 'w'); return; }
-        const recs = selectedRecords();
+        const recs = only && only.length ? only.slice() : selectedRecords();
         if (!recs.length) { toast('Tick some cases first.', 'w'); return; }
         if (!window.SotiAI || !window.SotiAI.isConfigured()) {
             toast('The AI relay is not set up yet — open Settings and press Grant site access.', 'e', 10000);
@@ -1002,11 +2153,22 @@
                 updateRow(key);
                 setRunNote(`Reading ${rec.caseNum || 'a case'}… (${RUN.done}/${RUN.total})`);
 
-                let read;
-                try {
-                    read = await window.QaReader.readCase(urlOf(rec));
-                } catch (e) {
-                    read = { ok: false, error: (e && e.message) || String(e) };
+                let read = await readOnce(rec);
+
+                /* ONE MORE GO BEFORE GIVING UP ON IT.
+                 *
+                 * Most read failures on a long run are a Lightning page that took longer than
+                 * its ceiling on this particular pass — the tab was one of four being loaded,
+                 * or the feed was still fetching when the clock ran out. That case reads fine
+                 * on its own a moment later, which is exactly what "one case keeps failing"
+                 * looks like from the outside, and it is not worth making a reviewer notice
+                 * and re-tick it. Failures that can never succeed — no link, not a case
+                 * record, not running as an extension — are not retried; see retryableRead. */
+                if (!read.ok && !RUN.stop && retryableRead(read.error)) {
+                    logLine(`${rec.caseNum || key}: ${read.error} Trying it once more.`, 'warn');
+                    setRunNote(`Retrying ${rec.caseNum || 'a case'}…`);
+                    await new Promise(r => setTimeout(r, 2000));
+                    read = await readOnce(rec);
                 }
 
                 if (!read.ok) {
@@ -1015,14 +2177,36 @@
                     RUN.failed++;
                     RUN.done++;
                     logLine(`${rec.caseNum || key}: ${read.error}`, 'fail');
-                    await saveReview(failedReview(rec, kind, read.error));
+                    /* A FAILED READ MUST NOT DELETE A GOOD REVIEW. Re-reviewing a case
+                     * replaces its review, which is right when the new one is a review — but
+                     * a case that would not open today is not a reason to lose the write-up
+                     * from the day it did. */
+                    const had = REVIEWS.find(r => r.id === `${key}|${kind}` && !r.error);
+                    if (had) logLine(`${rec.caseNum || key}: keeping the review already on file for it.`, 'warn');
+                    else await saveReview(failedReview(rec, kind, read.error));
                     setRunNote(`${RUN.done}/${RUN.total} done, ${RUN.failed} failed`);
                     continue;
                 }
 
-                applyReadToRecord(rec, read.data);
-                migrateKey(key, keyOf(rec));
-                const metrics = E.measureCase(read.data, RULES);
+                let metrics;
+                try {
+                    applyReadToRecord(rec, read.data);
+                    migrateKey(key, keyOf(rec));
+                    metrics = E.measureCase(read.data, RULES);
+                } catch (e) {
+                    /* THE CASE WAS READ AND THE MEASUREMENT FELL OVER ON IT. That is a bug
+                     * worth seeing rather than a case worth abandoning the run for, so it is
+                     * reported against the case, by name, and the queue carries on. */
+                    const why = 'This case was read, but measuring it failed — ' + ((e && e.message) || e);
+                    ROW_STATE.set(keyOf(rec), 'failed');
+                    updateRow(keyOf(rec));
+                    RUN.failed++;
+                    RUN.done++;
+                    logLine(`${rec.caseNum || key}: ${why}`, 'fail');
+                    await saveReview(failedReview(rec, kind, why));
+                    setRunNote(`${RUN.done}/${RUN.total} done, ${RUN.failed} failed`);
+                    continue;
+                }
                 /* KEEP WHAT THE CASE SAID, not just what the review concluded.
                  *
                  * The read is the expensive part — a page load and a scroll to the end of a
@@ -1031,9 +2215,24 @@
                  * question about the material, so the material is kept and the per-case chat
                  * stands on it. Without this, opening a chat would mean reading the case
                  * again, days later, on a record that has since moved on. */
-                await saveContext(rec, read.data, metrics);
-                logLine(`${read.data.caseNumber || rec.caseNum || key}: read ${metrics.itemsSeen} post(s), ${metrics.itemsDated} dated. ${describeMeasure(metrics)}`,
-                    metrics.readable ? 'ok' : 'warn');
+                // Keeping the material is a convenience for the chat afterwards, not part of
+                // the review — so a store that will not take it costs the chat, not the run.
+                try {
+                    await saveContext(rec, read.data, metrics);
+                } catch (e) {
+                    logLine(`${rec.caseNum || key}: the case was reviewed, but its material could not be kept for the chat — ${(e && e.message) || e}`, 'warn');
+                }
+                /* THE NUMBERS THAT SAY WHETHER THE READ WAS ANY GOOD. "read 5 post(s)" was
+                  * the count of messages KEPT and nothing else, so a forty-message case that
+                  * lost thirty-five of them to unrenderable bodies looked exactly like a
+                  * five-message case. Both halves are printed now. */
+                const thin = metrics.feedTruncated || metrics.itemsBodyless > 0
+                    || metrics.feedSeen > metrics.itemsSeen + metrics.changeItems;
+                logLine(`${read.data.caseNumber || rec.caseNum || key}: read ${metrics.itemsSeen} message(s) of ${metrics.feedSeen} feed entr(y/ies), ${metrics.itemsDated} dated`
+                    + `${metrics.itemsBodyless ? `, ${metrics.itemsBodyless} with no readable text` : ''}`
+                    + `${metrics.feedTruncated ? ' — FEED STILL LOADING when the read stopped, so this is not the whole case' : ''}`
+                    + `. ${describeMeasure(metrics)}`,
+                    metrics.readable && !thin ? 'ok' : 'warn');
 
                 /* The AI half, one at a time — see the header above.
                  *
@@ -1042,22 +2241,39 @@
                  * the end of a run is what a reviewer decides whether to re-run on, and
                  * counting a review with no review in it as "reviewed" would hide exactly the
                  * cases that need going back to. */
-                const wrote = await (aiChain = aiChain.then(() => writeUp(rec, read.data, metrics, kind)).catch((e) => {
-                    logLine(`${rec.caseNum || key}: the write-up failed — ${(e && e.message) || e}`, 'fail');
+                const wrote = await (aiChain = aiChain.then(() => writeUp(rec, read.data, metrics, kind)).catch(async (e) => {
+                    /* writeUp SAVES ITS OWN FAILURES, so getting here means it fell over
+                     * before it could — and a case that was read but left no record at all is
+                     * the one kind of failure a reviewer cannot see, cannot filter for and
+                     * cannot re-run. So one is written here. */
+                    const why = 'The write-up failed before it started — ' + ((e && e.message) || e);
+                    logLine(`${rec.caseNum || key}: ${why}`, 'fail');
+                    try { await saveReview(failedReview(rec, kind, why)); } catch (e2) { /* nothing left to try */ }
                     return false;
                 }));
                 if (!wrote) RUN.failed++;
 
                 ROW_STATE.delete(keyOf(rec));
-                updateRow(keyOf(rec));
                 RUN.done++;
-                setRunNote(`${RUN.done}/${RUN.total} done${RUN.failed ? `, ${RUN.failed} failed` : ''}`);
+                try {
+                    updateRow(keyOf(rec));
+                    setRunNote(`${RUN.done}/${RUN.total} done${RUN.failed ? `, ${RUN.failed} failed` : ''}`);
+                } catch (e) { /* a repaint is not worth a run */ }
             }
         };
 
+        /* allSettled, NOT all. Two workers, and one of them throwing something this loop did
+         * not anticipate would otherwise resolve the await immediately — running the finally
+         * below, clearing the row states and announcing the run as finished, while the other
+         * worker carried on reading cases into a run that had already declared itself over. */
         const workers = Math.max(1, Math.min(4, Number(RULES.workers) || 2));
         try {
-            await Promise.all(Array.from({ length: Math.min(workers, recs.length) }, worker));
+            const settled = await Promise.allSettled(Array.from({ length: Math.min(workers, recs.length) }, worker));
+            for (const outcome of settled) {
+                if (outcome.status === 'rejected') {
+                    logLine(`A reader stopped early — ${(outcome.reason && outcome.reason.message) || outcome.reason}`, 'fail');
+                }
+            }
         } finally {
             // Whatever happened, nothing is left saying "reading…" — a row stuck in that
             // state after a run is the panel lying about work that is not happening.
@@ -1076,27 +2292,165 @@
     // case rather than only that it was read.
     function describeMeasure(m) {
         const bits = [];
-        if (m.frtMet === true) bits.push('first response met');
+        if (m.frtMet === true) bits.push('first response met' + (m.assignedAt ? '' : ' (measured from the case opening)'));
         else if (m.frtMet === false) bits.push('FIRST RESPONSE MISSED');
+        // Neither. Said out loud, because a run log that is silent about the first response
+        // reads as "fine" — and the reason it is silent is the thing worth knowing.
+        else if (m.frtUnmeasured) bits.push('first response NOT ASSESSABLE — ' + m.frtUnmeasured);
         if (m.gaps.length) bits.push(`${m.gaps.length} gap(s)`);
         if (m.meetingsUndocumented) bits.push(`${m.meetingsUndocumented} meeting(s) not written up`);
         if (m.openWaitMs !== null) bits.push('waiting on us');
         return bits.length ? bits.join(', ') + '.' : 'nothing flagged.';
     }
 
+    /* AN ERROR, SHORT ENOUGH FOR A LOG LINE AND STILL WORTH READING.
+     *
+     * NOT `split('.')[0]`. The relay's errors begin with the host they came from, so that
+     * rule printed "m365" — every relay failure, whatever it was, reduced to the first
+     * label of a domain name. This keeps whole words up to a sensible length and says
+     * nothing more, and the card carries the full text either way. */
+    function firstLine(msg) {
+        const t = String(msg || '').replace(/\s+/g, ' ').trim();
+        if (t.length <= 150) return t;
+        const cut = t.slice(0, 150);
+        const space = cut.lastIndexOf(' ');
+        return (space > 60 ? cut.slice(0, space) : cut) + '…';
+    }
+
+    /* WAS THAT AN ANSWER? One question, asked the same way of both kinds of write-up.
+     *
+     * A QA review is judged on how many of its headers came back filled in; a 30/60/90 is one
+     * document with no headers to count, so it is judged on whether anything substantial came
+     * back at all. Both report `refused` separately, because "it declined" and "it answered
+     * badly" want different words on the card and only one of them is worth asking twice. */
+    function judgeAnswer(text, kind, metrics) {
+        if (kind === 'qa') return E.parseQaAnswer(text, metrics, RULES);
+        const body = String(text || '').trim();
+        const refused = E.looksRefused(body);
+        return { filled: body.length, refused, usable: !refused && body.length > 200, fields: {} };
+    }
+
     async function writeUp(rec, data, metrics, kind) {
         const caseNo = data.caseNumber || rec.caseNum || keyOf(rec);
         setRunNote(`Writing up ${caseNo}…`);
-        const prompt = kind === '306090'
-            ? E.build306090Prompt(rec, data, metrics, RULES)
-            : E.buildQaPrompt(rec, data, metrics, RULES);
 
+        /* THE CASE GOES OUT ANONYMOUS AND COMES BACK NAMED.
+         *
+         * Everything the relay is shown has the people in it replaced with role labels, and
+         * everything it says has the labels replaced with the real names again before it is
+         * stored. The write-up a reviewer reads is identical either way; what changes is that
+         * Copilot is no longer being asked to assess an identifiable employee, which it
+         * refuses to do. See buildAliases in qa-engine.js for why that refusal was the thing
+         * filling the QA sheet with blank rows.
+         *
+         * BUILT INSIDE THE TRY, not before it. The alias map and the prompt are both walks
+         * over the scrape, and a feed shaped in a way they did not expect threw out here —
+         * past every catch — so the case was read, measured, and then simply disappeared:
+         * no review, no row, nothing to re-run, and a queue one case shorter than the number
+         * the reviewer had ticked. */
+        let aliases = E.aliasRules([], false);
         let text = '';
         let error = '';
+        let parsed = null;
+        let threw = '';           // the last transport failure, if the relay never answered
+        let refusedOnce = false;
+
         try {
-            text = await askAi(prompt, caseNo);
+            aliases = E.buildAliases(rec, data, metrics, RULES);
         } catch (e) {
-            error = (e && e.message) || String(e);
+            aliases = E.aliasRules([], false);
+        }
+
+        const ask = async (retry, sizing, label) => {
+            const opts = { aliases, retry, transcript: sizing || undefined };
+            const prompt = kind === '306090'
+                ? E.build306090Prompt(rec, data, metrics, RULES, opts)
+                : E.buildQaPrompt(rec, data, metrics, RULES, opts);
+            return aliases.show(await askAi(aliases.hide(prompt), label));
+        };
+
+        /* THE LADDER. A write-up must not simply fail.
+         *
+         * The relay is a web page being driven, not an API, and it fails the way a web page
+         * does: the composer would not take a message that size, the conversation had not
+         * gone idle before the next part was typed, the answer took longer than the timeout,
+         * the page rate-limited a run of twenty-nine cases. Every one of those is transient
+         * or size-related — and the tool used to catch the first of them and file the case as
+         * "write-up FAILED" without ever asking again.
+         *
+         * So each case gets up to five asks. The first two send the whole thing, seconds
+         * apart, because most of these come good on the second go. The rest send less of the
+         * case each time — the transcript is the only part big enough to matter — because a
+         * review of most of a case beats no review at all, and the transcript says out loud
+         * when it is a sample so the write-up cannot claim to have read what it was not sent.
+         *
+         * A REFUSAL IS A DIFFERENT FAILURE and keeps its own answer: the retry framing that
+         * gets past the guardrail is set on the SECOND ask onwards, whatever went wrong first.
+         */
+        const sizes = E.PROMPT_SIZES;
+        let asks = 0;
+        for (let n = 0; n < sizes.length; n++) {
+            if (RUN.stop) break;
+            if (n > 0) {
+                // A pause that grows. A rate limit needs seconds, not milliseconds, and
+                // hammering it is how a run turns one slow case into twenty-nine.
+                const pause = Math.min(15000, 2500 * n);
+                setRunNote(`Retrying ${caseNo} (${n + 1}/${sizes.length})…`);
+                await new Promise(r => setTimeout(r, pause));
+                if (RUN.stop) break;
+            }
+            const label = n === 0 ? caseNo : `${caseNo} (try ${n + 1})`;
+            asks++;
+            let said = '';
+            try {
+                said = await ask(n > 0, sizes[n], label);
+                threw = '';
+            } catch (e) {
+                threw = (e && e.message) || String(e);
+                logLine(`${caseNo}: the relay failed on attempt ${n + 1} of ${sizes.length} — ${firstLine(threw)}`, 'warn');
+                continue;
+            }
+
+            const judged = judgeAnswer(said, kind, metrics);
+            // Keep whichever attempt said the most, so a later, smaller ask that comes back
+            // worse than an earlier one cannot throw the better answer away.
+            if (!parsed || judged.usable || judged.filled > parsed.filled) {
+                text = said;
+                parsed = judged;
+            }
+            if (judged.usable) break;
+
+            refusedOnce = refusedOnce || judged.refused;
+            // n >= 2 means the retry framing has now been sent twice and declined twice.
+            const giveUp = judged.refused && n >= 2;
+            logLine(`${caseNo}: ${judged.refused ? 'the relay declined to write this up' : 'the answer came back without a review in it'}`
+                + `${!giveUp && n + 1 < sizes.length ? ' — asking again.' : '.'}`, 'warn');
+            if (giveUp) break;
+        }
+
+        /* AND IF NONE OF THAT WORKED, SAY WHICH KIND OF NOTHING IT WAS.
+         *
+         * Three different failures used to arrive as one word. A relay that never answered,
+         * a relay that declined, and a relay that answered with something that was not a
+         * review want three different responses from the reviewer, and only the first of
+         * them is worth simply running again. */
+        if (!parsed || !parsed.usable) {
+            if (threw && (!parsed || !parsed.filled)) {
+                error = `The AI relay could not be reached for this case. It was asked ${asks} times, `
+                    + 'with less of the case each time, and the last attempt said: ' + threw;
+            } else if (refusedOnce) {
+                error = `The AI relay declined to write this case up. It was asked ${asks} times, `
+                    + 'including with the request framed as a check of the case record rather than of a person. '
+                    + (aliases.on
+                        ? 'The case went out with every name already removed, so this is not about who is on it.'
+                        : 'The case went out with the real names in it — turn on "Send cases with the names removed" '
+                          + 'in Settings, which is what this refusal is usually about, and run it again.')
+                    + ' What it said instead is below.';
+            } else {
+                error = 'The answer came back without a usable write-up in it — the QA headers were missing. '
+                    + (threw ? 'A later attempt could not reach the relay at all: ' + threw + ' ' : '')
+                    + 'What came back is below.';
+            }
         }
 
         /* A FAILED WRITE-UP STILL SAVES THE MEASUREMENT.
@@ -1107,7 +2461,7 @@
          * write-up is missing, and re-running that one case is a tick and a button. */
         // The 30/60/90 is read as a whole document, not as sheet columns — it has its own
         // template and no row on the QA sheet — so only a QA review is parsed into fields.
-        const parsed = kind === 'qa' ? E.parseQaAnswer(text) : null;
+        if (kind === 'qa' && !parsed) parsed = E.parseQaAnswer(text, metrics, RULES);
 
         const review = {
             id: `${keyOf(rec)}|${kind}`,
@@ -1133,13 +2487,39 @@
         } else {
             review.fields = {};
         }
+        // So a card can say "sent with the names removed" rather than leaving the reviewer to
+        // wonder why the answer talks about Agent A.
+        review.deidentified = aliases.on;
+        review.refused = refusedOnce || !!(parsed && parsed.refused);
         await saveReview(review);
-        const said = error ? 'write-up FAILED — ' + error
+        const said = error ? 'write-up FAILED — ' + firstLine(error)
             : kind === '306090' ? '30/60/90 written'
-            : review.score && review.score.value !== null ? `reviewed — ${review.score.value}/100 (${review.score.band})`
-            : 'reviewed, but the write-up carried no score';
+            : review.score && review.score.value !== null
+                ? `reviewed — ${review.score.value}/100 (${review.score.band})`
+                  + (review.score.derived ? ' — score worked out from the measured facts, the write-up gave none' : '')
+            : 'reviewed';
         logLine(`${caseNo}: ${said}`, error ? 'fail' : 'ok');
         return !error;
+    }
+
+    async function readOnce(rec) {
+        try {
+            return await window.QaReader.readCase(urlOf(rec));
+        } catch (e) {
+            return { ok: false, error: (e && e.message) || String(e) };
+        }
+    }
+
+    /* WHICH READ FAILURES ARE WORTH A SECOND ATTEMPT. Everything except the ones whose
+     * cause cannot change between now and two seconds from now: a record with no link on
+     * it, a link that does not point at a case, and a build that is not running as an
+     * extension at all. Retrying those is two seconds spent to print the same sentence. */
+    function retryableRead(why) {
+        const t = String(why || '');
+        if (/has no Salesforce link/i.test(t)) return false;
+        if (/does not open a case record/i.test(t)) return false;
+        if (/only read cases when it is running as a Chrome extension/i.test(t)) return false;
+        return true;
     }
 
     /* THE MEASUREMENT, MINUS WHAT IT WOULD COST TO KEEP.
@@ -1153,6 +2533,20 @@
             frtMet: m.frtMet,
             firstResponseMs: m.firstResponseMs,
             firstResponseBy: m.firstResponseBy,
+            // The start of the first response clock, and what it was. Five small fields, and
+            // without them nothing downstream can say what the number beside them means.
+            assignedAt: m.assignedAt,
+            assignedTo: m.assignedTo,
+            assignedFrom: m.assignedFrom,
+            frtFromWhat: m.frtFromWhat,
+            frtUnmeasured: m.frtUnmeasured,
+            frtByOwner: m.frtByOwner,
+            feedSeen: m.feedSeen,
+            itemsBodyless: m.itemsBodyless,
+            feedLoad: m.feedLoad,
+            feedTruncated: m.feedTruncated,
+            changeItems: m.changeItems,
+            changedFields: m.changedFields,
             openedAt: m.openedAt,
             ageDays: m.ageDays,
             milestone: m.milestone,
@@ -1245,6 +2639,9 @@
         line.appendChild(t);
         line.appendChild(document.createTextNode(text));
         log.appendChild(line);
+        // A day of runs is thousands of lines, and the oldest of them are about cases
+        // reviewed hours ago. The newest thousand is what anybody scrolls back through.
+        while (log.childElementCount > 1000) log.removeChild(log.firstChild);
         log.scrollTop = log.scrollHeight;
     }
 
@@ -1284,6 +2681,12 @@
     async function saveContext(rec, data, metrics) {
         const key = keyOf(rec);
         if (!key) return;
+        /* THE MATERIAL IS KEPT UNDER THE REAL NAMES and hidden on the way out, rather than
+         * stored already hidden. Two reasons. The panel's own screens — the grounding line,
+         * the case row — should say who the case belongs to, and a store full of "Agent A"
+         * would make that a lookup. And the de-identification setting can be turned off
+         * later without every case read before that being permanently anonymous. */
+        const aliases = E.buildAliases(rec, data, metrics, RULES);
         CONTEXT[key] = {
             key,
             caseNum: data.caseNumber || rec.caseNum || '',
@@ -1294,7 +2697,11 @@
             facts: E.caseFactsBlock(rec, data),
             measured: E.measurementBlock(metrics, RULES),
             transcript: E.buildTranscript(data, { perPost: 1500, maxChars: CONTEXT_MAX_CHARS }),
-            metrics: slimMetrics(metrics)
+            metrics: slimMetrics(metrics),
+            // Small — a name, a label and a side each — and it is what lets a chat use the
+            // same aliases the review used instead of inventing a second set.
+            people: aliases.people.map(x => ({ real: x.real, alias: x.alias, side: x.side })),
+            legend: aliases.legend()
         };
         const keys = Object.keys(CONTEXT).sort((a, b) => (CONTEXT[b].at || 0) - (CONTEXT[a].at || 0));
         for (const gone of keys.slice(CONTEXT_KEEP)) delete CONTEXT[gone];
@@ -1493,8 +2900,16 @@
         }
         el.classList.remove('qa-chat-ground-empty');
         const bits = [`Grounded in the case as read ${E.fmtDateTime(ctx.at)}`];
-        if (rev && !rev.error) bits.push(`and its QA review${rev.score && rev.score.value !== null ? ` (${rev.score.value}/100)` : ''}`);
+        if (rev && !incomplete(rev)) bits.push(`and its QA review${rev.score && rev.score.value !== null ? ` (${rev.score.value}/100)` : ''}`);
         el.appendChild(document.createTextNode(bits.join(' ') + '. '));
+        if (chatAliases(ctx).on) {
+            const priv = document.createElement('span');
+            priv.className = 'qa-chat-priv';
+            priv.textContent = 'Names removed on the way out.';
+            priv.title = 'Everyone on this case is sent under a role label and named again in the answer, '
+                + 'so nothing you read here changes — see Settings.';
+            el.appendChild(priv);
+        }
         const again = document.createElement('button');
         again.className = 'btn';
         again.textContent = 'Read it again';
@@ -1656,6 +3071,23 @@
         }
     }
 
+    /* THE ALIASES FOR ONE CHAT.
+     *
+     * Normally they come straight off the stored material, which is what keeps a label
+     * meaning the same person in the review and in every conversation about it.
+     *
+     * MATERIAL READ BEFORE THIS EXISTED has no people list, and that is the case for every
+     * case already in the store. Rather than send those under their real names — which is
+     * the thing that was being refused — the agent's own name is hidden on its own. It is
+     * the name that matters here: the guardrail is about assessing an employee, and the
+     * employee is the one the review is about. */
+    function chatAliases(ctx) {
+        const people = (ctx && ctx.people && ctx.people.length)
+            ? ctx.people
+            : (ctx && ctx.agent ? [{ real: E.cleanName(ctx.agent), alias: 'Agent A', side: 'us' }] : []);
+        return E.aliasRules(people.filter(x => x && x.real), RULES.deident !== false && !!people.length);
+    }
+
     async function sendChat(question) {
         const text = String(question || '').trim();
         if (!text || CHAT_BUSY || !CHAT_KEY) return;
@@ -1691,6 +3123,15 @@
             messages.push({ role: m.role, content: m.content });
         }
 
+        /* THE SAME ALIASES THE REVIEW USED — see saveContext.
+         *
+         * The whole conversation goes through them, not just the case material: the
+         * reviewer's own question ("what did Mohammed do on the 3rd?") carries the name as
+         * readily as the transcript does, and one un-hidden name in the last message is
+         * enough for the relay to decline the whole turn. The answer comes back through
+         * show(), so the reviewer never sees a label. */
+        const aliases = chatAliases(ctx);
+
         const msgsEl = $('chatMsgs');
         const paint = () => {
             const bubbles = msgsEl.querySelectorAll('.qa-msg-ai .qa-msg-body');
@@ -1700,10 +3141,41 @@
         };
 
         CHAT_ABORT = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        const label = chat.caseNum ? `QA chat — ${chat.caseNum}` : 'QA chat';
+        const send = (msgs) => streamAi(
+            msgs.map(m => ({ role: m.role, content: aliases.hide(m.content) })), label,
+            // Re-identified as it streams, so a half-written "Agent A" becomes the real name
+            // the moment the label completes rather than after the whole answer lands.
+            (soFar) => { reply.content = aliases.show(soFar); paint(); },
+            CHAT_ABORT ? CHAT_ABORT.signal : undefined);
+
         try {
-            reply.content = await streamAi(messages, chat.caseNum ? `QA chat — ${chat.caseNum}` : 'QA chat',
-                (soFar) => { reply.content = soFar; paint(); },
-                CHAT_ABORT ? CHAT_ABORT.signal : undefined);
+            reply.content = aliases.show(await send(messages));
+
+            /* ASK ONCE MORE WHEN IT DECLINES. Same reasoning as the write-up's retry: the
+             * refusal is about being asked to assess a person, and nothing here is — so the
+             * second attempt says that in as many words instead of leaving it implied. It
+             * happens once, silently, and the reviewer sees the answer rather than the
+             * apology they cannot do anything with. */
+            if (E.looksRefused(reply.content) && !(CHAT_ABORT && CHAT_ABORT.signal && CHAT_ABORT.signal.aborted)) {
+                reply.content = '';
+                paint();
+                const again = messages.slice();
+                again[again.length - 1] = {
+                    role: 'user',
+                    content: E.CHAT_RETRY_PREFACE + messages[messages.length - 1].content
+                };
+                reply.content = aliases.show(await send(again));
+            }
+            if (E.looksRefused(reply.content)) {
+                reply.error = 'The AI relay declined to answer this one, twice. '
+                    + (aliases.on
+                        ? 'The case went out with every name already removed, so try asking about what the RECORD shows '
+                          + 'rather than about the person who wrote it.'
+                        : 'The case went out with the real names in it — turn on "Send cases with the names removed" in '
+                          + 'Settings and ask again.')
+                    + ' What it said is above.';
+            }
         } catch (e) {
             const why = (e && e.message) || String(e);
             reply.error = /abort/i.test(why) ? 'Stopped.' : why;
@@ -1776,6 +3248,19 @@
     /* ---------------------------------------------------------------------
      * THE REVIEWS TAB
      * ------------------------------------------------------------------- */
+    /* WHAT COUNTS AS AN INCOMPLETE REVIEW.
+     *
+     * An `error` is the obvious half — the case would not open, or the relay threw. The other
+     * half is the one that caused the blank sheet: a QA review that came back with no fields
+     * in it. That is not a review, however successfully it arrived, and every place that
+     * counts, filters or exports reviews asks this rather than asking about `error` alone. */
+    function incomplete(r) {
+        if (!r) return true;
+        if (r.error) return true;
+        if (r.kind === 'qa') return !Object.keys(r.fields || {}).some(k => String(r.fields[k] || '').trim());
+        return !String(r.raw || '').trim();
+    }
+
     function renderReviews() {
         const list = $('revList');
         if (!list) return;
@@ -1784,20 +3269,51 @@
         const q = ($('revSearch').value || '').trim().toLowerCase();
         const filter = $('revFilter').value || '';
         let shown = REVIEWS.slice().sort((a, b) => b.at - a.at);
-        if (filter === 'qa') shown = shown.filter(r => r.kind === 'qa' && !r.error);
+        if (filter === 'qa') shown = shown.filter(r => r.kind === 'qa' && !incomplete(r));
         if (filter === 'milestone') shown = shown.filter(r => r.kind === '306090');
-        if (filter === 'failed') shown = shown.filter(r => !!r.error);
+        if (filter === 'failed') shown = shown.filter(incomplete);
         if (q) {
             shown = shown.filter(r => [r.caseNum, r.subject, r.account, r.agent, r.raw]
                 .some(v => String(v || '').toLowerCase().includes(q)));
         }
 
         const meta = $('revMeta');
+        const bad = REVIEWS.filter(incomplete);
         if (meta) {
-            const failed = REVIEWS.filter(r => r.error).length;
             meta.textContent = REVIEWS.length
-                ? `${shown.length} of ${REVIEWS.length} review${REVIEWS.length === 1 ? '' : 's'}${failed ? `, ${failed} with a problem` : ''}`
+                ? `${shown.length} of ${REVIEWS.length} review${REVIEWS.length === 1 ? '' : 's'}${bad.length ? `, ${bad.length} incomplete` : ''}`
                 : '';
+        }
+        /* THE WAY OUT OF THE PROBLEM, NEXT TO THE COUNT OF IT. Every case here was read once
+         * already; what is missing is the write-up, and re-running them is the fix. The button
+         * only exists when there is something for it to do. */
+        const retry = $('btnRetryFailed');
+        if (retry) {
+            retry.style.display = bad.length && !RUN.active ? '' : 'none';
+            retry.textContent = `Re-run the ${bad.length} incomplete one${bad.length === 1 ? '' : 's'}`;
+        }
+
+        /* THE DELETE BUTTON, LABELLED WITH WHAT IT WILL DELETE. It acts on the list as
+         * filtered, because that is the list in front of the person pressing it — and it
+         * says so, so "Delete all 27" and "Delete these 3" are never confusable. Hidden
+         * when there is nothing to delete, and out of reach during a run: a run writes
+         * reviews as it goes, and deleting the list underneath it would race it. */
+        const del = $('btnDeleteReviews');
+        if (del) {
+            const filtered = shown.length !== REVIEWS.length;
+            del.style.display = REVIEWS.length ? '' : 'none';
+            del.disabled = RUN.active || !shown.length;
+            del.textContent = filtered
+                ? `Delete these ${shown.length}`
+                : `Delete all ${REVIEWS.length}`;
+            del.title = RUN.active
+                ? 'Not while a run is going — it is writing reviews into this list.'
+                : filtered
+                    ? `Delete the ${shown.length} review(s) this filter is showing. The other ${REVIEWS.length - shown.length} are kept.`
+                    : 'Delete every review in this list.';
+            // The ids are read back by the click handler rather than closed over, so a
+            // repaint between the paint and the press cannot delete a stale set.
+            del.dataset.ids = JSON.stringify(shown.map(r => r.id));
         }
 
         if (!shown.length) {
@@ -1849,6 +3365,15 @@
             const s = document.createElement('span');
             s.className = 'qa-score band-' + scoreBand(r.score);
             s.textContent = String(r.score.value);
+            if (r.score.derived) {
+                // The dot is the whole marker. A word here would be read as part of the
+                // score, and the number is the thing being read.
+                s.classList.add('qa-score-derived');
+                s.title = 'Worked out from the measured facts — the write-up did not give a score.'
+                    + (r.score.basis ? ' Based on: ' + r.score.basis + '.' : '');
+            } else {
+                s.title = `${r.score.value}/100 — ${r.score.band}`;
+            }
             head.appendChild(s);
         }
 
@@ -1913,6 +3438,22 @@
                 f.innerHTML = `<div class="qa-field-k">Training needed</div><div>${pills}</div>`;
                 body.appendChild(f);
             }
+            /* AND WHEN THERE WAS NO REVIEW IN THE ANSWER, THE ANSWER.
+             *
+             * Without this the card is empty and says nothing at all — which is what a
+             * refusal looked like, and it is the reason a run of them went unnoticed until
+             * the sheet was opened. It is shown as a quotation, not as prose, because it is
+             * not this tool speaking. */
+            if (incomplete(r) && String(r.raw || '').trim()) {
+                const f = document.createElement('div');
+                f.className = 'qa-field qa-rev-said';
+                const how = r.deidentified === undefined ? ''
+                    : r.deidentified ? ' — this case was sent with the names removed'
+                    : ' — this case was sent with the real names in it';
+                f.innerHTML = `<div class="qa-field-k">${r.refused ? 'The relay declined' : 'What came back instead'}${esc(how)}</div>`
+                    + `<div class="qa-field-v">${esc(String(r.raw).trim().slice(0, 4000))}</div>`;
+                body.appendChild(f);
+            }
         } else if (r.raw) {
             const f = document.createElement('div');
             f.className = 'qa-field';
@@ -1926,10 +3467,20 @@
          * it, and both of those are questions — so the control that lets you ask one belongs
          * at the front of this row rather than after Copy and Delete. */
         const talk = document.createElement('button');
-        talk.className = 'btn qa-btn-primary';
+        talk.className = 'btn' + (incomplete(r) ? '' : ' qa-btn-primary');
         talk.textContent = 'Ask about this case';
         talk.onclick = () => openChat(r.key);
         acts.appendChild(talk);
+        /* ON AN INCOMPLETE REVIEW THIS IS THE PRIMARY, and "Ask about this case" is not:
+         * there is nothing yet to ask about. One case, read and written up again, without
+         * going back to the queue to find and tick it. */
+        if (incomplete(r)) {
+            const again = document.createElement('button');
+            again.className = 'btn qa-btn-primary';
+            again.textContent = 'Read and write it up again';
+            again.onclick = () => rerunReviews([r]);
+            acts.appendChild(again);
+        }
         const copy = document.createElement('button');
         copy.className = 'btn';
         copy.textContent = 'Copy';
@@ -1954,6 +3505,36 @@
         body.appendChild(acts);
 
         return card;
+    }
+
+    /* RE-RUNNING WHAT DID NOT COME OUT.
+     *
+     * A review knows its own case — key, link, number — so it can be run again without the
+     * reviewer going back to the queue to find the row it came from. A case that is still in
+     * the queue is run as that record, so the run fills its row in as it always did; one
+     * that has since been cleared out of the queue is run from what the review remembers.
+     */
+    function rerunReviews(list) {
+        if (RUN.active) { toast('A run is already going — wait for it or press Stop.', 'w'); return; }
+        const recs = [];
+        const noLink = [];
+        for (const r of list) {
+            const rec = CASES.cases.find(c => keyOf(c) === r.key)
+                || { recordId: /^500/.test(r.key) ? r.key : '', url: r.url || '', caseNum: r.caseNum || '', subject: r.subject || '', owner: r.agent || '' };
+            if (!urlOf(rec)) { noLink.push(r.caseNum || r.key); continue; }
+            if (!recs.some(x => keyOf(x) === keyOf(rec))) recs.push(rec);
+        }
+        if (noLink.length) {
+            toast(`${noLink.length} of these has no Salesforce link to re-open: ${noLink.slice(0, 3).join(', ')}${noLink.length > 3 ? '…' : ''}`, 'w', 9000);
+        }
+        if (!recs.length) return;
+        // 30/60/90 records and QA reviews are different documents from different prompts, so
+        // a mixed selection runs as two passes rather than one that would rewrite half of
+        // them as the wrong kind. QA first, because it is the one somebody is waiting on.
+        const kinds = [...new Set(list.map(r => r.kind))].sort();
+        const kind = kinds.length === 1 ? kinds[0] : 'qa';
+        if (kinds.length > 1) toast('Re-running the QA reviews. Re-run the 30/60/90 analyses from their own cards.', 'w', 8000);
+        startRun(kind, recs.filter(rec => list.some(r => r.kind === kind && r.key === keyOf(rec))));
     }
 
     function reviewAsText(r) {
@@ -1983,7 +3564,10 @@
 
     function sheetRows() {
         return REVIEWS
-            .filter(r => r.kind === 'qa' && !r.error)
+            // NOT `!r.error`. A refused write-up carries no error and no fields, and under
+            // that test it put a row on the sheet with a case number, a date and eleven
+            // empty columns — which reads, to anyone opening the sheet, as a reviewed case.
+            .filter(r => r.kind === 'qa' && !incomplete(r))
             .sort((a, b) => a.at - b.at)
             .map(r => {
                 const f = r.fields || {};
@@ -1999,6 +3583,13 @@
                 return row;
             });
     }
+
+    // The columns that carry the review itself, as opposed to the ones this tool fills in
+    // from its own record. A row with all of these empty has nothing in it that was written.
+    const PROSE_COLUMNS = [
+        'Closure Check', 'Internal Resolution Note Quality', 'Case Handling Notes',
+        'JIRA / Other Agent Follow-up', 'KB Articles', 'Positive(s)', 'Improvement Point(s)', 'Final Comment'
+    ];
 
     function renderSheet() {
         const table = $('sheetTable');
@@ -2024,11 +3615,23 @@
         const tbody = document.createElement('tbody');
         for (const row of rows) {
             const tr = document.createElement('tr');
+            // A row that came back with the prose columns empty is still a real review — it
+            // was read and measured — but it is not one to paste anywhere, so it is dimmed
+            // and labelled rather than shown as if it were finished.
+            const thin = !PROSE_COLUMNS.some(c => String(row[c] || '').trim());
+            if (thin) tr.className = 'qa-row-empty';
             for (const col of SHEET_COLUMNS) {
                 const td = document.createElement('td');
                 if (col === 'Case Number') td.className = 'qa-cell-num';
                 if (col === 'Date Reviewed') td.className = 'qa-cell-date';
                 td.textContent = row[col] || '';
+                if (thin && col === 'Case Number') {
+                    const flag = document.createElement('span');
+                    flag.className = 'qa-row-flag';
+                    flag.textContent = 'not written up';
+                    flag.title = 'The case was read and measured, but the write-up came back empty. Re-run it from Reviews.';
+                    td.appendChild(flag);
+                }
                 tr.appendChild(td);
             }
             tbody.appendChild(tr);
@@ -2048,7 +3651,7 @@
         const map = new Map();
         for (const name of ROSTER) map.set(name.toLowerCase(), { name, reviews: [] });
         for (const r of REVIEWS) {
-            if (r.kind !== 'qa' || r.error) continue;
+            if (r.kind !== 'qa' || incomplete(r)) continue;
             const who = r.agent || 'Unassigned';
             const low = who.toLowerCase();
             // Match a roster first name against the fuller name Salesforce reports —
@@ -2171,9 +3774,54 @@
             for (let i = 0; i < agents.length; i++) {
                 const a = agents[i];
                 setRunNote(`Coaching summary ${i + 1}/${agents.length} — ${a.name}…`);
+                // NOTE the conversation label below is a NUMBER, not the agent's name: the
+                // relay keeps a list of its own conversations, and a QA run should not be
+                // writing a roster of who was appraised this month into somebody's Copilot.
                 try {
-                    const text = await askAi(E.buildCoachingPrompt(a.name, a.reviews), `Coaching — ${a.name}`);
-                    const parsed = E.parseCoachingAnswer(text);
+                    /* THE ONE PROMPT THAT IS ABOUT A PERSON BY CONSTRUCTION — a month of one
+                     * agent's cases, summarised into a coaching row. So it is the one that was
+                     * refused hardest, and the one where hiding the names costs nothing at all:
+                     * the Agent column is written from the roster two lines below, and never
+                     * from the answer. See coachingAliases. */
+                    const aliases = coachingAliases(a.name);
+                    const askCoach = async (retry) =>
+                        aliases.show(await askAi(aliases.hide(E.buildCoachingPrompt(a.name, a.reviews, { retry })),
+                            retry ? `Coaching — ${i + 1} (again)` : `Coaching — ${i + 1} of ${agents.length}`));
+
+                    /* THE SAME LADDER AS A WRITE-UP, for the same reason — see writeUp.
+                     * A coaching row is asked for once per agent at the end of a run, which
+                     * is exactly when the relay has been driven hardest and is most likely
+                     * to rate-limit; giving up on the first throw meant losing the row for
+                     * that agent and being told "m365". There is no transcript to shrink
+                     * here — the input is a handful of reviews — so the ladder is pauses
+                     * rather than sizes. */
+                    let text = '';
+                    let parsed = null;
+                    let threw = '';
+                    let refused = false;
+                    for (let n = 0; n < 3; n++) {
+                        if (n > 0) await new Promise(r => setTimeout(r, 3000 * n));
+                        let said = '';
+                        try {
+                            said = await askCoach(n > 0);
+                            threw = '';
+                        } catch (e) {
+                            threw = (e && e.message) || String(e);
+                            logLine(`Coaching for ${a.name}: attempt ${n + 1} of 3 failed — ${firstLine(threw)}`, 'warn');
+                            continue;
+                        }
+                        const judged = E.parseCoachingAnswer(said);
+                        if (!parsed || judged.usable || judged.filled > parsed.filled) { text = said; parsed = judged; }
+                        if (judged.usable) break;
+                        refused = refused || judged.refused;
+                    }
+                    if (!parsed || !parsed.usable) {
+                        throw new Error(threw && (!parsed || !parsed.filled)
+                            ? 'the relay could not be reached after 3 attempts — ' + threw
+                            : refused
+                                ? 'the relay declined to write a coaching row, 3 times'
+                                : 'the answer came back without the coaching headers in it');
+                    }
                     parsed.fields['Agent'] = a.name;          // ours, not the model's
                     const row = { agent: a.name, at: Date.now(), fields: parsed.fields, raw: text, cases: a.reviews.length };
                     const at = COACHING.findIndex(c => c.agent.toLowerCase() === a.name.toLowerCase());
@@ -2189,6 +3837,22 @@
             if (btn) btn.disabled = false;
             showRunPill(false);
         }
+    }
+
+    /* WHO A COACHING SUMMARY HAS TO HIDE.
+     *
+     * Not one case's people but the whole team's: the row is built out of a month of review
+     * text, and that text names the agent it is about, whoever covered for them, and the
+     * customers on their cases. The agent being summarised is put first so they come out as
+     * Agent A, exactly as they would in a review of one of their own cases. */
+    function coachingAliases(primary) {
+        const entries = [{ name: primary, side: 'us' }];
+        for (const n of ROSTER) entries.push({ name: n, side: 'us' });
+        for (const r of REVIEWS) if (r.agent) entries.push({ name: r.agent, side: 'us' });
+        for (const c of Object.values(CONTEXT)) {
+            for (const x of (c.people || [])) if (x && x.real) entries.push({ name: x.real, side: x.side });
+        }
+        return E.aliasesFromNames(entries, RULES.deident !== false);
     }
 
     /* ---------------------------------------------------------------------
@@ -2260,6 +3924,7 @@
         $('setOpenWait').value = RULES.openWaitDays;
         $('setWorkers').value = RULES.workers;
         $('setRoster').value = ROSTER.join('\n');
+        $('setDeident').checked = RULES.deident !== false;
         refreshAiStatus();
         fillUpdateStatus();
     }
@@ -2313,6 +3978,7 @@
         RULES.meetingNoteHours = num('setMeetingNote', 1, 168, E.DEFAULT_RULES.meetingNoteHours);
         RULES.openWaitDays = num('setOpenWait', 1, 30, E.DEFAULT_RULES.openWaitDays);
         RULES.workers = Math.round(num('setWorkers', 1, 4, 2));
+        RULES.deident = !!$('setDeident').checked;
         ROSTER = ($('setRoster').value || '').split('\n').map(s => s.trim()).filter(Boolean);
         if (!ROSTER.length) ROSTER = DEFAULT_ROSTER.slice();
         await store({ [K.rules]: RULES, [K.roster]: ROSTER });
@@ -2342,11 +4008,12 @@
         $('btnExportAll').onclick = exportEverything;
         $('btnClearReviews').onclick = async () => {
             const chats = Object.values(CHATS).filter(c => c && c.msgs && c.msgs.length).length;
-            const ok = await confirmAsk('Clear every review?',
+            const ok = await confirmAsk('Clear everything this tool has stored?',
                 `This deletes all ${REVIEWS.length} review(s), ${COACHING.length} coaching row(s)`
-                + `${chats ? `, ${chats} case conversation(s)` : ''} and the stored case material from this tool. `
+                + `${chats ? `, ${chats} case conversation(s)` : ''} and the stored case material. `
+                + 'To delete only the reviews and keep the conversations, use Delete on the Reviews tab instead. '
                 + 'The cases in Salesforce are untouched. This cannot be undone.',
-                'Delete them');
+                'Delete everything');
             if (!ok) return;
             REVIEWS = [];
             COACHING = [];
@@ -2359,6 +4026,7 @@
         };
 
         $('btnSyncCaseList').onclick = syncCaseList;
+        $('btnAddList').onclick = addListByUrl;
         $('btnAddByUrl').onclick = addByUrl;
         $('btnClearList').onclick = async () => {
             const ok = await confirmAsk('Empty the case list?',
@@ -2379,6 +4047,44 @@
                 FILTER = chip.dataset.filter;
                 for (const c of document.querySelectorAll('#ocChips .oc-chip')) c.classList.toggle('active', c === chip);
                 renderCases();
+            };
+        }
+
+        /* THE COG — what each row shows. A toggle rather than a one-way open: it is the same
+         * button you pressed to get here, and a panel that will not close from the control
+         * that opened it is a panel people leave open. */
+        const cog = $('ocColumns');
+        const cols = $('ocColsPanel');
+        if (cog && cols) {
+            cog.onclick = () => {
+                const opening = cols.style.display === 'none';
+                cols.style.display = opening ? '' : 'none';
+                cog.classList.toggle('active', opening);
+                // Rebuilt on the way in rather than only at boot: the JIRA and tier filters
+                // can switch a column on behind this panel's back, and a chooser showing a
+                // stale set of ticks is worse than one that takes a moment to draw.
+                if (opening) renderQaColumns();
+            };
+        }
+        if ($('ocColsClose') && cols) {
+            $('ocColsClose').onclick = () => {
+                cols.style.display = 'none';
+                if (cog) cog.classList.remove('active');
+            };
+        }
+        /* RESET PUTS BACK BOTH HALVES — which columns and how wide. They are one layout as
+         * far as anybody pressing this is concerned, and a reset that restored the columns
+         * while leaving a subject column somebody had dragged down to 26px would look like
+         * it had not worked. */
+        if ($('ocColsReset')) {
+            $('ocColsReset').onclick = async () => {
+                COLUMNS = defaultColumns();
+                COL_WIDTHS = {};
+                applyColWidths();
+                await Promise.all([saveColumns(), saveWidths()]);
+                renderQaColumns();
+                renderCases();
+                toast('Rows are back to the columns and widths this tool ships with.', 's');
             };
         }
 
@@ -2433,6 +4139,50 @@
 
         $('revSearch').oninput = renderReviews;
         $('revFilter').onchange = renderReviews;
+        $('btnDeleteReviews').onclick = async () => {
+            if (RUN.active) { toast('Wait for the run to finish — it is writing into this list.', 'w'); return; }
+            let ids = [];
+            try { ids = JSON.parse($('btnDeleteReviews').dataset.ids || '[]'); } catch (e) { ids = []; }
+            if (!ids.length) { toast('Nothing to delete.', 'i'); return; }
+            const all = ids.length === REVIEWS.length;
+
+            /* WHAT ELSE GOES, SAID BEFORE IT GOES. A coaching row is built out of an agent's
+             * reviews and cites them by number, so a row left standing after its reviews are
+             * deleted is a document quoting evidence that no longer exists. The chats and the
+             * stored case material are the reviewer's own work and a cache of an expensive
+             * read — they are NOT taken here. The ⋮ menu is where everything goes at once. */
+            const coachGoing = all ? COACHING.length : 0;
+            const ok = await confirmAsk(
+                all ? `Delete all ${REVIEWS.length} review${REVIEWS.length === 1 ? '' : 's'}?`
+                    : `Delete these ${ids.length} review${ids.length === 1 ? '' : 's'}?`,
+                (all
+                    ? `Every review in this list goes${coachGoing ? `, along with ${coachGoing} coaching row${coachGoing === 1 ? '' : 's'} built out of them` : ''}. `
+                    : `The other ${REVIEWS.length - ids.length} review(s) this filter is hiding are kept. `)
+                + 'Case conversations and the stored case material are kept, so a case can still be '
+                + 'discussed and re-reviewed without reading it again. The cases in Salesforce are '
+                + 'untouched. This cannot be undone.',
+                all ? 'Delete them all' : `Delete these ${ids.length}`);
+            if (!ok) return;
+
+            REVIEWS = REVIEWS.filter(r => !ids.includes(r.id));
+            const patch = { [K.reviews]: REVIEWS };
+            if (all) { COACHING = []; patch[K.coaching] = COACHING; }
+            await store(patch);
+            // The queue rows carry a review's score in their QA column, so they are repainted
+            // too — a row still showing "58" for a review that has just been deleted is the
+            // panel remembering something it has thrown away.
+            renderAll();
+            // The toast is the whole confirmation. NOT the run log: that is a record of what a
+            // run opened and what came back, and making it appear on the Reviews tab because
+            // somebody pressed Delete would be a log of something that never ran.
+            toast(`${ids.length} review${ids.length === 1 ? '' : 's'} deleted${all && coachGoing ? ', coaching sheet cleared' : ''}.`, 's');
+        };
+
+        $('btnRetryFailed').onclick = () => {
+            const bad = REVIEWS.filter(incomplete);
+            if (!bad.length) { toast('Nothing incomplete to re-run.', 'i'); return; }
+            rerunReviews(bad);
+        };
 
         // --- the per-case chat ---
         $('btnChatSwitch').onclick = () => { CHAT_KEY = ''; renderChat(); };
@@ -2494,6 +4244,15 @@
             download(`QA coaching ${stamp()}.csv`, E.toCsv(COACH_COLUMNS, rows));
         };
 
+        $('setDeident').onchange = async () => {
+            RULES.deident = !!$('setDeident').checked;
+            await store({ [K.rules]: RULES });
+            toast(RULES.deident
+                ? 'Cases will be sent with the names removed and named again in the answer.'
+                : 'Cases will be sent with real names in them. Copilot usually refuses to review those.',
+                RULES.deident ? 's' : 'w', 8000);
+            renderChat();
+        };
         $('btnSaveSettings').onclick = saveSettings;
         $('btnResetSettings').onclick = async () => {
             const ok = await confirmAsk('Reset the settings?', 'The thresholds and the team list go back to what this tool shipped with. Reviews are kept.', 'Reset');

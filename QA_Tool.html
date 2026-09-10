@@ -106,7 +106,7 @@
                 <div class="dropdown" id="moreDropdown" style="display:none">
                     <button class="drop-item" id="btnGoSettings">⚙️ Settings</button>
                     <button class="drop-item" id="btnExportAll">⬇️ Export everything (CSV)</button>
-                    <button class="drop-item" id="btnClearReviews">🗑️ Clear all reviews</button>
+                    <button class="drop-item" id="btnClearReviews">🗑️ Clear everything this tool has stored</button>
                 </div>
             </div>
         </div>
@@ -161,16 +161,42 @@
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                 <span id="ocSyncLabel">Sync case list</span>
             </button>
-            <button class="btn" id="btnAddByUrl" title="Paste a Salesforce case link to add one case to this list">🔗 Add by URL</button>
+            <button class="btn" id="btnAddList" title="Paste the address of a Salesforce case list view and keep it here. Pressing it opens that view in Salesforce and syncs this queue from it.">🗂️ Add list view</button>
+            <button class="btn" id="btnAddByUrl" title="Paste a Salesforce case link to add one case to this list">🔗 Add case</button>
             <button class="btn" id="btnClearList" title="Empty this list. Reviews already done are kept.">Clear</button>
         </div>
+
+        <!-- THE SAVED LIST VIEWS. The same strip, the same classes and the same behaviour as
+             the analyser's: press one and it opens that view in Salesforce and syncs the
+             queue from it, so the three-step "go to Salesforce, wait, come back, press Sync"
+             stops being how a reviewer changes queue. Hidden until one is saved. -->
+        <div class="oc-links" id="ocLists" style="display:none"></div>
 
         <div class="oc-filters">
             <div class="oc-filter-row">
                 <input class="oc-search" id="ocSearch" type="search" placeholder="Filter by case number, subject, account or owner…" autocomplete="off">
-                <select class="oc-sort" id="ocSort" title="Order the list">
-                    <option value="age-desc">Oldest first</option>
+                <!-- Sorting here re-orders WITHIN each entitlement group, not across them:
+                     the tier is which cases the team owes first, so it stays the outer axis
+                     and this decides the order inside it. Pick a single tier chip and the
+                     grouping goes away, leaving a flat sorted list.
+
+                     The one-direction sorts are one-direction on purpose. "What is waiting on
+                     us" and "what has gone overdue" are questions; their reverses open the
+                     queue with the cases nobody needs to look at. -->
+                <select class="oc-sort" id="ocSort" title="Order the cases within each entitlement group">
+                    <!-- The order Salesforce itself returned — whatever sort the reviewer
+                         already chose on the list view, left alone. -->
+                    <option value="list">List order</option>
+                    <!-- SELECTED, and deliberately not "List order" the way the analyser has
+                         it. This is a review queue: the case most overdue a 30/60/90 write-up
+                         is the one to open first, and that is what oldest-first puts at the
+                         top. -->
+                    <option value="age-desc" selected>Oldest first</option>
                     <option value="age-asc">Newest first</option>
+                    <option value="sev-high">Severity: high first</option>
+                    <option value="sev-low">Severity: low first</option>
+                    <option value="status">Status: on SOTI first</option>
+                    <option value="activity">Activity: overdue first</option>
                     <option value="case">Case number</option>
                     <option value="owner">Case owner</option>
                     <option value="score">QA score (reviewed first)</option>
@@ -186,7 +212,23 @@
                     <option value="">All case owners</option>
                 </select>
                 <button class="btn" id="btnSelectOwner" title="Tick every case belonging to the agent chosen on the left">Select this owner's cases</button>
+                <!-- WHAT EACH ROW SHOWS. Beside the two controls that decide WHICH rows you
+                     see, because it answers the other half of the same question and this is
+                     where the eye already is. It stays an icon with no word: the other two
+                     controls on this line are the ones you use every time, and a third label
+                     competing with them would read as a third step rather than as a setting
+                     you change once. The full sentence is in the title, and the panel it
+                     opens names itself. -->
+                <button class="btn qa-cog" id="ocColumns" type="button" aria-label="Customise rows"
+                        title="Customise rows — choose which details each case shows on its line, and how wide each column is.">⚙</button>
             </div>
+
+            <!-- BY ENTITLEMENT TIER. The same grouping the analyser's queue uses, and for the
+                 same reason: the tier is which cases the team owes first, so it is the outer
+                 axis of the list and the chips are how you get to one of them. Filled in by
+                 renderTierChips() from whatever the sync actually returned — a tier with no
+                 cases in it is not offered, and picking one flattens the grouping. -->
+            <div class="oc-chips" id="ocTierChips"></div>
 
             <!-- THE 30/60/90 FLAGS, AS FILTERS. A case's milestone is computed from its age
                  (see QaEngine.milestoneFor) and shown on its row; these chips narrow the list
@@ -200,6 +242,19 @@
                 <button class="oc-chip" data-filter="milestone" type="button" title="Every case at or past its first 30-day review">Needs 30/60/90</button>
                 <button class="oc-chip" data-filter="unreviewed" type="button" title="Cases with no QA review yet">Not yet QA'd</button>
                 <button class="oc-chip" data-filter="reviewed" type="button" title="Cases this tool has already reviewed">Already QA'd</button>
+            </div>
+        </div>
+
+        <!-- A popover rather than a settings page: what a row shows is a property of THIS
+             list, and it belongs beside it. Filled in by renderQaColumns(). -->
+        <div class="oc-cols" id="ocColsPanel" style="display:none">
+            <div class="oc-cols-head">
+                <span>Show on each case</span>
+                <button class="oc-cols-close" id="ocColsClose" type="button" aria-label="Close">×</button>
+            </div>
+            <div class="oc-cols-body" id="ocColsBody"></div>
+            <div class="oc-cols-foot">
+                <button class="oc-sync-btn" id="ocColsReset" type="button">Reset to defaults</button>
             </div>
         </div>
 
@@ -219,6 +274,12 @@
             </div>
         </div>
 
+        <!-- THE COLUMN HEADINGS. A single strip above the rows naming what the short tags on
+             each line are — "Severity" over the H/M/L pill, and so on. Without it the tags are
+             a code you have to hover to read. Built by renderQaColumnHeader() from the same
+             column list the rows use, so the two cannot drift apart. -->
+        <div class="oc-colhead qa-colhead" id="ocColHead" style="display:none"></div>
+
         <div class="oc-list" id="ocList"></div>
     </div>
 
@@ -234,10 +295,16 @@
                 <input class="oc-search" id="revSearch" type="search" placeholder="Filter reviews…" autocomplete="off">
                 <select class="oc-sort" id="revFilter">
                     <option value="">All reviews</option>
-                    <option value="qa">QA reviews</option>
+                    <option value="qa">Written up</option>
                     <option value="milestone">30/60/90 analyses</option>
-                    <option value="failed">Failed to read</option>
+                    <option value="failed">Incomplete</option>
                 </select>
+                <button class="btn" id="btnRetryFailed" style="display:none"
+                        title="Read and write up again every case whose review is incomplete.">Re-run the incomplete ones</button>
+                <!-- LAST ON THE ROW AND ON ITS OWN, because it is the one control here that
+                     destroys work. It says the number it will delete rather than "all", so
+                     what it does is legible before it is pressed rather than after. -->
+                <button class="btn qa-btn-danger" id="btnDeleteReviews" style="display:none">Delete all</button>
             </div>
         </div>
         <!-- THE RUN LOG. What was opened, what came back, and what went wrong — in order.
@@ -413,6 +480,18 @@
                     Copilot tab in a window of its own, the same way the SOTI AI Analyser does, so no
                     case data goes anywhere the browser was not already signed in to. Chrome has to
                     grant access to that site once — press Grant below and allow it when asked.
+                </p>
+                <div class="qa-set-row qa-set-check">
+                    <label for="setDeident">Send cases with the names removed</label>
+                    <input class="fcheck" id="setDeident" type="checkbox">
+                </div>
+                <p class="qa-set-note qa-set-sub">
+                    On by default, and worth leaving on. Every name in a case — the agent's, the
+                    customer's, anyone who wrote on it — is replaced with a role label before the case
+                    is sent, and the labels are swapped back for the real names in the answer, so the
+                    review you read is unchanged. It is also what makes the review arrive at all:
+                    Copilot refuses outright to assess an identifiable employee, and a refusal comes
+                    back looking like an answer with every column empty. Turn it off only to compare.
                 </p>
                 <div class="qa-set-row">
                     <label>Status</label>

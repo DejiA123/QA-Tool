@@ -45,6 +45,11 @@
      * to learn the same answer — and a dot that could appear at any moment is one people
      * stop looking at. Pressing the button ignores this and always asks. */
     const UPDATE_CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
+    /* A FAILED CHECK COMES BACK SOONER THAN A GOOD ONE. The usual failure is GitHub's rate
+     * limit on unauthenticated requests, which is counted per hour and clears on its own —
+     * so waiting the full six to try again turns a twenty-minute problem into a six-hour
+     * one, on the day somebody is actually waiting for a build. */
+    const UPDATE_RETRY_EVERY_MS = 30 * 60 * 1000;
 
     let updateState = null;   // { at, version, notes, zipUrl, pageUrl, from }
 
@@ -312,7 +317,10 @@
         const interactive = !!opts.interactive;
         if (!isExt()) {
             if (interactive) openModal({ error: 'Update checking needs the Chrome extension — this page has no way to reach GitHub.' });
-            return;
+            // 'blocked' rather than nothing: outside the extension this can never succeed, and
+            // an undefined outcome would have the scheduler re-arm itself every minute for as
+            // long as the page was open, asking a question with a permanent answer.
+            return 'blocked';
         }
 
         const ok = interactive ? await requestPermission() : await hasPermission();
@@ -325,7 +333,7 @@
                         + 'downloads rather than through this page.'
                 });
             }
-            return;
+            return 'blocked';
         }
 
         if (interactive) openModal({ busy: true });
@@ -334,7 +342,17 @@
             updateState = Object.assign({ at: Date.now() }, info);
             saveState();
             paintBadge();
+            /* THE NEW BUILD ANNOUNCES ITSELF. A dot on a button is enough when somebody is
+             * looking at the button; a background check that finds a build while the
+             * reviewer is working through a queue has to say so once, or the whole point of
+             * checking without being asked is lost. Once per version, not once per check —
+             * six-hourly nagging is how a notice gets ignored. */
+            if (!interactive && isNewer(updateState) && announcedFor !== updateState.version) {
+                announcedFor = updateState.version;
+                say(`Version ${updateState.version} of the QA Tool is available — press the update button beside the version number.`, 'i', 12000);
+            }
             if (interactive) openModal({});
+            return 'ok';
         } catch (e) {
             console.warn('[Update] check failed', e);
             if (interactive) {
@@ -348,8 +366,13 @@
                         + '"try again in a few minutes". Nothing on this panel is affected either way.'
                 });
             }
+            return 'fail';
         }
     }
+
+    // Which version the panel has already announced, so a build is mentioned once rather
+    // than at every check for as long as it goes uninstalled.
+    let announcedFor = '';
 
     /* ---------------------------------------------------------------------
      * THE BACKUP
@@ -626,19 +649,75 @@
             };
         }
 
-        /* THE AUTOMATIC CHECK. Only ever after the permission has been granted by hand — see
-         * checkForUpdate — and only when the remembered answer is older than the interval, so
-         * a panel Chrome rebuilds six times an hour does not make six requests.
-         *
-         * Delayed past boot: nothing here is urgent, and start-up is competing for the same
-         * few hundred milliseconds as restoring the case list and the reviews. */
-        loadState().then(() => {
-            setTimeout(() => {
-                const fresh = updateState && updateState.at && (Date.now() - updateState.at) < UPDATE_CHECK_EVERY_MS;
-                if (!fresh) checkForUpdate({ interactive: false });
-            }, 6000);
-        });
+        /* THE AUTOMATIC CHECK — see scheduleUpdateCheck. Delayed past boot: nothing here is
+         * urgent, and start-up is competing for the same few hundred milliseconds as
+         * restoring the case list and the reviews. */
+        loadState().then(() => scheduleUpdateCheck(6000));
     }
+
+    /* -------------------------------------------------------------------------
+     * KEEPING THE ANSWER FRESH WITHOUT BEING ASKED
+     * -------------------------------------------------------------------------
+     * The old version checked ONCE, six seconds after the panel booted, and then never
+     * again. A side panel that stays open all day therefore learnt about a new build the
+     * next time Chrome tore the document down and rebuilt it, which on a good day is
+     * tomorrow — so in practice the only way to find out was to press the button, which is
+     * exactly what the dot exists to make unnecessary.
+     *
+     * EVERY WAKE-UP RE-READS THE CLOCK INSTEAD OF TRUSTING THE TIMER. A timer set for six
+     * hours on a laptop that then sleeps for eight does not fire late — depending on how
+     * the panel was suspended it may not fire at all, and if it does, the interval it
+     * measured is fiction. So each firing asks updateDueIn() whether the moment has
+     * actually arrived and re-arms itself if it has not, which also means pressing the
+     * button in the meantime silently pushes the next background check out.
+     * ----------------------------------------------------------------------- */
+    let updTimer = null;
+    let updBusy = false;
+    let updLastTry = 0;
+
+    const updateDueIn = () => {
+        const at = (updateState && updateState.at) || 0;
+        return Math.max(0, (at + UPDATE_CHECK_EVERY_MS) - Date.now());
+    };
+
+    function scheduleUpdateCheck(delay) {
+        if (updTimer) clearTimeout(updTimer);
+        updTimer = setTimeout(() => {
+            updTimer = null;
+            if (updBusy) { scheduleUpdateCheck(60 * 1000); return; }
+            const wait = updateDueIn();
+            if (wait > 0) { scheduleUpdateCheck(wait); return; }
+            updBusy = true;
+            updLastTry = Date.now();
+            Promise.resolve(checkForUpdate({ interactive: false }))
+                .catch(() => 'fail')
+                .then((outcome) => {
+                    updBusy = false;
+                    /* A 'BLOCKED' OUTCOME IS NOT A FAILURE AND MUST NOT BE RETRIED LIKE ONE.
+                     * Nothing about a missing permission changes on its own, and because a
+                     * blocked check leaves `at` untouched, every re-arm would come back due
+                     * immediately — a permission-less panel would sit in a tight poll of
+                     * chrome.permissions.contains for as long as it was open. It waits the
+                     * full interval instead; the moment somebody presses the button and
+                     * allows it, that check writes `at` and this loop picks the answer up
+                     * through updateDueIn(). */
+                    const next = outcome === 'fail' ? UPDATE_RETRY_EVERY_MS
+                        : outcome === 'blocked' ? UPDATE_CHECK_EVERY_MS
+                        : Math.max(updateDueIn(), 60 * 1000);
+                    scheduleUpdateCheck(next);
+                });
+        }, Math.max(0, delay || 0));
+    }
+
+    /* The panel coming back into view is the moment to notice the clock moved — the
+     * sleeping-laptop case above. The five-minute floor is there so tabbing in and out of a
+     * panel whose last check FAILED cannot turn every switch into another request. */
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) return;
+        if (updateDueIn() > 0) return;
+        if (Date.now() - updLastTry < 5 * 60 * 1000) return;
+        scheduleUpdateCheck(1500);
+    });
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
     else start();
@@ -652,6 +731,8 @@
      * getting at it. */
     window.QaUpdate = {
         parseVersion, compareVersions, isNewer,
+        // Exposed so the scheduling can be checked without waiting six hours for it.
+        dueIn: updateDueIn,
         check: checkForUpdate,
         backup: backupAllData,
         installedVersion,

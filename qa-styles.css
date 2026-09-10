@@ -76,6 +76,20 @@
 .qa-toolbar { flex-wrap: wrap; }
 .qa-owner-select { flex: 1; min-width: 0; }
 
+/* WHICH SAVED LIST VIEW THE QUEUE ON SCREEN CAME FROM.
+   The chip strip itself is the analyser's, class for class, and is styled in styles.css —
+   this is the one thing added to it here. A QA sync REPLACES the queue, so at any moment
+   the list below belongs to exactly one of these views, and which one is a question the
+   reviewer would otherwise answer by reading the meta line. The analyser needs no such
+   state: its queue holds several lists at once, so none of its chips is "the current one".
+   Border and weight rather than a fill, so a row of four saved views does not become a row
+   of four blocks with one shouting. */
+.oc-link-chip.active {
+    border-color: rgba(80, 130, 230, .95);
+    background: rgba(80, 130, 230, .22);
+}
+.oc-link-chip.active .oc-link-go { color: #fff; font-weight: 600; }
+
 /* ABOVE the list, not below it. This is what you press after ticking, and a
    control at the bottom of a scrolled list is one you have to go and find. */
 .qa-selbar {
@@ -194,6 +208,10 @@
 .oc-row.qa-working .qa-row-state { color: var(--blue2); }
 .oc-row.qa-failed  .qa-row-state { color: #ff9a8b; }
 
+/* Still used by the CHAT PICKER, which is a list of names and not a grid — the queue's own
+   owner cell is a column now (.oc-col-owner) and reads its width from the same custom
+   property its heading does. The age cell that used to sit beside this one has gone the same
+   way, so it is no longer here. */
 .qa-owner-cell {
     flex-shrink: 0;
     font-size: 10.5px;
@@ -202,14 +220,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-.qa-age-cell {
-    flex-shrink: 0;
-    font-size: 10.5px;
-    color: var(--txt3);
-    font-variant-numeric: tabular-nums;
-    min-width: 46px;
-    text-align: right;
 }
 
 /* ============================================================
@@ -245,6 +255,22 @@
     border-left: 3px solid var(--txt4);
     border-radius: var(--r8);
     overflow: hidden;
+    /* AN OPEN REVIEW KEEPS ITS OWN HEIGHT, and this line is the whole reason the
+       write-up can be read at all.
+
+       .oc-list is a column flex container, so by default its children SHRINK to
+       fit it rather than overflow it. Normally a flex item cannot be squashed
+       below its own content — but `overflow: hidden` above (which is what keeps
+       the card's colour band inside its rounded corners) sets this card's
+       automatic minimum size to zero, so it can be squeezed to any height at
+       all. Expand a long review and both things happen at once: the card is
+       compressed to whatever room is left, the rest of the analysis is clipped
+       off the bottom, and there is nothing to scroll — because with every card
+       shrunk to fit, the list never overflowed in the first place.
+
+       Refusing to shrink is what makes the list taller than its box, which is
+       what gives it something to scroll. */
+    flex-shrink: 0;
 }
 .qa-rev.band-excellent { border-left-color: rgba(34, 197, 94, .8); }
 .qa-rev.band-good      { border-left-color: rgba(80, 130, 230, .8); }
@@ -453,11 +479,120 @@
 }
 .qa-set-row label { font-size: 11px; color: var(--txt2); }
 .qa-set-row .finput { width: 110px; flex-shrink: 0; }
+
+/* A switch, not a number box. The label is the click target as well, because a
+   14px tickbox is not one on a laptop trackpad. */
+.qa-set-check { cursor: pointer; }
+.qa-set-check label { cursor: pointer; color: #fff; font-weight: 600; }
+.fcheck {
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+    accent-color: var(--blue);
+    cursor: pointer;
+    margin: 0;
+}
+/* A note that belongs to the row above it rather than to the block. */
+.qa-set-sub { margin-top: 2px; margin-bottom: 12px; padding-left: 2px; }
 .qa-set-acts { display: flex; gap: 6px; flex-wrap: wrap; }
 .qa-set-status { font-size: 10.5px; font-weight: 600; color: var(--txt2); text-align: right; }
 .qa-set-status.ok { color: var(--green); }
 .qa-set-status.bad { color: var(--red); }
 .qa-roster { width: 100%; font-family: var(--mono); font-size: 11px; line-height: 1.7; resize: vertical; }
+
+/* ---------------------------------------------------------------------------
+   WHAT CAME BACK WHEN WHAT CAME BACK WAS NOT A REVIEW
+   ---------------------------------------------------------------------------
+   A refused write-up used to leave a card with nothing in it: no fields, no
+   error, no explanation. This is the answer the relay actually gave, shown as
+   the quotation it is — set apart from the review's own prose, because it is
+   not the review's own prose and reading it as if it were is how somebody
+   concludes the tool is broken.
+   ------------------------------------------------------------------------- */
+.qa-rev-said {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border-left: 2px solid var(--red);
+    background: rgba(255, 90, 95, .06);
+    border-radius: 0 4px 4px 0;
+}
+.qa-rev-said .qa-field-k { color: var(--red); }
+.qa-rev-said .qa-field-v {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    line-height: 1.65;
+    white-space: pre-wrap;
+    color: var(--txt2);
+    max-height: 220px;
+    overflow: auto;
+}
+
+/* A SCORE THE MEASUREMENT WORKED OUT, not one the write-up gave. The dot is the
+   whole marker: a word beside a number gets read as part of the number, and the
+   number is the thing being read. The tooltip carries the reasoning. */
+/* A case that was read and never written up. Not a score and not a tick — the
+   queue must not report work as done when the review of it is a refusal. */
+.qa-score-bad {
+    background: rgba(239, 68, 68, .18) !important;
+    color: #ffb4b4 !important;
+    font-weight: 800;
+}
+
+.qa-score-derived { position: relative; }
+.qa-score-derived::after {
+    content: "";
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: .75;
+}
+
+/* A sheet row whose case was read but never written up. It keeps its place in
+   the run rather than being hidden, because the case WAS reviewed as far as the
+   measurement goes — but it must not look like a row somebody can paste into
+   the team's spreadsheet and be done with. */
+.qa-sheet tr.qa-row-empty td { opacity: .55; }
+.qa-sheet tr.qa-row-empty td.qa-cell-num { opacity: 1; }
+.qa-row-flag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 5px;
+    border-radius: 3px;
+    background: rgba(255, 90, 95, .16);
+    color: var(--red);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .3px;
+    text-transform: uppercase;
+    vertical-align: middle;
+}
+
+/* THE REVIEWS BADGE WHEN SOME OF THEM ARE NOT REVIEWS. The number stays the
+   number — every one of those cases really was read — but the badge stops
+   looking like a clean result, which is the only warning a reviewer gets before
+   they open the sheet and find the gaps. */
+.tab-cases-count.qa-count-bad {
+    background: rgba(239, 68, 68, .22) !important;
+    color: #ffb4b4 !important;
+}
+
+/* THE ONE THAT DESTROYS SOMETHING. Not red until you are pointing at it: a
+   permanently red button on a screen somebody uses all day is either ignored or
+   avoided, and neither is what a delete control wants. Quiet, legible, and
+   unmistakable the moment the pointer lands on it. */
+.qa-btn-danger {
+    border-color: rgba(239, 68, 68, .45) !important;
+    color: #ffb4b4 !important;
+}
+.qa-btn-danger:hover {
+    background: rgba(239, 68, 68, .16) !important;
+    border-color: var(--red) !important;
+    color: #fff !important;
+}
 
 /* The one loud button per screen. Everything else is a .btn; this is what the
    screen is FOR, and there is never more than one of them in view. */
@@ -574,6 +709,19 @@
     flex-shrink: 0;
 }
 .qa-chat-ground .btn { flex-shrink: 0; }
+/* A statement of fact about what leaves the browser, not a warning — so it sits
+   at the quiet end of this row rather than competing with the case it describes. */
+.qa-chat-priv {
+    margin-left: auto;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: rgba(99, 102, 241, .14);
+    color: #a9b0ff;
+    font-size: 9.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: help;
+}
 .qa-chat-ground-empty {
     color: #ffd08a;
     background: rgba(220, 170, 60, .10);
@@ -834,3 +982,92 @@
    they wrap from the left — a right-aligned wrap puts the primary action in the
    middle of the second row. */
 .qa-upd-acts { flex-wrap: wrap; justify-content: flex-start; }
+
+/* ============================================================
+   THE QUEUE'S COLUMNS, AS THIS TOOL HAS THEM
+   ============================================================
+   Almost all of this is already in the analyser's stylesheet, which this file
+   loads on top of: the tier stripes down a row's left edge, the severity pills,
+   the JIRA link, the "waiting on SOTI" wash, the heading strip and the five
+   pixels on the edge of each heading that resize it. Nothing of that is
+   repeated here.
+
+   What IS here is the three things that are true of this tool's row and not of
+   the analyser's: the two columns it has that the analyser does not, and the
+   two controls that sit at either end of every row — a tick box before the case
+   number and a chat button after the last cell — which the heading strip has to
+   stand off from or every heading lands a control's width away from the column
+   it names. */
+
+/* The two columns of this tool's own. The widths match COL_SIZES in qa-panel.js
+   — two copies of one number, and the only way to avoid it would be to read the
+   computed style of a cell that may not be rendered yet. Both are centred and
+   padded like the other narrow cells so a heading gets the whole column to fit
+   in.
+
+   These rules come AFTER .qa-ms and .qa-score above, which is deliberate: those
+   two set flex-shrink for the free-standing badges they used to be, and the
+   flex shorthand here has to be the one that wins now that they are columns. */
+.oc-col-milestone { flex: 0 1 var(--ocw-milestone, 46px); min-width: 30px; text-align: center; padding-left: 2px; padding-right: 2px; }
+.oc-col-qa        { flex: 0 1 var(--ocw-qa, 36px);        min-width: 30px; text-align: center; padding-left: 2px; padding-right: 2px; }
+
+/* A milestone or a score cell with nothing in it is an em dash, and the empty
+   rule has to beat the coloured band rules for the one case where a review
+   carried no score at all. */
+.oc-row-main > .oc-tag.oc-tag-empty { color: var(--txt4); border-color: transparent; background: transparent; }
+
+/* THE TICK BOX'S SHARE OF THE HEADING STRIP.
+   15px of checkbox plus the 6px of padding .qa-row-check carries on its right;
+   the 6px gap between it and the case number is the strip's own flex gap, the
+   same one the row uses. Get this wrong and every heading on the line is out by
+   twenty pixels. */
+.qa-colhead-check { flex: 0 0 21px; }
+
+/* AND THE CHAT BUTTON'S.
+   The analyser's strip ends with a 47px spacer standing in for an expander and
+   a remove cross; this row ends with one 24px chat button, plus the 1px right
+   border the row has and the strip does not. */
+.qa-colhead .oc-colhead-spacer { flex: 0 0 25px; }
+
+/* The strip is a heading for the list, so it belongs with the list — hard
+   against it, under the controls that change it. */
+.qa-colhead { margin-top: 2px; }
+
+/* THE COLUMN COG, at the end of the owner row.
+   ------------------------------------------------------------
+   It used to sit on a strip of its own between the filters and
+   the selection bar, which is where the analyser keeps it —
+   but the analyser's strip holds four buttons and this one held
+   one. A single icon alone on a line reads as a control that
+   has lost its neighbours, and it put twenty-eight pixels of
+   nothing between the chips and the thing they filter.
+
+   It is an ordinary .btn so it lines up with "Select this
+   owner's cases" beside it — same height, same border, same
+   hover — and only the width is overridden, because a button
+   holding one glyph should be square rather than as wide as a
+   word. */
+.qa-cog {
+    flex-shrink: 0;
+    width: 26px;
+    padding-left: 0;
+    padding-right: 0;
+    /* The glyph is bigger than the 10px .btn label beside it, or a cog at label
+       size reads as a speck. The LINE HEIGHT is then pinned back to what that
+       10px label's own line box comes out at, so the two buttons are the same
+       height to the pixel and their borders line up: left to itself, a 12px
+       glyph makes this button a pixel taller than the one it sits against,
+       which at this size looks like a misalignment rather than a size. */
+    font-size: 12px;
+    line-height: 11px;
+    color: var(--txt2);
+}
+.qa-cog:hover { color: var(--txt1); }
+/* Marked while its panel is open. The chips in this view mark themselves the
+   same way, and a settings panel with nothing pointing back at what opened it is
+   a panel people close by guessing. */
+.qa-cog.active {
+    color: #fff;
+    background: rgba(99, 102, 241, .22);
+    border-color: var(--blue);
+}

@@ -1,11 +1,11 @@
 {
   "v": 1,
   "by": "Ayodeji Augustine",
-  "build": "4.0.0",
-  "signedAt": "2026-10-29T14:44:41.550Z",
+  "build": "4.0.1",
+  "signedAt": "2026-10-29T14:59:16.060Z",
   "files": {
-    "QA_Tool.html": "e63d76f23069a07d71b49cd1c1f5b549086510ec2556dc187d375febb1361158",
-    "README.md": "45cb541fc7ce4a40a0d4118a075c43fa92ea4e8f1b9bf3b2175318c8ef71346f",
+    "QA_Tool.html": "1882ecf75508cbbd920b09f42709ba99acdd3d3e0df8273871a9b5bec2ae13d0",
+    "README.md": "3b07e3a2c8948ff4d94f834b8dd61fd979226849faeb0442d16b1f50bf5bf4ca",
     "ai-provider.js": "55a0a7c09631705caed7f365c3af6008cfe10946d258ae208a2948935c44b94f",
     "background.js": "9aede7bc6e089b2443aad629c3a09a47f8cda25aa16786131e663d3bf945331f",
     "backup.js": "c8073a53dbf5449b88b9d562ab0ea47d5dc12e0dadb2fe2e712e2e617c5cc1fa",
@@ -13,14 +13,14 @@
     "content.js": "dd3a83a4849672ef0fbae89b98f2b2126dbcaff72d94c24779ef1a69e8451b89",
     "copilot-bridge.js": "1e0b0abde491ae062c7465b11c6e468bc0b25adae99fc9ea8783018cd7e264ef",
     "display-size.js": "f76ac4c0c3e91d42b9729a933383e593189f614996c3b9680c30ca18725258fd",
-    "manifest.json": "388b67f8f96a7aee66166adfe83e7fb09c3d2673f4a65538a19b8da69f18fffe",
+    "manifest.json": "f1072bb678783a0389a37c554fbf053980a44669223d99c8b84adb097894c2e9",
     "qa-engine.js": "65909041ae44f71e95f9afeea66b02f377b724c561d18e9271270cc692048f37",
-    "qa-panel.js": "b60b32cd1c874fb8e7ec676f6557e3640abaf0944351942d5a34751fd6b37675",
-    "qa-styles.css": "cc3137887d0355cd99a523bada54466783d4ab47ac2588659c22c772de0b5545",
+    "qa-panel.js": "73790d9c2056964b12fcd85e2c3803432795f0b912a034bace252875fff7e23f",
+    "qa-styles.css": "3c144bd62a3932a1fc96ef89e75ca8215c56a97e08b7d7e3731761e52d942159",
     "reader-wake.js": "926d68dc2a2c1c0be9c5177571490329fec23faa95850823de9920cde78e7901",
-    "release.json": "4becfdb34c214a0faf3d2a8e59c0c643f7f969afbd1d4da5a3e5a4d2f155f02d",
+    "release.json": "bc48affc4fbc475737703835956408f89bc0a34b562f67d4040d08ac5a555878",
     "styles.css": "bd7d81391f66f8ce43c8845fc7510439f5b1f4d1d2ab63d6485c512702b203c0",
     "updater.js": "3d5cae81069562b388e24b3a1625ec9be69a871289a712c9f9f6e924d37f55c3"
   },
-  "sig": "ZC3H2xoR3Eh9fux2Cg4fDcbT28s30JwIb5QsTsRy0T3CQ8hKMEBJWd0YQMllFMLA4i7txX7cmjgLnOvbVpXLug=="
+  "sig": "fOs99k6L1JYK/Sj5Crs9KYNQtyPhls0UQHPmuHjrvqihwQekVK0vlXtgKWG0Yif/9lg+OLRSxtoM8yktcKQrBw=="
 }

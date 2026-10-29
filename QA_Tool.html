@@ -262,13 +262,33 @@
         </div><!-- /#ocTop -->
 
         <!-- THE BAR JUST ABOVE THE CASES — what acts on the list.
-             SELECT turns every row's tick-box on (a click on a row then ticks it instead of
-             opening it); SELECT ALL ticks every case on screen (Ctrl+A does the same), the bin
-             takes the ticked cases off this list, and Cancel — or Esc — stops selecting.
-             QA and 30/60/90 run on the ticked cases; pressed with nothing ticked, they start
-             selecting. The cog holds the column chooser. Painted by renderListBar(). -->
+             SELECT, THE GMAIL WAY — the analyser's (Global 1.3.2). Every row has its own
+             tick-box, always; the box ticks the case and the row still opens it. The master
+             checkbox ticks every case on screen (Ctrl+A does the same) or, with any ticked,
+             clears them (so does Esc); its ▾ picks All, None, or a kind of case. The bin takes
+             the ticked cases off this list. QA and 30/60/90 run on the ticked cases. The cog
+             holds the column chooser. Painted by renderListBar(). -->
         <div class="oc-listbar" id="ocActions" style="display:none">
             <div class="oc-lb-left">
+                <!-- THE MASTER CHECKBOX — see gselPaint in qa-panel.js. Empty, a dash (some on
+                     screen ticked) or a tick (every case on screen). -->
+                <div class="oc-gsel" id="ocGsel">
+                    <button class="oc-gsel-box" id="ocGselBox" type="button" role="checkbox" aria-checked="false" data-state="none" title="Select every case on screen"><span class="oc-gsel-mark" aria-hidden="true"></span></button>
+                    <button class="oc-gsel-caret" id="ocGselCaret" type="button" aria-haspopup="menu" title="Select" aria-label="Select options">▾</button>
+                    <div class="oc-gsel-menu" id="ocGselMenu" role="menu" hidden>
+                        <button type="button" role="menuitem" data-pick="all">All</button>
+                        <button type="button" role="menuitem" data-pick="none">None</button>
+                        <button type="button" role="menuitem" data-pick="unreviewed">Not yet QA'd</button>
+                        <button type="button" role="menuitem" data-pick="reviewed">Already QA'd</button>
+                        <button type="button" role="menuitem" data-pick="milestone">Needs 30/60/90</button>
+                        <button type="button" role="menuitem" data-pick="jira">With JIRA</button>
+                        <button type="button" role="menuitem" data-pick="nojira">Without JIRA</button>
+                        <button type="button" role="menuitem" data-pick="focus">Focus</button>
+                        <button type="button" role="menuitem" data-pick="nofocus">Not focus</button>
+                    </div>
+                </div>
+                <!-- SELECT, SELECT ALL and CANCEL stay in the page, hidden — the checkbox above
+                     stands in for all three, as it does in the analyser. -->
                 <button class="oc-lb-btn" id="ocSelect" type="button"
                         title="Pick cases — every case grows a tick-box; click the ones you want, then press QA. Esc stops selecting.">
                     <span class="oc-lb-box" aria-hidden="true"></span> Select

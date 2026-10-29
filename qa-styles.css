@@ -107,10 +107,9 @@
 /* The milestone chips sit under the tier chips as a second row of the same kind. */
 .qa-ms-chips { margin-top: 5px; }
 
-/* SELECTING. The chat button steps aside with the expander and the ×, for the
-   analyser's reason: a click that lands on it would open a chat when the bar
-   above is about to act on the selection. */
-.oc-selecting .oc-row .qa-row-chat { visibility: hidden; }
+/* SELECTING, THE GMAIL WAY — see .oc-gsel at the end of this file. The tick-box
+   is its own click target now, so the chat button, the expander and the × stay
+   where they are while cases are ticked. */
 
 /* ============================================================
    WHAT A CASE ROW GAINS
@@ -1188,3 +1187,34 @@
 .update-banner-x { flex-shrink: 0; width: 22px; height: 22px; border: none; border-radius: 6px; background: none; color: #c7d2fe;
     font-size: 14px; line-height: 1; cursor: pointer; }
 .update-banner-x:hover { background: rgba(255, 255, 255, .08); color: #fff; }
+
+/* ============================================================
+   SELECT, THE GMAIL WAY — the analyser's (Global 1.3.2)
+   ============================================================
+   A tick-box on every row, always, and its own click target: the box ticks the
+   case, the row still opens it. One master checkbox with a ▾ on the list bar.
+   styles.css still carries the older Select mode's rules (the expander and the ×
+   hidden while selecting, the heading's gap only then); these come after it and
+   win, as they do in the analyser. */
+.oc-row .oc-sel-box { cursor: pointer; padding: 0; background: transparent; flex: none; font-family: inherit; }
+.oc-row .oc-sel-box:hover { border-color: var(--txt1); }
+.oc-row .oc-sel-box:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.oc-selecting .oc-row { cursor: default; }
+.oc-selecting .oc-row .oc-desc-toggle, .oc-selecting .oc-row .oc-row-del { visibility: visible; }
+/* The headings take the box's width on the left, always, so they stay over their columns. */
+.oc-colhead::before { content: ''; flex: 0 0 16px; }
+.oc-gsel { position: relative; display: inline-flex; align-items: center; border-radius: 6px; }
+.oc-gsel-box, .oc-gsel-caret { background: transparent; border: 0; color: var(--txt2); cursor: pointer; height: 28px; padding: 0 4px; border-radius: 6px; display: inline-grid; place-items: center; font-family: inherit; }
+.oc-gsel-box:hover, .oc-gsel-caret:hover { background: rgba(255, 255, 255, .07); }
+.oc-gsel-box:focus-visible, .oc-gsel-caret:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.oc-gsel-box:disabled, .oc-gsel-caret:disabled { opacity: .45; cursor: default; background: transparent; }
+.oc-gsel-mark { width: 15px; height: 15px; border: 1.5px solid var(--txt2); border-radius: 3px; display: grid; place-items: center; font-size: 11px; font-weight: 800; line-height: 1; color: #fff; }
+.oc-gsel-box[data-state="all"] .oc-gsel-mark { background: var(--blue); border-color: var(--blue); }
+.oc-gsel-box[data-state="all"] .oc-gsel-mark::after { content: '✓'; }
+.oc-gsel-box[data-state="some"] .oc-gsel-mark { background: var(--blue); border-color: var(--blue); }
+.oc-gsel-box[data-state="some"] .oc-gsel-mark::after { content: '–'; }
+.oc-gsel-caret { font-size: 10px; padding: 0 3px; }
+.oc-gsel-menu { position: absolute; top: 30px; left: 0; z-index: 60; min-width: 150px; padding: 6px 0; border-radius: 8px; background: var(--bg1, #151a2e); border: 1px solid var(--border2); box-shadow: 0 12px 28px rgba(0, 0, 0, .45); display: flex; flex-direction: column; }
+.oc-gsel-menu[hidden] { display: none; }
+.oc-gsel-menu button { text-align: left; background: none; border: 0; color: var(--txt1); font: inherit; font-size: 12.5px; padding: 7px 16px; cursor: pointer; white-space: nowrap; }
+.oc-gsel-menu button:hover, .oc-gsel-menu button:focus-visible { background: rgba(99, 102, 241, .16); outline: none; }

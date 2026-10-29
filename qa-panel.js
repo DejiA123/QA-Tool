@@ -104,8 +104,10 @@
     let LISTS = [];                    // [{ id, name, url, at }] — the saved Salesforce list views
     let SHEET_MONTH = '';
     let SELECTED = new Set();
-    /* SELECTING — the analyser's Select mode. Off, a row opens its case in Salesforce; on,
-     * every row grows a tick-box and a click ticks it. The QA run acts on what is ticked. */
+    /* SELECTING — something is ticked (the Gmail rule; see caseRow). Every row has its tick-box
+     * and opens its case in Salesforce either way; selecting is what shows the count and the bin.
+     * It used to be the analyser's older Select mode, where a click on a row ticked it instead of
+     * opening it. The QA run acts on what is ticked. */
     let SELECTING = false;
     let VIEW = 'cases';
     let FILTER = 'all';
@@ -2473,31 +2475,39 @@
         const opens = urlOf(rec) ? `Open ${rec.caseNum || 'this case'} in Salesforce` : 'This case has no Salesforce link yet';
         main.title = rec.subject ? `${rec.subject}\n\n${opens}` : opens;
 
-        if (SELECTING) {
-            const box = document.createElement('span');
+        /* SELECT, THE GMAIL WAY — the analyser's (Global 1.3.2). Every row has its tick-box,
+         * always: the box ticks the case, the row still opens it. Ticking the first case is what
+         * puts the list into selecting (the count and the bin); unticking the last takes it out
+         * again. The class is toggled in place rather than the list re-rendered, so a run of
+         * ticks down the queue repaints nothing but the bar. */
+        {
+            const box = document.createElement('button');
+            box.type = 'button';
             box.className = 'oc-sel-box';
             box.textContent = '✓';
-            box.setAttribute('aria-hidden', 'true');
-            row.appendChild(box);
             const on = SELECTED.has(key);
             row.classList.toggle('is-selected', on);
-            row.setAttribute('role', 'checkbox');
-            row.setAttribute('aria-checked', on ? 'true' : 'false');
-            row.tabIndex = 0;
-            const flip = () => {
+            box.setAttribute('role', 'checkbox');
+            box.setAttribute('aria-checked', on ? 'true' : 'false');
+            box.setAttribute('aria-label', `Select ${rec.caseNum || 'this case'}`);
+            box.title = on ? 'Untick this case' : 'Tick this case';
+            box.onclick = (e) => {
+                e.stopPropagation();
                 // The run took its list when it started; ticks made now would read as part of it.
                 if (RUN.active) { toast('A run is going — the selection is held until it finishes.', 'w'); return; }
                 const now = !SELECTED.has(key);
                 if (now) SELECTED.add(key); else SELECTED.delete(key);
                 row.classList.toggle('is-selected', now);
-                row.setAttribute('aria-checked', now ? 'true' : 'false');
-                renderListBar();
+                box.setAttribute('aria-checked', now ? 'true' : 'false');
+                box.title = now ? 'Untick this case' : 'Tick this case';
+                const was = SELECTING;
+                SELECTING = SELECTED.size > 0;
+                if (was !== SELECTING) renderCases();
+                else renderListBar();
             };
-            row.onclick = flip;
-            row.onkeydown = (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); } };
-        } else {
-            main.onclick = () => openInSalesforce(rec);
+            row.appendChild(box);
         }
+        main.onclick = () => openInSalesforce(rec);
 
         const num = document.createElement('span');
         num.className = 'oc-num';
@@ -2777,6 +2787,7 @@
             if (m) m.style.display = 'none';
         }
         closeOwnerMenu();
+        gselMenuClose();
     }
 
     /* TAKE CASES OFF THE QUEUE — one from its ×, or the ticked ones from the bin. Asked first,
@@ -2806,7 +2817,7 @@
         const gone = new Set(list.map(keyOf));
         CASES.cases = CASES.cases.filter(c => !gone.has(keyOf(c)));
         for (const k of gone) SELECTED.delete(k);
-        if (SELECTING && !SELECTED.size && !one) SELECTING = false;
+        SELECTING = SELECTED.size > 0;
         await store({ [K.cases]: CASES });
         renderCases();
         toast(one ? `${list[0].caseNum || 'Case'} removed from the list.` : `${list.length} cases removed from the list.`, 'i', 5000);
@@ -2831,11 +2842,14 @@
         const visKeys = new Set(vis.map(keyOf));
         const n = SELECTED.size;
         const show = (id, on) => { const el = $(id); if (el) el.hidden = !on; };
-        show('ocSelect', !SELECTING);
-        show('ocSelectAll', SELECTING);
+        // The Gmail-style checkbox stands in for Select / Select all / Cancel; they stay in the
+        // page, hidden, as they do in the analyser.
+        show('ocSelect', false);
+        show('ocSelectAll', false);
         show('ocSelCount', SELECTING);
         show('ocSelDelete', SELECTING);
-        show('ocSelCancel', SELECTING);
+        show('ocSelCancel', false);
+        gselPaint(vis);
 
         const count = $('ocSelCount');
         if (count) {
@@ -2850,7 +2864,7 @@
             del.disabled = !n || RUN.active;
             del.title = n
                 ? `Remove the ${n} ticked case${n === 1 ? '' : 's'} from this list. Local only; nothing changes in Salesforce, and reviews already written are kept.`
-                : 'Nothing ticked — click a case to tick it';
+                : 'Nothing ticked — tick a case with the box on its left';
             del.setAttribute('aria-label', n ? `Remove ${n} ticked case${n === 1 ? '' : 's'}` : 'Nothing ticked');
         }
 
@@ -2861,17 +2875,76 @@
             qa.classList.toggle('is-ready', n > 0);
             qa.title = RUN.active ? 'A run is going — wait for it or press Stop.'
                 : n ? `Write a QA review of the ${n} ticked case${n === 1 ? '' : 's'}`
-                : 'Press to choose cases — tick them, then press QA again';
+                : 'Tick the cases to review with the boxes on the left, then press QA';
         }
         if (qaLabel) qaLabel.textContent = n ? `QA ${n} case${n === 1 ? '' : 's'}` : 'QA selected';
         const b369 = $('btnRun306090');
         if (b369) b369.disabled = RUN.active;
     }
 
+    // Selecting means something is ticked — the Gmail rule. Off clears the ticks; on with
+    // nothing ticked is a no-op, because a "0 selected" bar is a mode with nothing in it.
     function setSelecting(on) {
-        SELECTING = !!on;
-        if (!SELECTING) SELECTED.clear();
+        if (!on) SELECTED.clear();
+        SELECTING = SELECTED.size > 0;
         renderCases();
+    }
+
+    /* THE GMAIL-STYLE MASTER CHECKBOX — the analyser's (Global 1.3.2). Its box: none ticked →
+     * ticks every case on screen; some or all → unticks them all. Its ▾: All, None, and the
+     * kinds of case worth picking at once — not yet QA'd, already QA'd, at a 30/60/90, with or
+     * without a JIRA, Focus or not. Each acts on the cases ON SCREEN, as filtered: a case a
+     * filter hides is not quietly swept up with the rest. */
+    function gselSet(pred) {
+        if (RUN.active) { toast('A run is going — the selection is held until it finishes.', 'w'); return; }
+        const vis = visibleCases();
+        SELECTED = new Set(pred ? vis.filter(pred).map(keyOf) : []);
+        SELECTING = SELECTED.size > 0;
+        renderCases();
+        if (pred && !SELECTED.size) toast('None of the cases on screen is that kind.', 'i', 4000);
+    }
+    function gselPaint(vis) {
+        const box = $('ocGselBox');
+        if (!box) return;
+        const shown = vis || visibleCases();
+        const n = shown.filter(r => SELECTED.has(keyOf(r))).length;
+        const state = !n ? 'none' : (n === shown.length ? 'all' : 'some');
+        box.dataset.state = state;
+        box.setAttribute('aria-checked', state === 'all' ? 'true' : state === 'some' ? 'mixed' : 'false');
+        box.title = state === 'none' ? 'Select every case on screen (Ctrl+A)' : 'Clear the selection (Esc)';
+        box.disabled = RUN.active;
+        const caret = $('ocGselCaret');
+        if (caret) caret.disabled = RUN.active;
+    }
+    function gselMenuOpen() { const m = $('ocGselMenu'); return !!m && !m.hidden; }
+    function gselMenuClose() { const m = $('ocGselMenu'); if (m) m.hidden = true; }
+    function wireGmailSelect() {
+        const box = $('ocGselBox'), caret = $('ocGselCaret'), menu = $('ocGselMenu');
+        if (!box || !caret || !menu) return;
+        box.onclick = (e) => {
+            e.stopPropagation();
+            gselMenuClose();
+            if (box.dataset.state === 'none') gselSet(() => true); else gselSet(null);
+        };
+        caret.onclick = (e) => {
+            e.stopPropagation();
+            const opening = menu.hidden;
+            closeToolbarMenus();
+            closeMenu();
+            menu.hidden = !opening;
+        };
+        menu.addEventListener('click', (e) => e.stopPropagation());
+        const reviewed = (r) => { const d = qaReviewFor(r); return !!d && !incomplete(d); };
+        const picks = {
+            all: () => true, none: null,
+            unreviewed: (r) => !reviewed(r), reviewed,
+            milestone: (r) => milestoneOf(r) !== null,
+            jira: (r) => !!jiraKeyFrom(r.jira), nojira: (r) => !jiraKeyFrom(r.jira),
+            focus: needsAction, nofocus: (r) => !needsAction(r)
+        };
+        for (const it of menu.querySelectorAll('[data-pick]')) {
+            it.onclick = (e) => { e.stopPropagation(); gselMenuClose(); gselSet(picks[it.dataset.pick]); };
+        }
     }
 
     function selectedRecords() {
@@ -6063,7 +6136,9 @@
             toast('Rows are back to the columns and widths this tool ships with.', 's');
         };
 
-        /* SELECT, SELECT ALL, THE BIN, CANCEL — the analyser's bar. */
+        /* THE MASTER CHECKBOX AND THE BIN — the analyser's bar. Select, Select all and Cancel
+         * are hidden behind the checkbox now, and still work if anything shows them. */
+        wireGmailSelect();
         $('ocSelect').onclick = () => setSelecting(true);
         $('ocSelCancel').onclick = () => setSelecting(false);
         $('ocSelectAll').onclick = () => {
@@ -6077,13 +6152,14 @@
         document.addEventListener('keydown', (e) => {
             if (VIEW !== 'cases' || document.querySelector('.qa-modal-back') || copilotSetupOpen()) return;
             if (e.key === 'Escape' && ownerMenuOpen()) { e.preventDefault(); closeOwnerMenu(); return; }
+            if (e.key === 'Escape' && gselMenuOpen()) { e.preventDefault(); gselMenuClose(); return; }
             const t = e.target;
             const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
             if (e.key === 'Escape' && SELECTING && !typing) { e.preventDefault(); setSelecting(false); return; }
             if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A') && !typing && CASES.cases.length && !RUN.active) {
                 e.preventDefault();
-                SELECTING = true;
                 for (const r of visibleCases()) SELECTED.add(keyOf(r));
+                SELECTING = SELECTED.size > 0;
                 renderCases();
             }
         });
@@ -6091,8 +6167,7 @@
 
         const needTicks = () => {
             if (SELECTED.size) return false;
-            setSelecting(true);
-            toast('Click the cases to QA — then press QA again.', 'i', 6000);
+            toast('Tick the cases first — the box on the left of each row, or the checkbox above them for every case on screen.', 'i', 6000);
             return true;
         };
         $('btnRunQa').onclick = () => { if (!needTicks()) startRun('qa'); };

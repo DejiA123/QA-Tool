@@ -10,6 +10,20 @@ other's settings, cases or reviews.
 
 ---
 
+## What's new in 4.0.1
+
+* **Select works the Gmail way, as in the SOTI AI Analyser (Global 1.3.2).** Every case has its
+  own tick-box on the left, always: the box ticks the case, and clicking the rest of the row still
+  opens it in Salesforce. Ticking the first case brings up the count and the bin; unticking the
+  last puts them away.
+* **One checkbox above the list** replaces Select, Select all and Cancel. With nothing ticked it
+  ticks every case on screen; with any ticked it clears them. It shows empty, a dash (some
+  ticked) or a tick (every case on screen). Its **▾** picks *All*, *None*, *Not yet QA'd*,
+  *Already QA'd*, *Needs 30/60/90*, *With JIRA*, *Without JIRA*, *Focus* or *Not focus* — always
+  from the cases on screen, so the owner dropdown and the chips narrow what it picks from.
+* **Ctrl+A** still ticks every case on screen and **Esc** clears the ticks. **QA selected** and
+  **30/60/90** pressed with nothing ticked say where the tick-boxes are.
+
 ## What's new in 4.0.0
 
 * **An owner dropdown on the Cases tab.** At the end of the tier chips' line, **All owners ▾**
@@ -173,14 +187,16 @@ open elsewhere it brings it to the front, and if it is closed it reopens it.
 
 ### 2. Pick what to review
 
-* **Select** turns every row's tick-box on — a click on a row then ticks it instead of opening
-  it. **Select all** ticks everything on screen (or **Ctrl+A**), the **bin** takes the ticked
-  cases off the list (local only), and **Cancel** or **Esc** stops selecting. Pressing **QA** with
-  nothing ticked starts selecting for you.
+* **The tick-box on each row** ticks that case; clicking the rest of the row opens it in
+  Salesforce. **The checkbox above the list** ticks every case on screen (or **Ctrl+A**), or
+  clears the ticks when any are ticked (or **Esc**); its **▾** picks *All*, *None*, *Not yet
+  QA'd*, *Already QA'd*, *Needs 30/60/90*, *With JIRA*, *Without JIRA*, *Focus* or *Not focus*.
+  The **bin** takes the ticked cases off the list (local only).
 * **The filter box** matches the case number, subject, account, contact, JIRA, status and
   owner. **Commas give alternatives** — `Imran, Ayse` is everything those two own, and a name
   that owns cases in the queue is matched against the owner only, as whole words. This is the
-  by-owner workflow: filter to the agent, Select → Select all.
+  other by-owner workflow besides the **owner dropdown**: filter to the agent, then tick the
+  checkbox above the list.
 * **The chips** narrow the list: the entitlement tiers, **JIRA** (cases with a defect raised),
   **★ Focus** (waiting on SOTI, new, or a red activity dot), and this tool's own —
   **30-day / 60-day / 90-day**, **Needs 30/60/90**, **Not yet QA'd**, **Already QA'd**.

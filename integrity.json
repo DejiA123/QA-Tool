@@ -1,24 +1,26 @@
 {
   "v": 1,
   "by": "Ayodeji Augustine",
-  "build": "3.0.0",
-  "signedAt": "2026-10-23T10:26:54.435Z",
+  "build": "3.1.0",
+  "signedAt": "2026-10-29T14:42:38.548Z",
   "files": {
-    "QA_Tool.html": "3ce45a43978e689aa03b36a2156e0aec6b8ef805617e3d10bde938395dad7145",
-    "README.md": "eadccb99f36ca5b464ea61c658c09112eb9c0164dca12cdc6c512514c27bd169",
+    "QA_Tool.html": "e63d76f23069a07d71b49cd1c1f5b549086510ec2556dc187d375febb1361158",
+    "README.md": "d8b1e72ad42f2146e28cdfb6307f44774ff7beacf8936e6387de850a464120f4",
     "ai-provider.js": "55a0a7c09631705caed7f365c3af6008cfe10946d258ae208a2948935c44b94f",
-    "background.js": "c288373cd0ba30c3ee62bbf02cce0b336a04c252c9b015c3d343febc011b0ec9",
+    "background.js": "9aede7bc6e089b2443aad629c3a09a47f8cda25aa16786131e663d3bf945331f",
     "backup.js": "c8073a53dbf5449b88b9d562ab0ea47d5dc12e0dadb2fe2e712e2e617c5cc1fa",
     "case-reader.js": "4a7793e1cedb6e3105dca45acc55c4c76aab011009b6c4c6a39e52674927dce1",
-    "content.js": "8be19a021ecaca559ed04097b07e66e9cfdaa80aa98c60693626ba11fe28e63b",
+    "content.js": "dd3a83a4849672ef0fbae89b98f2b2126dbcaff72d94c24779ef1a69e8451b89",
     "copilot-bridge.js": "1e0b0abde491ae062c7465b11c6e468bc0b25adae99fc9ea8783018cd7e264ef",
     "display-size.js": "f76ac4c0c3e91d42b9729a933383e593189f614996c3b9680c30ca18725258fd",
-    "manifest.json": "72bee1e736c302737f8f081bbc40b54bc4f42a968dd61bec782984cd151940cd",
+    "manifest.json": "a94c7209521940c1d0a75e022426eeba6cbde9db967f4be159bde6b39e5a2616",
     "qa-engine.js": "65909041ae44f71e95f9afeea66b02f377b724c561d18e9271270cc692048f37",
-    "qa-panel.js": "11554bf650841a27a3e8a1cfca31ccebd6a3a2672b7141a3af1cd6a371b71830",
-    "qa-styles.css": "fca8428a1cd179a7804011d74c860bac441f89aaad56562134a6bfafcc0f070b",
+    "qa-panel.js": "9744e3c7836a2710d96d823935fe7e46679f3fbd6cb5a80de8b74827d7e40ab6",
+    "qa-styles.css": "cc3137887d0355cd99a523bada54466783d4ab47ac2588659c22c772de0b5545",
     "reader-wake.js": "926d68dc2a2c1c0be9c5177571490329fec23faa95850823de9920cde78e7901",
-    "styles.css": "bd7d81391f66f8ce43c8845fc7510439f5b1f4d1d2ab63d6485c512702b203c0"
+    "release.json": "5a8c6974a703039f51e121d93c003fecd30b2855b7fe305cf3811e767e54c612",
+    "styles.css": "bd7d81391f66f8ce43c8845fc7510439f5b1f4d1d2ab63d6485c512702b203c0",
+    "updater.js": "3d5cae81069562b388e24b3a1625ec9be69a871289a712c9f9f6e924d37f55c3"
   },
-  "sig": "Ya0oblb57z38Ki5zGl2QXg8K12v1Vb+EBFumWVCpGCTAWkpDt6/DqM6tuws2p/a6pve6d1JP2AAekspGOIoABw=="
+  "sig": "4/1PeyZpxXqEEy9RsV+cVBwh0VUetCHfqa/q5GysV3ZXA1CNF4el1CyUY3E8MwKiyOD06pYVfaVdY9kfZ/wJNA=="
 }

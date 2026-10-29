@@ -2929,19 +2929,26 @@
         } catch (e) { return ''; }
     }
 
-    /* AGENT CASES, THERE FROM THE START — the analyser's default list. Put in Current View the
+    /* EMEA AGENT CASES, THERE FROM THE START — the analyser's default list (named "Agent Cases"
+     * there, and here until 3.1.0 — see RENAMED_LISTS). Put in Current View the
      * first time this build runs, like a list the reviewer saved themselves: same chip, same
      * sync, same right-click. OFFERED ONCE: its id is written down when it is put in, so a
      * reviewer who forgets it has forgotten it, and one who already saved the same report under
      * another name keeps theirs and is not given a second chip. */
     const DEFAULT_LISTS = [
-        { id: 'ql-agent-cases', name: 'Agent Cases',
+        { id: 'ql-agent-cases', name: 'EMEA Agent Cases',
           url: 'https://soti.lightning.force.com/lightning/r/Report/00OOF000003bijV2AQ/view?queryScope=userFolders' },
         /* EVERY CASE CLOSED IN EMEA — the list to QA closed work from. Its closed date is what
          * files each review under its month on the Reviews tab, and the owner dropdown narrows
-         * it to the people being reviewed. Second, so a first Sync still opens Agent Cases. */
+         * it to the people being reviewed. Second, so a first Sync still opens EMEA Agent Cases. */
         { id: 'ql-emea-closed', name: 'EMEA Closed Cases',
           url: 'https://soti.lightning.force.com/lightning/r/Report/00OOF000003c2K12AI/view?queryScope=userFolders' }
+    ];
+    /* A DEFAULT LIST WHOSE NAME HAS CHANGED SINCE IT WAS PUT IN — renamed once, on the copies
+     * that still carry the old name. A reviewer who renamed it themselves keeps their name, and
+     * the marker in listsOffered stops a name they later set back from being changed again. */
+    const RENAMED_LISTS = [
+        { id: 'ql-agent-cases', from: 'Agent Cases', to: 'EMEA Agent Cases', marker: 'ql-agent-cases:emea-name' }
     ];
     async function offerDefaultLists() {
         if (!isExt()) return;
@@ -2949,6 +2956,18 @@
             const got = await load([K.listsOffered]);
             const offered = Array.isArray(got[K.listsOffered]) ? got[K.listsOffered] : [];
             let changed = false;
+            for (const r of RENAMED_LISTS) {
+                if (offered.includes(r.marker)) continue;
+                offered.push(r.marker);
+                changed = true;
+                const def = DEFAULT_LISTS.find(d => d.id === r.id);
+                for (const l of LISTS) if (l.id === r.id && l.name === r.from) l.name = r.to;
+                // The tooltip's "synced … from Agent Cases" is the same name, remembered separately.
+                if (LAST_LIST && LAST_LIST.name === r.from && def && sameList(LAST_LIST.url, def.url)) {
+                    LAST_LIST.name = r.to;
+                    await store({ [K.lastList]: LAST_LIST });
+                }
+            }
             const added = [];
             for (const d of DEFAULT_LISTS) {
                 if (offered.includes(d.id)) continue;
@@ -2958,9 +2977,9 @@
                 }
                 changed = true;
             }
-            /* In front of the reviewer's own lists, and in THIS order — Agent Cases first, because
-             * a Sync that has never run opens the first list in Current View. A reviewer who has
-             * already been given Agent Cases gets the new one put just after it. */
+            /* In front of the reviewer's own lists, and in THIS order — EMEA Agent Cases first,
+             * because a Sync that has never run opens the first list in Current View. A reviewer who
+             * has already been given it gets the new one put just after it. */
             if (added.length) {
                 const after = LISTS.findIndex(l => l.id === 'ql-agent-cases');
                 if (after >= 0 && !added.some(a => a.id === 'ql-agent-cases')) LISTS.splice(after + 1, 0, ...added);
@@ -3032,7 +3051,7 @@
         }
         const anyList = all.find(t => isListUrl(t.url));
         if (anyList) { focusTab(anyList); return { tab: anyList }; }
-        // Never synced yet: the first saved list — Agent Cases unless the reviewer forgot it —
+        // Never synced yet: the first saved list — EMEA Agent Cases unless the reviewer forgot it —
         // is opened, as the analyser's Sync does.
         const target = LAST_LIST || (LISTS.length ? { url: LISTS[0].url, name: LISTS[0].name } : null);
         if (!target && activeOk && sfUrl(active.url)) return { tab: active };
@@ -3151,7 +3170,7 @@
             toast('Reading the case list — scrolling to load every case…', 'i', 6000);
             const data = await tell(tab.id, { action: 'GET_SALESFORCE_CASE_LIST' });
             if (!data || !Array.isArray(data.cases) || !data.cases.length) {
-                toast('No case rows found. Open a case list view or report (e.g. Agent Cases) and try again.', 'e', 10000);
+                toast('No case rows found. Open a case list view or report (e.g. EMEA Agent Cases) and try again.', 'e', 10000);
                 return;
             }
 
@@ -3297,7 +3316,7 @@
     async function addListByUrl() {
         const url = await ask({
             title: 'Add a Salesforce list view',
-            note: 'Paste the address of a case list view or a Salesforce report of cases — Agent Cases, or whichever queue you QA from. '
+            note: 'Paste the address of a case list view or a Salesforce report of cases — EMEA Agent Cases, or whichever queue you QA from. '
                 + 'It is kept as a button here, and pressing it opens that view in Salesforce and syncs this queue from it.',
             placeholder: 'https://your-org.lightning.force.com/lightning/o/Case/list?filterName=…',
             ok: 'Save list view',

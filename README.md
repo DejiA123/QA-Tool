@@ -30,7 +30,9 @@ other's settings, cases or reviews.
 * **The closed date is read** — off the case page during a review (*Date/Time Closed*), and off
   any list view or report that carries a closed-date column. A review written before this
   version moves into its month as soon as its case is synced from such a report.
-* **EMEA Closed Cases in Current View**, after Agent Cases — the report of every closed case in
+* **Agent Cases is now called EMEA Agent Cases** in Current View. A copy that already has the
+  button gets it renamed once; a button you renamed yourself keeps your name.
+* **EMEA Closed Cases in Current View**, after EMEA Agent Cases — the report of every closed case in
   EMEA. Sync it, pick the owners being reviewed in the dropdown, QA them, and each review lands
   in its closing month. Offered once; right-click it to rename or forget it.
 * **Updates from the shared folder, with a Restart now bar** — the analyser's (Global 1.3.2)
@@ -652,6 +654,8 @@ gets a coaching row.
 | `copilot-bridge.js` | Injected into the relay tab. The analyser's v9.5.4, with one QA Tool addition, marked the same way |
 | `styles.css` | The analyser's v9.5.4 stylesheet, unchanged, so the two tools look like siblings |
 | `qa-styles.css` | Only what QA adds — the QA button, the run pill, the chat, the sheets, the owner dropdown, the review folders, the update bar |
+| `integrity.json` | The owner's signature over every code file — what *✓ Verified original* checks, and what decides whether the shared folder holds a genuine release |
+| `release.json` | The rest of the release (the icons), byte for byte, so a half-synced folder is never loaded. Covered by the signature |
 | `Install_QA_Tool.html` | The install guide for the team — sent to people, not put in the shared folder: a file changed there after signing marks every copy as modified. Put the shared folder's link in it first (search it for `PASTE-THE-QA-TOOL-FOLDER-LINK-HERE`) |
 | `background.js` | Opens the side panel, keeps a clock running for the relay, and looks for a new release in the shared folder |
 | `updater.js` | Decides when the folder holds a complete, signed new release, and restarts onto it. The analyser's (Global 1.3.2) |

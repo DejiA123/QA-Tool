@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "build": "3.1.0",
+  "files": {
+    "icons/icon128.png": "52d41098267a40493bf79234710f17a19f836dd48bf2b8ad5f62e7c8e39ddb9e",
+    "icons/icon16.png": "2c521bde685d1c3c4d20bb9a48e470617488de4581a6e3694d25f9948f63c269",
+    "icons/icon32.png": "c9fc86c3cbbe35c3476a6a903d22ea45f660f57889ec99876d47be66986a4326",
+    "icons/icon48.png": "90612b6216b876d6d24f80824d7a2076b88d84033899eb2efc614ceb8988af93"
+  }
+}

@@ -3603,7 +3603,7 @@
      * ------------------------------------------------------------------- */
     async function startRun(kind, only) {
         if (RUN.active) { toast('A run is already going — wait for it or press Stop.', 'w'); return; }
-        // One thing at a time through the relay — and one thing at a time on the pill.
+        // One thing at a time through the relay — and one thing at a time on the progress strip.
         if (RUN.coaching) { toast('The coaching summary is being written — wait for it or press Stop.', 'w'); return; }
         const recs = only && only.length ? only.slice() : selectedRecords();
         if (!recs.length) { toast('Select some cases first — press Select, then click them.', 'w'); return; }
@@ -3638,7 +3638,7 @@
         SELECTING = false;
         SELECTED.clear();
         renderCases();
-        showRunPill(true);
+        runBarOpen(kind === '306090' ? '306090' : 'qa', recs.length);
         logLine(`Run started — ${recs.length} case(s), ${kind === '306090' ? '30/60/90 analysis' : 'QA review'}.`);
         switchView('reviews');
 
@@ -3652,6 +3652,7 @@
                 ROW_STATE.set(key, 'working');
                 updateRow(key);
                 setRunNote(`Reading ${rec.caseNum || 'a case'}… (${RUN.done}/${RUN.total})`);
+                runBarMark(rec, 0.04);
 
                 let read = await readOnce(rec);
 
@@ -3676,6 +3677,7 @@
                     updateRow(key);
                     RUN.failed++;
                     RUN.done++;
+                    runBarMark(rec, 1);
                     logLine(`${rec.caseNum || key}: ${read.error}`, 'fail');
                     /* A FAILED READ MUST NOT DELETE A GOOD REVIEW. Re-reviewing a case
                      * replaces its review, which is right when the new one is a review — but
@@ -3702,11 +3704,14 @@
                     updateRow(keyOf(rec));
                     RUN.failed++;
                     RUN.done++;
+                    runBarMark(rec, 1);
                     logLine(`${rec.caseNum || key}: ${why}`, 'fail');
                     await saveReview(failedReview(rec, kind, why));
                     setRunNote(`${RUN.done}/${RUN.total} done, ${RUN.failed} failed`);
                     continue;
                 }
+                // Read and measured: about half of this case's share of the bar.
+                runBarMark(rec, 0.45);
                 /* KEEP WHAT THE CASE SAID, not just what the review concluded.
                  *
                  * The read is the expensive part — a page load and a scroll to the end of a
@@ -3755,6 +3760,7 @@
 
                 ROW_STATE.delete(keyOf(rec));
                 RUN.done++;
+                runBarMark(rec, 1);
                 try {
                     updateRow(keyOf(rec));
                     setRunNote(`${RUN.done}/${RUN.total} done${RUN.failed ? `, ${RUN.failed} failed` : ''}`);
@@ -3781,20 +3787,26 @@
             RUN.active = false;
             await store({ [K.cases]: CASES });
             renderAll();
-            showRunPill(false);
             const stopped = RUN.accessBlocked ? ' (stopped — Copilot could not be reached)' : RUN.stop ? ' (stopped early)' : '';
+            const ok = RUN.done - RUN.failed;
+            const verb = kind === '306090' ? 'analysed' : 'reviewed';
+            runBarClose(RUN.accessBlocked ? `Stopped — Copilot could not be reached · ${ok} ${verb}`
+                : RUN.stop ? `Stopped — ${ok} ${verb}${RUN.failed ? `, ${RUN.failed} failed` : ''}`
+                : RUN.failed ? `Finished — ${ok} ${verb}, ${RUN.failed} failed`
+                : `Done — ${ok} ${verb}`,
+                RUN.accessBlocked || (!ok && RUN.failed) ? 'fail' : (RUN.failed || RUN.stop) ? 'warn' : 'ok');
             logLine(`Run finished: ${RUN.done - RUN.failed} reviewed, ${RUN.failed} failed${stopped}.`, RUN.failed ? 'warn' : 'ok');
             toast(`Run finished — ${RUN.done - RUN.failed} reviewed${RUN.failed ? `, ${RUN.failed} failed` : ''}${stopped}`, RUN.failed ? 'w' : 's', 8000);
         }
     }
 
-    // One line of the run log, from the measured half, so the log says something about the
+    // One line of the run's timeline, from the measured half, so it says something about the
     // case rather than only that it was read.
     function describeMeasure(m) {
         const bits = [];
         if (m.frtMet === true) bits.push('first response met' + (m.assignedAt ? '' : ' (measured from the case opening)'));
         else if (m.frtMet === false) bits.push('FIRST RESPONSE MISSED');
-        // Neither. Said out loud, because a run log that is silent about the first response
+        // Neither. Said out loud, because a timeline that is silent about the first response
         // reads as "fine" — and the reason it is silent is the thing worth knowing.
         else if (m.frtUnmeasured) bits.push('first response NOT ASSESSABLE — ' + m.frtUnmeasured);
         if (m.gaps.length) bits.push(`${m.gaps.length} gap(s)`);
@@ -3833,6 +3845,7 @@
     async function writeUp(rec, data, metrics, kind) {
         const caseNo = data.caseNumber || rec.caseNum || keyOf(rec);
         setRunNote(`Writing up ${caseNo}…`);
+        runBarMark(rec, 0.5);
 
         /* THE CASE GOES OUT ANONYMOUS AND COMES BACK NAMED.
          *
@@ -4195,58 +4208,236 @@
     }
 
     /* ---------------------------------------------------------------------
-     * THE RUN PILL AND THE LOG
-     * ------------------------------------------------------------------- */
-    /* THE PILL STAYS FOR A MOMENT AFTER THE RUN ENDS, and stops pulsing.
+     * THE RUN BAR — the analyser's progress strip (Global 1.3.2)
+     * ---------------------------------------------------------------------
+     * One strip under the tabs, seen from every tab, for everything long this tool does: a QA
+     * or 30/60/90 run, reading a case for its chat, and the coaching summaries. A label that
+     * says what is happening and how far in, a real fill under a real percentage, and Stop.
      *
-     * A run that finishes while the reviewer is looking at another application would
-     * otherwise leave nothing behind at all — they come back to a panel that looks exactly
-     * like one that was never started. Six seconds of "12/12 done" is what says it happened,
-     * and the dot going still and green is what says it is no longer happening. */
-    let pillHide = null;
-    function showRunPill(on) {
-        const pill = $('runPill');
-        if (!pill) return;
-        if (pillHide) { clearTimeout(pillHide); pillHide = null; }
-        // Stop only while there is something to stop — a finished pill offering it was a
-        // button that did nothing.
-        const stop = $('btnStopRun');
-        if (on) {
-            pill.style.display = '';
-            pill.classList.remove('done', 'failed');
-            if (stop) stop.hidden = false;
-            return;
+     * IT NEVER STANDS STILL. A run's real checkpoints are coarse — a case read, a case written —
+     * and minutes apart, and a bar that only moves on them sits dead and then jumps, which reads
+     * as a hang followed by a glitch. So the analyser's motion model runs underneath it: a clock
+     * that keeps it climbing between checkpoints, paced by how long a case usually takes on THIS
+     * machine, with each real checkpoint pulling it forward to where the run truly is. Only the
+     * run finishing writes 100.
+     *
+     * Hover the strip for the step it is on ("Writing up C0…"); the label itself stays the
+     * whole run's progress rather than one case number after another.
+     * ------------------------------------------------------------------- */
+    /* ONE MOTION MODEL FOR EVERY PROGRESS BAR — the analyser's createSmoothProgress, unchanged.
+     * A time-based floor under the painted value — 99·(1 − e^(−t/τ)), fast early, slower later,
+     * never arriving — so the bar always moves; where real progress is ahead, it wins and the
+     * clock is rebased to it so the floor resumes from there instead of having to catch up.
+     * Painted from BOTH an animation frame and a 250ms timer: a side panel that is not
+     * compositing gets no frames at all, and rAF alone left a bar reading 0% through a run. */
+    function createSmoothProgress(paint) {
+        let target = 0, shown = 0, t0 = 0, tau = 0;
+        let raf = null, tick = null, last = 0;
+
+        // 99·(1 − e^(−t/τ)) — never reaches 99, so it can never claim the run is finished.
+        const timeFloor = () => (!t0 || !tau) ? 0 : 99 * (1 - Math.exp(-(Date.now() - t0) / tau));
+
+        // Put the clock where the bar actually is — the inverse of the curve.
+        const rebase = (pct) => {
+            if (!tau) return;
+            const p = Math.max(0, Math.min(98.9, pct));
+            const t = -tau * Math.log(1 - p / 99);
+            if (Number.isFinite(t) && t >= 0) t0 = Date.now() - t;
+        };
+
+        const advance = (dt) => {
+            if (shown >= 100) return;
+            if (shown < target) {
+                // Ease toward real progress (~1.5–2s to close a big gap, so a jump reads as a
+                // glide) plus a small linear floor so the last sliver never crawls.
+                shown = Math.min(target, shown + (target - shown) * (1 - Math.pow(0.3, dt / 1000)) + 0.002 * dt);
+                if (target - shown < 0.25) shown = target;
+            }
+            const floor = timeFloor();
+            if (floor > shown) shown = Math.min(99, floor);
+            else if (shown > floor) rebase(shown);
+        };
+
+        const render = () => { try { paint(shown); } catch (e) { /* the strip went away */ } };
+
+        const stop = () => {
+            if (raf) { try { cancelAnimationFrame(raf); } catch (e) {} raf = null; }
+            if (tick) { clearInterval(tick); tick = null; }
+        };
+
+        const animate = () => {
+            stop();
+            tick = setInterval(() => { advance(160); render(); }, 250);
+            if (typeof requestAnimationFrame !== 'function') { render(); return; }
+            last = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+            const step = (now) => {
+                const dt = Math.min(120, now - last); last = now;
+                advance(dt); render();
+                raf = requestAnimationFrame(step);
+            };
+            raf = requestAnimationFrame(step);
+        };
+
+        return {
+            // Begin. `expectedMs` paces the curve: it reaches ~90% at 2.3τ, so τ = expected/2.3
+            // lands a typical run near 90% as the work finishes.
+            start(expectedMs, from = 0) {
+                target = shown = Math.max(0, Math.min(99, from));
+                tau = Math.max(8000, (Number(expectedMs) || 240000) / 2.3);
+                t0 = Date.now();
+                rebase(shown);
+                render();
+                animate();
+            },
+            // Real progress. Monotonic — a bar that goes backwards reads as the run restarting.
+            set(pct) {
+                const v = Number(pct);
+                if (Number.isFinite(v)) target = Math.max(target, Math.min(100, v));
+            },
+            elapsed() { return t0 ? Date.now() - t0 : 0; },
+            value() { return shown; },
+            // Completion is the one thing allowed to write 100.
+            complete() { stop(); target = shown = 100; render(); },
+            stop
+        };
+    }
+
+    /* HOW LONG ONE UNIT OF THIS KIND OF RUN USUALLY TAKES ON THIS MACHINE — one case for a QA
+     * run, one agent for the coaching. The analyser's, keyed per kind. localStorage because the
+     * bar needs it SYNCHRONOUSLY when it opens; a per-machine pacing hint, nothing more. */
+    const RUN_MS_PREFIX = 'qa_run_ms_';
+    const RUN_MS_DEFAULT = { qa: 120000, '306090': 120000, 'chat-read': 60000, coaching: 60000 };
+    function expectedRunMs(kind) {
+        const fallback = RUN_MS_DEFAULT[kind] || 90000;
+        try {
+            const v = parseInt(localStorage.getItem(RUN_MS_PREFIX + kind) || '', 10);
+            // Clamped: one freak run — a laptop that slept mid-case — must not pace every run after it.
+            if (Number.isFinite(v) && v > 0) return Math.max(15000, Math.min(900000, v));
+        } catch (e) { /* no localStorage — the default is fine */ }
+        return fallback;
+    }
+    function rememberRunMs(kind, ms) {
+        if (!Number.isFinite(ms) || ms <= 0) return;
+        try {
+            // Blended with what we already believed, so the pacing follows the machine instead of
+            // lurching after one unusual case.
+            localStorage.setItem(RUN_MS_PREFIX + kind, String(Math.round(expectedRunMs(kind) * 0.6 + ms * 0.4)));
+        } catch (e) { /* nothing to do */ }
+    }
+
+    const BAR = { engine: null, kind: '', total: 1, parts: new Map(), what: '', final: '', closing: false, stopping: false, hide: null, startedAt: 0 };
+
+    // What the label says at `pct` — the whole run, never one case number.
+    function runBarText(pct) {
+        if (BAR.closing) return BAR.final;
+        const p = `${Math.round(pct)}%`;
+        if (BAR.stopping) return BAR.kind === 'coaching' ? `Stopping after the summary being written now — ${p}` : `Stopping after the case being read now — ${p}`;
+        const n = BAR.total, s = n === 1 ? '' : 's';
+        const base = BAR.kind === 'qa' ? `Reviewing ${n} case${s}`
+            : BAR.kind === '306090' ? `30/60/90 analysis of ${n} case${s}`
+            : BAR.kind === 'coaching' ? `Writing coaching summaries for ${n} agent${s}`
+            : (BAR.what || 'Working');
+        let tail = '';
+        if (n > 1) {
+            const done = BAR.kind === 'coaching' ? [...BAR.parts.values()].filter(v => v >= 1).length : RUN.done;
+            const failed = BAR.kind !== 'coaching' ? RUN.failed : 0;
+            if (done) tail = ` · ${done} done` + (failed ? `, ${failed} failed` : '');
         }
+        return `${base}${tail} — ${p}`;
+    }
+
+    function paintRunBar(pct) {
+        const lbl = $('runBarLbl'), fill = $('runBarFill'), bar = $('runBar');
+        if (lbl) lbl.textContent = runBarText(pct);
+        // One decimal: the fill glides between whole percents instead of stepping.
+        if (fill) fill.style.width = `${pct.toFixed(1)}%`;
+        if (bar) bar.setAttribute('aria-valuenow', String(Math.round(pct)));
+    }
+
+    /* OPEN THE STRIP for a run of `total` units of `kind` — 'qa', '306090', 'coaching', or
+     * 'chat-read' (with `what` as its label). */
+    function runBarOpen(kind, total, what) {
+        const bar = $('runBar');
+        if (!bar) return;
+        if (BAR.hide) { clearTimeout(BAR.hide); BAR.hide = null; }
+        Object.assign(BAR, { kind, total: Math.max(1, Number(total) || 1), parts: new Map(), what: what || '', final: '', closing: false, stopping: false, startedAt: Date.now() });
+        bar.hidden = false;
+        bar.title = '';
+        bar.classList.remove('is-done', 'is-warn', 'is-failed', 'is-leaving');
+        const stop = $('btnStopRun');
+        // Stop only where there is a loop to stop — a single case read has none.
+        if (stop) stop.hidden = kind === 'chat-read';
+        const fill = $('runBarFill');
+        if (fill) {
+            // The reset is snapped with the transition off — an animated reset glides the bar
+            // backwards across the panel, which reads as the run cancelling itself.
+            fill.style.transition = 'none';
+            fill.style.width = '0%';
+            void fill.offsetWidth;
+            fill.style.transition = '';
+        }
+        if (!BAR.engine) BAR.engine = createSmoothProgress(paintRunBar);
+        BAR.engine.start(Math.min(3 * 3600000, expectedRunMs(kind) * BAR.total), 0);
+    }
+
+    /* HOW FAR ONE UNIT HAS GOT — 0..1, and only ever forward. A case is a little in when its read
+     * starts, about half done once it has been read, and done when it is written up (or has
+     * failed). `token` is the record itself, which keeps its identity even when a case added by
+     * URL changes its key mid-run. */
+    function runBarMark(token, frac) {
+        if (!BAR.engine || BAR.closing) return;
+        const was = BAR.parts.get(token) || 0;
+        if (frac > was) BAR.parts.set(token, Math.min(1, frac));
+        let sum = 0;
+        for (const v of BAR.parts.values()) sum += v;
+        BAR.engine.set(sum / BAR.total * 100);
+    }
+
+    /* THE RUN IS OVER: 100%, what came of it, and the strip goes after a few seconds.
+     * `tone` is 'ok', 'warn' (some failed, or stopped) or 'fail'. A clean, unstopped run teaches
+     * the pacing how long one unit takes here, so the next bar is paced by this machine. */
+    function runBarClose(text, tone) {
+        const bar = $('runBar');
+        if (!bar || !BAR.engine) return;
+        // Timed from the open, not by the engine, whose clock is rebased as the bar moves.
+        if (tone === 'ok') rememberRunMs(BAR.kind, (Date.now() - BAR.startedAt) / BAR.total);
+        BAR.final = text;
+        BAR.closing = true;
+        BAR.stopping = false;
+        BAR.engine.complete();
+        bar.title = '';
+        bar.classList.add(tone === 'ok' ? 'is-done' : tone === 'warn' ? 'is-warn' : 'is-failed');
+        const stop = $('btnStopRun');
         if (stop) stop.hidden = true;
-        pill.classList.add(RUN.failed ? 'failed' : 'done');
-        pillHide = setTimeout(() => {
-            if (!RUN.active) pill.style.display = 'none';
-            pillHide = null;
+        /* IT STAYS FOR A MOMENT AFTER THE RUN ENDS. A run that finishes while the reviewer is
+         * looking at another application would otherwise leave nothing behind — they come back
+         * to a panel that looks exactly like one that was never started. */
+        if (BAR.hide) clearTimeout(BAR.hide);
+        BAR.hide = setTimeout(() => {
+            if (RUN.active || RUN.coaching || CHAT_BUSY) return;
+            bar.classList.add('is-leaving');
+            BAR.hide = setTimeout(() => {
+                if (!RUN.active && !RUN.coaching && !CHAT_BUSY) bar.hidden = true;
+                bar.classList.remove('is-leaving');
+                BAR.hide = null;
+            }, 400);
         }, 6000);
     }
 
+    // The step the run is on — kept for the strip's tooltip rather than its label.
     function setRunNote(note) {
         RUN.note = note;
-        const el = $('runPillTxt');
-        if (el) el.textContent = note;
+        const bar = $('runBar');
+        if (bar && !BAR.closing) bar.title = note;
     }
 
+    /* THE RUN'S TIMELINE GOES TO THE CONSOLE, NOT THE SCREEN. What was opened, what came back
+     * and what went wrong, in order — worth having when a run is being diagnosed (right-click the
+     * panel → Inspect → Console), and only clutter while QA'ing. Everything a reviewer needs from
+     * it is elsewhere: the strip for how the run is going, and each review card for how its case
+     * went. */
     function logLine(text, kind) {
-        const log = $('runLog');
-        if (!log) return;
-        log.style.display = '';
-        const line = document.createElement('div');
-        line.className = kind ? 'ln-' + kind : '';
-        const t = document.createElement('span');
-        t.className = 'ln-time';
-        try { t.textContent = new Date().toLocaleTimeString(); } catch (e) { t.textContent = ''; }
-        line.appendChild(t);
-        line.appendChild(document.createTextNode(text));
-        log.appendChild(line);
-        // A day of runs is thousands of lines, and the oldest of them are about cases
-        // reviewed hours ago. The newest thousand is what anybody scrolls back through.
-        while (log.childElementCount > 1000) log.removeChild(log.firstChild);
-        log.scrollTop = log.scrollHeight;
+        try { (kind === 'fail' || kind === 'warn' ? console.warn : console.log)(`[QA Tool] ${text}`); } catch (e) { /* no console */ }
     }
 
     // Repaint ONE row rather than the list. A thirty-case run repaints on every state change,
@@ -4598,8 +4789,8 @@
     async function readForChat(chat) {
         if (CHAT_BUSY) return;
         /* ONE THING DRIVING THE READER AT A TIME. A QA run already owns the reader window
-         * and the progress pill; a read started from here in the middle of one would fight
-         * it for both, and the pill would end up reporting whichever finished last. */
+         * and the progress strip; a read started from here in the middle of one would fight
+         * it for both, and the strip would end up reporting whichever finished last. */
         if (RUN.active) { toast('A QA run is going — wait for it to finish, or press Stop.', 'w', 7000); return; }
         const rec = CASES.cases.find(c => keyOf(c) === chat.key)
             || { recordId: chat.key, url: chat.url, caseNum: chat.caseNum, subject: chat.subject };
@@ -4608,7 +4799,7 @@
         CHAT_BUSY = true;
         renderChat();
         RUN.failed = 0;
-        showRunPill(true);
+        runBarOpen('chat-read', 1, `Reading ${chat.caseNum || 'the case'} for this chat`);
         setRunNote(`Reading ${chat.caseNum || 'the case'} for this chat…`);
         try {
             const read = await window.QaReader.readCase(url);
@@ -4641,7 +4832,7 @@
             RUN.failed = 1;
         } finally {
             CHAT_BUSY = false;
-            showRunPill(false);
+            runBarClose(RUN.failed ? 'Could not read the case' : 'Case read — ask away', RUN.failed ? 'fail' : 'ok');
             renderChat();
             renderCases();
         }
@@ -5774,9 +5965,8 @@
         }
         const btn = $('btnBuildCoaching');
         if (btn) btn.disabled = true;
-        // The pill reads RUN.failed to decide whether it ends green or red, and that count
-        // belongs to whatever ran last. Cleared, or a clean coaching pass inherits the
-        // failures of the QA run before it.
+        // RUN.failed belongs to whatever ran last, and the coaching counts its own failures into
+        // it. Cleared, or a clean coaching pass inherits the failures of the QA run before it.
         RUN.failed = 0;
         if ((await copilotAccessMissing()).length) {
             offerCopilotSetup({ force: true });
@@ -5785,13 +5975,15 @@
         }
         RUN.stop = false;
         RUN.coaching = true;
-        showRunPill(true);
+        runBarOpen('coaching', agents.length);
         let written = 0, failed = 0, blocked = false;
         try {
             for (let i = 0; i < agents.length; i++) {
                 if (RUN.stop) break;
                 const a = agents[i];
                 setRunNote(`Coaching summary ${i + 1}/${agents.length} — ${a.name}…`);
+                for (const b of agents.slice(0, i)) runBarMark(b, 1);
+                runBarMark(a, 0.05);
                 // NOTE the conversation label below is a NUMBER, not the agent's name: the
                 // relay keeps a list of its own conversations, and a QA run should not be
                 // writing a roster of who was appraised this month into somebody's Copilot.
@@ -5879,7 +6071,10 @@
         } finally {
             RUN.coaching = false;
             if (btn) btn.disabled = false;
-            showRunPill(false);
+            runBarClose(blocked ? 'Coaching stopped — Copilot access needed'
+                : RUN.stop ? `Coaching stopped — ${written} of ${agents.length} written`
+                : `Coaching — ${written} of ${agents.length} written${failed ? `, ${failed} failed` : ''}`,
+                blocked || (!written && failed) ? 'fail' : (failed || RUN.stop) ? 'warn' : 'ok');
         }
     }
 
@@ -6189,8 +6384,14 @@
         };
         $('btnStopRun').onclick = () => {
             RUN.stop = true;
-            setRunNote('Stopping after the case being read now…');
-            toast('Stopping — the case being read now will finish first.', 'i');
+            BAR.stopping = true;
+            if (RUN.coaching) {
+                setRunNote('Stopping after the summary being written now…');
+                toast('Stopping — the summary being written now will finish first.', 'i');
+            } else {
+                setRunNote('Stopping after the case being read now…');
+                toast('Stopping — the case being read now will finish first.', 'i');
+            }
         };
 
         $('revSearch').oninput = renderReviews;

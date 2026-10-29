@@ -2,10 +2,10 @@
   "v": 1,
   "by": "Ayodeji Augustine",
   "build": "4.0.1",
-  "signedAt": "2026-10-29T14:59:16.060Z",
+  "signedAt": "2026-10-29T15:19:54.535Z",
   "files": {
-    "QA_Tool.html": "1882ecf75508cbbd920b09f42709ba99acdd3d3e0df8273871a9b5bec2ae13d0",
-    "README.md": "3b07e3a2c8948ff4d94f834b8dd61fd979226849faeb0442d16b1f50bf5bf4ca",
+    "QA_Tool.html": "1a1fcc73ea0a8579ecb09f0e2164c1c7304af5e48bddcc90b697611bf5609afc",
+    "README.md": "b0259a6ee336271249742185f8562d9c39e4dfddccce9e3af66af09773fd88a4",
     "ai-provider.js": "55a0a7c09631705caed7f365c3af6008cfe10946d258ae208a2948935c44b94f",
     "background.js": "9aede7bc6e089b2443aad629c3a09a47f8cda25aa16786131e663d3bf945331f",
     "backup.js": "c8073a53dbf5449b88b9d562ab0ea47d5dc12e0dadb2fe2e712e2e617c5cc1fa",
@@ -15,12 +15,12 @@
     "display-size.js": "f76ac4c0c3e91d42b9729a933383e593189f614996c3b9680c30ca18725258fd",
     "manifest.json": "f1072bb678783a0389a37c554fbf053980a44669223d99c8b84adb097894c2e9",
     "qa-engine.js": "65909041ae44f71e95f9afeea66b02f377b724c561d18e9271270cc692048f37",
-    "qa-panel.js": "73790d9c2056964b12fcd85e2c3803432795f0b912a034bace252875fff7e23f",
-    "qa-styles.css": "3c144bd62a3932a1fc96ef89e75ca8215c56a97e08b7d7e3731761e52d942159",
+    "qa-panel.js": "2ec3cdfbb7a8bd2583f3bb6e68aac07575380face1a8642bc5284bdc58240ceb",
+    "qa-styles.css": "4a9c5a8c76de2815e3d20c0259a97556f46bbc2d6d800f829c5e6efe881893f1",
     "reader-wake.js": "926d68dc2a2c1c0be9c5177571490329fec23faa95850823de9920cde78e7901",
     "release.json": "bc48affc4fbc475737703835956408f89bc0a34b562f67d4040d08ac5a555878",
     "styles.css": "bd7d81391f66f8ce43c8845fc7510439f5b1f4d1d2ab63d6485c512702b203c0",
     "updater.js": "3d5cae81069562b388e24b3a1625ec9be69a871289a712c9f9f6e924d37f55c3"
   },
-  "sig": "fOs99k6L1JYK/Sj5Crs9KYNQtyPhls0UQHPmuHjrvqihwQekVK0vlXtgKWG0Yif/9lg+OLRSxtoM8yktcKQrBw=="
+  "sig": "suZqLTi4D2ULbABwwaMgJq7wU5lKjnLQ/VIGqE8oKnMsCl+NwRYfr7RrwN08f47GThCU/aOJZYCJZ2Y4uCYPwg=="
 }

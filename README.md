@@ -23,6 +23,14 @@ other's settings, cases or reviews.
   from the cases on screen, so the owner dropdown and the chips narrow what it picks from.
 * **Ctrl+A** still ticks every case on screen and **Esc** clears the ticks. **QA selected** and
   **30/60/90** pressed with nothing ticked say where the tick-boxes are.
+* **A smooth progress strip, as in the SOTI AI Analyser**, under the tabs in place of the
+  *Reading C017…* pill: *Reviewing 5 cases · 2 done — 48%* on a bar that keeps climbing between
+  cases — paced by how long a case takes on this laptop — and is pulled forward each time a case
+  is read or written. Stop is beside it; hovering shows the step it is on. The same strip shows
+  reading a case for the chat and writing the coaching summaries.
+* **No run log on the Reviews tab.** The timeline under the filters is gone; each review card
+  says how its case went, and the timeline itself is kept in the browser console for diagnosing
+  a run.
 
 ## What's new in 4.0.0
 
@@ -231,10 +239,12 @@ conversations and the stored case material are **kept**, so a case can still be 
 and re-reviewed without reading it again. To clear everything the tool has stored, including
 the conversations, use **Clear everything this tool has stored** in the ⋮ menu.
 
-The pill in the title bar shows progress from every tab and has a **Stop** button (the case
-being read finishes first). The **Reviews** tab carries a run log saying what was opened, what
-came back and what went wrong — so a run that quietly skipped four cases does not look like
-one that read them all.
+**The progress strip under the tabs** — the SOTI AI Analyser's — shows the run from every tab:
+*Reviewing 5 cases · 2 done — 48%*, on a bar that climbs continuously, with **Stop** beside it
+(the case being read finishes first). Hover it for the step it is on. When the run ends it reads
+*Done — 5 reviewed* (or how many failed) for a few seconds, then goes. Each review card says how
+its own case went; the step-by-step timeline of a run — what was opened, what came back, what
+went wrong — goes to the browser console (right-click the panel → **Inspect** → **Console**).
 
 Reading and writing are different kinds of slow, so they run as a pipeline: while case three
 is being written up, cases four and five are already loading. Reads run in parallel (set the
@@ -264,7 +274,7 @@ there — so the message is kept and counted, flagged as having no readable text
 write-up is told it may not quote or characterise what it cannot see. Dropping those items
 whole is what produced `read 0 post(s)` on a case made entirely of email.
 
-The run log prints both halves — `read 22 message(s) of 31 feed entries, 22 dated, 3 with
+The run's timeline prints both halves — `read 22 message(s) of 31 feed entries, 22 dated, 3 with
 no readable text` — because a forty-message case that lost thirty-five of them and a
 genuine five-message case are opposite conclusions that used to look identical. A feed
 that was still loading when the read stopped says so, in the log and in the write-up, and
@@ -350,7 +360,7 @@ on a transcript that was trimmed by six hundred thousand characters arrive looki
 identical — same headers, same confident prose, same score. So each ask records what
 `ai-provider.js` did with the prompt and what the relay reported back, and the card says it
 at the bottom: *the case went to Copilot as C01725481-case-material.txt — 412,830
-characters, complete*. The run log stays quiet unless something was actually lost, because
+characters, complete*. The run's timeline stays quiet unless something was actually lost, because
 a reassurance printed on all thirty cases of a run is one nobody reads. The case this
 catches is the important one: the site had no usable upload control, the relay quietly fell
 back to typing the case as text, and the answer came back looking fine.
@@ -464,7 +474,7 @@ it was based on. It is a calculation, not a second opinion on the prose, and you
 always be able to tell which you are looking at. What could not be measured is never held
 against the case: an unreadable feed caps the score rather than reducing it.
 
-`reviewed, but the write-up carried no score` is gone from the run log, because it can no
+`reviewed, but the write-up carried no score` is gone from the run's timeline, because it can no
 longer happen.
 
 ### 5. The sheets
@@ -669,7 +679,7 @@ gets a coaching row.
 | `ai-provider.js` | The Copilot relay. The analyser's v9.5.4, with a few QA Tool additions, each marked `(QA Tool addition)` |
 | `copilot-bridge.js` | Injected into the relay tab. The analyser's v9.5.4, with one QA Tool addition, marked the same way |
 | `styles.css` | The analyser's v9.5.4 stylesheet, unchanged, so the two tools look like siblings |
-| `qa-styles.css` | Only what QA adds — the QA button, the run pill, the chat, the sheets, the owner dropdown, the review folders, the update bar |
+| `qa-styles.css` | Only what QA adds — the QA button, the progress strip, the chat, the sheets, the owner dropdown, the review folders, the update bar |
 | `integrity.json` | The owner's signature over every code file — what *✓ Verified original* checks, and what decides whether the shared folder holds a genuine release |
 | `release.json` | The rest of the release (the icons), byte for byte, so a half-synced folder is never loaded. Covered by the signature |
 | `Install_QA_Tool.html` | The install guide for the team — sent to people, not put in the shared folder: a file changed there after signing marks every copy as modified. Put the shared folder's link in it first (search it for `PASTE-THE-QA-TOOL-FOLDER-LINK-HERE`) |

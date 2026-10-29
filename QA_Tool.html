@@ -64,17 +64,7 @@
                 </div>
             </div>
         </div>
-        <div class="tc">
-            <!-- WHAT THE RUN IS DOING, in the one place that is visible from every tab. A QA
-                 run takes minutes and the reviewer is entitled to walk away from it; a
-                 progress line that only exists on the tab they walked away from is a progress
-                 line nobody sees. Hidden until a run starts. -->
-            <div class="qa-runpill" id="runPill" style="display:none">
-                <span class="qa-runpill-dot" id="runPillDot"></span>
-                <span class="qa-runpill-txt" id="runPillTxt">—</span>
-                <button class="qa-runpill-stop" id="btnStopRun" type="button" title="Stop after the case being read now">Stop</button>
-            </div>
-        </div>
+        <div class="tc"></div>
         <div class="tr">
             <div class="more-menu">
                 <button class="btn" id="btnMore" title="More options" aria-label="More options">
@@ -130,6 +120,19 @@
         <div class="tab-item tab-stats" data-view="coaching" role="button" tabindex="0" title="One coaching row per agent, built out of their reviews">
             <span class="tab-name">Coaching</span>
         </div>
+    </div>
+
+    <!-- WHAT A RUN IS DOING — the analyser's progress strip (Global 1.3.2), under the tabs so it
+         is seen from every one of them. A QA run takes minutes and the reviewer is entitled to
+         walk away from it. A real bar under a real percentage that climbs continuously — see
+         createSmoothProgress in qa-panel.js — with Stop beside it. Hover it for the step it is
+         on. Hidden until a run starts; painted by runBarOpen / runBarClose. -->
+    <div class="prog-wrap qa-runbar" id="runBar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden>
+        <div class="qa-runbar-top">
+            <div class="prog-lbl"><span class="qa-runbar-txt" id="runBarLbl">Starting…</span></div>
+            <button class="prog-cancel" id="btnStopRun" type="button" title="Stop after the case being read now">Stop</button>
+        </div>
+        <div class="prog-bar"><div class="prog-fill" id="runBarFill"></div></div>
     </div>
 
     <!-- ==================================================================
@@ -397,10 +400,11 @@
                 <button class="btn qa-btn-danger" id="btnDeleteReviews" style="display:none">Delete all</button>
             </div>
         </div>
-        <!-- THE RUN LOG. What was opened, what came back, and what went wrong — in order.
-             A run that quietly skipped four cases and a run that reviewed them all look
-             identical from a results list; this is where the difference is visible. -->
-        <div class="qa-runlog" id="runLog" style="display:none"></div>
+        <!-- NO RUN LOG ON SCREEN. The line-by-line timeline that used to sit here went with
+             4.0.1: the progress strip under the tabs says how a run is going, each review card
+             says how its case went (an incomplete one is marked, and says why), and the
+             timeline itself still goes to the browser console for anyone diagnosing a run.
+             See logLine in qa-panel.js. -->
         <div class="oc-list" id="revList"></div>
     </div>
 

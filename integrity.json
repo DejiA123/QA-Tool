@@ -2,7 +2,7 @@
   "v": 1,
   "by": "Ayodeji Augustine",
   "build": "4.0.1",
-  "signedAt": "2026-10-29T15:19:54.535Z",
+  "signedAt": "2026-10-29T15:34:16.791Z",
   "files": {
     "QA_Tool.html": "1a1fcc73ea0a8579ecb09f0e2164c1c7304af5e48bddcc90b697611bf5609afc",
     "README.md": "b0259a6ee336271249742185f8562d9c39e4dfddccce9e3af66af09773fd88a4",
@@ -15,12 +15,12 @@
     "display-size.js": "f76ac4c0c3e91d42b9729a933383e593189f614996c3b9680c30ca18725258fd",
     "manifest.json": "f1072bb678783a0389a37c554fbf053980a44669223d99c8b84adb097894c2e9",
     "qa-engine.js": "65909041ae44f71e95f9afeea66b02f377b724c561d18e9271270cc692048f37",
-    "qa-panel.js": "2ec3cdfbb7a8bd2583f3bb6e68aac07575380face1a8642bc5284bdc58240ceb",
+    "qa-panel.js": "78b76444d8f55a1361d22ef5b6ba8a6297dfe11ca68b3c521e4d876cc4937c5b",
     "qa-styles.css": "4a9c5a8c76de2815e3d20c0259a97556f46bbc2d6d800f829c5e6efe881893f1",
     "reader-wake.js": "926d68dc2a2c1c0be9c5177571490329fec23faa95850823de9920cde78e7901",
     "release.json": "bc48affc4fbc475737703835956408f89bc0a34b562f67d4040d08ac5a555878",
     "styles.css": "bd7d81391f66f8ce43c8845fc7510439f5b1f4d1d2ab63d6485c512702b203c0",
     "updater.js": "3d5cae81069562b388e24b3a1625ec9be69a871289a712c9f9f6e924d37f55c3"
   },
-  "sig": "suZqLTi4D2ULbABwwaMgJq7wU5lKjnLQ/VIGqE8oKnMsCl+NwRYfr7RrwN08f47GThCU/aOJZYCJZ2Y4uCYPwg=="
+  "sig": "i/utB7C8/j89v/tVy7WMcbkvaxa43IYSuFnATK/8mOz/SrlFBPLR3nuMCUOkzMjpoCehUnP05mTFIHEcaux+Lg=="
 }

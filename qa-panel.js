@@ -3145,15 +3145,44 @@
     // A tab that was already open when the extension was installed or reloaded has NO content
     // script in it: Chrome injects those as a page loads. So a message to it goes nowhere and
     // the sync fails with "could not read that tab" about a page that was perfectly readable.
-    // Inject and ask again.
+    // Inject and ask again — but only when the reader really is missing; see injectReader.
     async function tell(tabId, message) {
         try {
             return await chrome.tabs.sendMessage(tabId, message);
         } catch (e) {
-            await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+            if (!(await injectReader(tabId))) throw e;
             await new Promise(r => setTimeout(r, 600));
             return await chrome.tabs.sendMessage(tabId, message);
         }
+    }
+
+    /* PUT THE READER IN A TAB THAT HAS NONE — and never a second copy beside one.
+     *
+     * content.js declares its names at the top level, so a second copy in the same page does
+     * not run at all: it dies on "Identifier 'boxIsClaimed' has already been declared" and the
+     * error lands on the extension's Errors page. That second copy came from here. A message
+     * goes unanswered for two reasons that look the same from this side — the reader is not in
+     * the tab, or it is but the page is still loading — and only the first is fixed by
+     * injecting. The second is the common one: Sync opens the list, waitForGrid asks it if it
+     * is ready before the page has finished, and Chrome injects its own copy moments later.
+     *
+     * So: a tab still loading is left alone (Chrome's copy is on its way; the caller asks again),
+     * and a loaded tab is asked whether the reader is there before one is put in. The question
+     * runs in the extension's own isolated world, the one content.js lives in. Returns whether
+     * it injected. */
+    async function injectReader(tabId) {
+        let tab = null;
+        try { tab = await chrome.tabs.get(tabId); } catch (e) { return false; }
+        if (!tab || tab.status !== 'complete') return false;
+        try {
+            const [probe] = await chrome.scripting.executeScript({
+                target: { tabId },
+                func: () => typeof scrapeSalesforceCaseList === 'function'
+            });
+            if (probe && probe.result) return false;
+        } catch (e) { return false; }   // a page this extension may not script at all
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+        return true;
     }
 
     async function waitForGrid(tabId, deadline) {

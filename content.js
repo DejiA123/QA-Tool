@@ -6965,8 +6965,1441 @@ async function writeEmailToCaseComposer(request) {
     return Object.assign(out, { scope: picked.scope, feedTab: (tab && tab.reason) || '' });
 }
 
+/* (QA Tool addition) THE SOTI AI ANALYSER v9.5.4's REPORT READER, CARRIED OVER WHOLE — from
+ * "A SALESFORCE REPORT AS A CASE LIST" to refreshSalesforceReport — so a saved list can be a
+ * Salesforce REPORT (Agent Cases) as well as a list view. The three handlers below that read
+ * a case list ask onSalesforceReportPage() first, exactly as the analyser's do. */
+// What the reader leans on from elsewhere in the analyser's file. The QA Tool sends no Stop
+// to a sync, so a report read always runs to its end.
+let scrapeStopAt = 0;
+const scrapeStopped = () => scrapeStopAt > 0;
+const CASE_NUMBER_WHOLE_RE = /^C?0\d{6,9}$/i;
+const CASE_PROSE_LABEL_RE = /subject|description|comment|analysis|summary|note/i;
+/* ----------------------------------------------------------------------------
+ * A SALESFORCE REPORT AS A CASE LIST (9.3.4 / Global 1.0.4)
+ * ----------------------------------------------------------------------------
+ * A saved list can be a REPORT as well as a list view, e.g.
+ *
+ *     https://<org>.lightning.force.com/lightning/r/Report/00O…/view?queryScope=userFolders
+ *
+ * and a report is a different page altogether. The Lightning page around it is only a shell:
+ * the report is drawn inside an <iframe> (reports/lightningReportApp.app?reportId=…), as a grid
+ * of report rows — no data-row-key-value, no data-label, no list-view header. Every selector the
+ * list view uses matched nothing, so the sync waited out its time, read zero rows and ended with
+ * "No case rows found".
+ *
+ * The frame is on the SAME origin as the page, so it is read from here through contentDocument
+ * rather than by injecting a second copy of this file into it. Columns are found by their HEADING,
+ * so the report can carry its columns in any order and under the labels a report gives them
+ * ("Case Priority", "Case Owner", "Account Name"); the case number is the one column it must
+ * have. A row's record id comes from its Case Number link and is normalised to the 18-character
+ * form a list view uses, so a case already synced from a list view is recognised as the same
+ * case instead of being added twice.
+ *
+ * THE LIGHTNING REPORT GRID IS VIRTUAL IN BOTH DIRECTIONS. It draws only the rows in view (about
+ * twenty of an 882-row report) and only the columns that fit across the screen (ten or eleven of
+ * sixteen). Every cell carries its own position — aria-colindex for the column, data-row-index for
+ * the row — so the grid is read as a SHEET: each look adds the cells on screen to it, the box is
+ * moved on, and the read is finished when every row index of the report has been seen. Down the
+ * report with the last row drawn brought to the top each time (so no row can be stepped over, and
+ * a gap is noticed and gone back for), then across to the columns off to the right and down again.
+ * Each move waits for the grid to redraw — a few milliseconds — never for a fixed pause.
+ *
+ * ITS SPINNERS ARE NOT ALL SPINNERS. The table lives permanently inside .table-spinner-container,
+ * and the Chatter panel beside it keeps its own "Loading…" spinner on screen. Counting either as
+ * "still loading" ran every wait of the sync to its limit — the crawl the first version had.
+ *
+ * EVERY COLUMN IS KEPT. Besides the fields the queue knows by name (status, owner, age…), each
+ * case carries sfFields — every column of the report under the report's own heading — which the
+ * panel hands to the AI with the case.
+ *
+ * The answer has the shape scrapeSalesforceCaseList returns — the panel cannot tell, and does not
+ * need to know, which of the two kinds of list it synced.
+ * -------------------------------------------------------------------------- */
+const SF_REPORT_ID_RE = /^00O[a-zA-Z0-9]{12}(?:[a-zA-Z0-9]{3})?$/;
+
+// The report this page is showing, from its address — '' when the page is not a report.
+function salesforceReportIdOfPage() {
+    const path = location.pathname || '';
+    let m = path.match(/\/lightning\/r\/(?:Report\/)?(00O[a-zA-Z0-9]{12}(?:[a-zA-Z0-9]{3})?)(?:\/|$)/);
+    if (m) return m[1];
+    if (/\/reports\/lightningReportApp\.app/i.test(path)) {
+        const id = new URLSearchParams(location.search).get('reportId') || '';
+        if (SF_REPORT_ID_RE.test(id)) return id;
+    }
+    m = path.match(/^\/(00O[a-zA-Z0-9]{12}(?:[a-zA-Z0-9]{3})?)(?:\/|$)/);   // a Classic report
+    return m ? m[1] : '';
+}
+
+function salesforceReportFrames() {
+    return [...document.querySelectorAll('iframe')].filter((f) => {
+        const src = f.getAttribute('src') || '';
+        return /lightningReportApp\.app|\/reports\/|[?&]reportId=00O/i.test(src)
+            || (f.classList && f.classList.contains('reportsReportBuilder'));
+    });
+}
+
+/* THE DOCUMENT THE REPORT ROWS ARE IN. In the console every report tab the engineer has open
+ * keeps its own frame on the page, so the one for THIS report — and on screen — is preferred
+ * over the others. null while the frame has not been created yet. */
+function salesforceReportDocument() {
+    const id = salesforceReportIdOfPage();
+    const id15 = id ? id.slice(0, 15) : '';
+    let best = null, bestScore = -1;
+    for (const f of salesforceReportFrames()) {
+        let doc = null;
+        try { doc = f.contentDocument; } catch (e) { doc = null; }   // another origin — not ours to read
+        if (!doc || !doc.documentElement) continue;
+        const rid = ((f.getAttribute('src') || '').match(/[?&]reportId=([a-zA-Z0-9]{15,18})/) || [])[1] || '';
+        let score = 0;
+        if (id15 && rid && rid.slice(0, 15) === id15) score += 4;
+        if (isVisible(f)) score += 2;
+        if (score > bestScore) { best = doc; bestScore = score; }
+    }
+    if (best) return best;
+    // The viewer IS the page: lightningReportApp.app opened on its own, or a Classic report.
+    if (id && !/\/lightning\//i.test(location.pathname)) return document;
+    return null;
+}
+
+/* IS THIS TAB A REPORT? By its address, or — in the console, where the address can lag behind
+ * the tab on screen — by a report frame showing with no list-view grid beside it. */
+function onSalesforceReportPage() {
+    if (salesforceReportIdOfPage()) return true;
+    if (document.querySelector(CASE_ROW_SELECTOR)) return false;
+    return salesforceReportFrames().some(f => isVisible(f));
+}
+
+// Style of an element in the report's frame, asked of the frame's own window.
+function reportStyle(el) {
+    const view = (el && el.ownerDocument && el.ownerDocument.defaultView) || window;
+    return view.getComputedStyle(el);
+}
+
+// Drawn and not hidden by anything above it.
+function reportShown(el) {
+    if (!el || !el.isConnected) return false;
+    if (typeof el.checkVisibility === 'function') {
+        return el.checkVisibility({ opacityProperty: true, visibilityProperty: true });
+    }
+    if (!el.getClientRects().length) return false;
+    const cs = reportStyle(el);
+    return cs.visibility !== 'hidden' && cs.opacity !== '0';
+}
+
+// Heading text as the report shows it: sort markers and the column menu's words taken out.
+const REPORT_HEADER_NOISE_RE = /\b(?:sorted\s+(?:ascending|descending)|sort\s+(?:ascending|descending)|sort(?:ed)?\s+by|show\s+(?:column\s+)?actions|column\s+actions|click\s+to\s+sort)\b/gi;
+
+function reportHeading(raw) {
+    let t = String(raw || '')
+        .replace(/[↑↓▲▼⬆⬇]/g, ' ')
+        .replace(REPORT_HEADER_NOISE_RE, ' ')
+        .replace(/\u00a0/g, ' ')
+        .replace(/\s+/g, ' ')
+        .replace(/^[\s:|*\-–—]+|[\s:|*\-–—]+$/g, '');
+    // The Lightning viewer's title is the field's whole path — "Case: Custom Info : Entitlement
+    // Name". The heading on screen is its last part.
+    if (/\s:\s/.test(t)) t = t.split(/\s:\s/).pop().trim();
+    return t;
+}
+
+// …and as a label to compare.
+function reportLabel(raw) {
+    return reportHeading(raw).toLowerCase();
+}
+
+/* A COLUMN'S HEADING. The words on screen first: in the Lightning viewer the heading's title is
+ * the field's full path and its text is what the report calls the column. */
+function reportHeaderDisplay(cell) {
+    if (!cell) return '';
+    const inner = cell.querySelector('.lightning-table-cell-measure-header-value, [class*="header-value"], [class*="headerValue"]');
+    const tip = cell.querySelector('[data-tooltip]');
+    const trunc = cell.querySelector('.slds-truncate[title], .slds-truncate');
+    const tries = [
+        inner && inner.textContent,
+        tip && tip.getAttribute('data-tooltip'),
+        trunc && (trunc.getAttribute('title') || trunc.textContent),
+        inner && inner.getAttribute('title'),
+        cell.getAttribute('title'),
+        cell.getAttribute('aria-label')
+    ];
+    for (const v of tries) {
+        if (/[<>]/.test(String(v || ''))) continue;
+        const t = reportHeading(v);
+        if (t) return t;
+    }
+    return reportHeading(listCellValue(cell, cleanCellText));
+}
+
+function reportHeaderText(cell) {
+    return reportHeaderDisplay(cell).toLowerCase();
+}
+
+/* ONE ROW AS A FULL LINE OF CELLS. A summary report spans a grouping value down the rows of its
+ * group (rowspan) and a heading across columns (colspan); laid out by hand here, every row comes
+ * back with one cell per column, the spanned cell repeated where it applies, so column N of
+ * every row is column N of the header. `pending` carries the spans from row to row. */
+function reportRowCells(row, pending) {
+    const cells = row.cells ? [...row.cells]
+        : [...row.querySelectorAll('[role="gridcell"], [role="columnheader"], [role="rowheader"]')]
+            .filter(c => c.closest('[role="row"]') === row);
+    const out = [];
+    let col = 0;
+    let i = 0;
+    for (;;) {
+        const span = pending[col];
+        if (span && span.left > 0) {
+            out[col] = span.cell;
+            span.left--;
+            col++;
+            continue;
+        }
+        if (i >= cells.length) break;
+        const c = cells[i++];
+        const cs = Math.min(Math.max(parseInt(c.getAttribute('colspan'), 10) || 1, 1), 50);
+        const rs = Math.min(Math.max(parseInt(c.getAttribute('rowspan'), 10) || 1, 1), 5000);
+        for (let k = 0; k < cs; k++) {
+            out[col + k] = c;
+            pending[col + k] = rs > 1 ? { cell: c, left: rs - 1 } : null;
+        }
+        col += cs;
+    }
+    return out;
+}
+
+const isHeaderCell = (c) => !!c && (c.tagName === 'TH' || c.getAttribute('role') === 'columnheader');
+
+/* EVERY TABLE IN THE REPORT, as { header, display, rows }. A grid whose header is drawn as a
+ * separate table (a sticky header) comes back with header null, and readReportGrid pairs it up. */
+function reportGrids(rdoc) {
+    let tables = [...rdoc.querySelectorAll('table')];
+    let aria = [...rdoc.querySelectorAll('[role="grid"], [role="treegrid"]')]
+        .filter(g => g.tagName !== 'TABLE' && !g.querySelector('table'));
+    if (!tables.length && !aria.length) {
+        tables = findInShadows('table', rdoc, false);
+        aria = findInShadows('[role="grid"], [role="treegrid"]', rdoc, false)
+            .filter(g => g.tagName !== 'TABLE' && !g.querySelector('table'));
+    }
+    const grids = [];
+    const build = (el, allRows, isHeadRow) => {
+        let header = null;
+        let display = null;
+        const body = [];
+        const pending = [];
+        for (const row of allRows) {
+            if (isHeadRow(row)) {
+                const cells = reportRowCells(row, []);
+                if (cells.length >= 2) {
+                    display = cells.map(c => reportHeaderDisplay(c));
+                    header = display.map(d => d.toLowerCase());
+                }
+                continue;
+            }
+            const cells = reportRowCells(row, pending);
+            if (!cells.length || cells.every(isHeaderCell)) continue;
+            body.push({ row, cells });
+        }
+        grids.push({ el, header, display, rows: body });
+    };
+    for (const t of tables) {
+        if (t.querySelector('table')) continue;          // a layout table around the real one
+        const rows = [...(t.rows || [])];
+        if (!rows.length) continue;
+        build(t, rows, (row) => {
+            const sect = row.parentElement && row.parentElement.tagName;
+            if (sect === 'THEAD') return true;
+            if (row.classList && row.classList.contains('data-grid-header-row')) return true;
+            // A table with no <thead> whose first row is all headings.
+            return row === rows[0] && sect !== 'TFOOT' && row.cells.length >= 2 && [...row.cells].every(isHeaderCell);
+        });
+    }
+    for (const g of aria) {
+        const rows = [...g.querySelectorAll('[role="row"]')];
+        if (!rows.length) continue;
+        build(g, rows, (row) => {
+            const cells = [...row.querySelectorAll('[role="columnheader"]')];
+            return cells.length >= 2 && !row.querySelector('[role="gridcell"]');
+        });
+    }
+    return grids;
+}
+
+/* Which column holds a field — the first of its candidate names the report actually has.
+ * "Account: Account Name" and "Case: Custom Info : Entitlement Name" answer to their last part;
+ * the report-type prefix is ignored. `header` may have holes (a sheet keyed by column number). */
+function reportColumn(header, names) {
+    if (!header) return -1;
+    const forms = [];
+    for (let i = 0; i < header.length; i++) {
+        const s = String(header[i] || '').toLowerCase();
+        forms[i] = s ? [s, s.replace(/^[^:]{1,40}:\s*/, ''), s.split(':').pop().trim()] : null;
+    }
+    for (const name of names) {
+        const want = name.toLowerCase();
+        for (let f = 0; f < 3; f++) {
+            for (let i = 0; i < forms.length; i++) {
+                if (forms[i] && forms[i][f] === want) return i;
+            }
+        }
+    }
+    return -1;
+}
+
+const REPORT_CASE_NUMBER_HEADERS = ['case number', 'case: case number', 'case #', 'case no.', 'case no', 'case num', 'case'];
+
+// "Case Owner's Manager", however a report or list view spells it. Shared by both readers.
+const OWNER_MANAGER_HEADERS = ["Case Owner's Manager", 'Case Owner’s Manager', 'Case Owners Manager', 'Case Owner Manager',
+                               "Owner's Manager", 'Owner’s Manager', 'Owner Manager', 'Team Lead'];
+// "Temporary Case Owner", likewise.
+const TEMP_OWNER_HEADERS = ['Temporary Case Owner', 'Temporary Case Owner Name', 'Temp Case Owner', 'Temporary Owner',
+                            'Temp Owner', 'Case: Temporary Case Owner'];
+
+const REPORT_FIELDS = {
+    subject:        ['Subject', 'Case Subject'],
+    status:         ['Status', 'Case Status'],
+    priority:       ['Case Priority', 'Priority'],
+    account:        ['Account Name', 'Account', 'Account: Account Name'],
+    contact:        ['Contact Name', 'Contact', 'Contact: Full Name', 'Contact Full Name'],
+    jira:           ['JIRA Number', 'Jira Number', 'JIRA', 'Jira'],
+    entitlement:    ['Entitlement Name', 'Entitlement', 'Entitlement: Name'],
+    description:    ['Description', 'Case Description'],
+    analysis:       ['Case Analysis Comments'],
+    ageDays:        ['Case Age (in days)', 'Case Age (Days)', 'Age (in days)', 'Age (Days)', 'Case Age', 'Age'],
+    opened:         ['Date/Time Opened', 'Opened Date', 'Date Opened', 'Created Date'],
+    modified:       ['Last Modified Date', 'Last Modified', 'Case Last Modified Date'],
+    owner:          ['Case Owner', 'Case Owner: Full Name', 'Owner', 'Owner Full Name', 'Owner Name',
+                     'Assigned To', 'Case Owner Alias', 'Owner Alias', 'Case Owner: Alias'],
+    lastModifiedBy: ['Last Modified By Alias', 'Last Modified By', 'Last Modified By: Alias', 'Last Modified By: Full Name'],
+    licenseType:    ['License Type', 'Licence Type', 'License Model'],
+    // The Agent Cases report's "Case Owner's Manager" (Case.Team_Lead__c) — the queue's Manager
+    // column. Both apostrophes: Salesforce prints the straight one, a pasted label the curly one.
+    ownerManager:   OWNER_MANAGER_HEADERS,
+    tempOwner:      TEMP_OWNER_HEADERS
+};
+const REPORT_ICON_FIELDS = ['Last Completed Activity Icon', 'Last Completed Activity', 'Activity Icon', 'Case Health', 'Health'];
+
+// A case record id in a link: /lightning/r/Case/500…/view, /lightning/r/500…/view or /500….
+const CASE_ID_IN_HREF_RE = /(?:^|[/=])(500[a-zA-Z0-9]{12}(?:[a-zA-Z0-9]{3})?)(?=$|[/?&#])/;
+
+/* THE 18-CHARACTER FORM OF A RECORD ID. A report's links can carry the 15-character id while a
+ * list view keys its rows on the 18-character one; the panel matches cases on the id first, so
+ * without this one case synced from both would be two rows. Salesforce's own checksum. */
+function salesforceId18(id) {
+    const s = String(id || '');
+    if (s.length !== 15) return s;
+    const map = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ012345';
+    let suffix = '';
+    for (let i = 0; i < 3; i++) {
+        let flags = 0;
+        for (let j = 0; j < 5; j++) {
+            const ch = s.charAt(i * 5 + j);
+            if (ch >= 'A' && ch <= 'Z') flags += 1 << j;
+        }
+        suffix += map.charAt(flags);
+    }
+    return s + suffix;
+}
+
+function caseIdInElement(el) {
+    if (!el) return '';
+    const own = el.getAttribute && (el.getAttribute('data-recordid') || el.getAttribute('data-record-id') || '');
+    if (/^500[a-zA-Z0-9]{12}(?:[a-zA-Z0-9]{3})?$/.test(own)) return own;
+    for (const a of el.querySelectorAll('a[href], [data-recordid], [data-record-id]')) {
+        const rid = a.getAttribute('data-recordid') || a.getAttribute('data-record-id') || '';
+        if (/^500[a-zA-Z0-9]{12}(?:[a-zA-Z0-9]{3})?$/.test(rid)) return rid;
+        const m = (a.getAttribute('href') || '').match(CASE_ID_IN_HREF_RE);
+        if (m) return m[1];
+    }
+    return '';
+}
+
+// A case number standing on its own in a cell — the cell's value, or one element in it.
+function wholeCaseNumberIn(cell) {
+    if (!cell) return '';
+    const v = cleanCellText(listCellValue(cell, cleanCellText));
+    if (CASE_NUMBER_WHOLE_RE.test(v)) return v;
+    for (const el of [cell, ...cell.querySelectorAll('a, span, div')]) {
+        const titled = cleanCellText((el.getAttribute && el.getAttribute('title')) || '');
+        if (CASE_NUMBER_WHOLE_RE.test(titled)) return titled;
+        const text = cleanCellText(el.textContent || '');
+        if (CASE_NUMBER_WHOLE_RE.test(text)) return text;
+    }
+    return '';
+}
+
+function reportIconValue(cell) {
+    if (!cell) return '';
+    for (const img of cell.querySelectorAll('img')) {
+        const named = normaliseActivityIcon(img.getAttribute('alt')) || normaliseActivityIcon(img.getAttribute('title'));
+        if (named) return named;
+    }
+    return normaliseActivityIcon(cleanCellText(cell.textContent || ''));
+}
+
+// "New (4)" or "Status: New (4)" — a grouping value with its label and its count — as "New".
+function reportGroupValue(v, label) {
+    let out = String(v || '');
+    const bare = String(label || '').toLowerCase().replace(/^[^:]{1,40}:\s*/, '');
+    for (const l of [String(label || '').toLowerCase(), bare]) {
+        if (l && out.toLowerCase().startsWith(l + ':')) { out = out.slice(l.length + 1).trim(); break; }
+    }
+    return out.replace(/\s*\(\s*\d[\d,.\s]*\)$/, '').trim();
+}
+
+/* ONE CELL'S VALUE. A summary report's grouping cell — the one spanning its group's rows — reads
+ * "New (4)" or "Status: New (4)"; the row's status is "New", so the label and the count go. A
+ * picture (the activity icon) is read by its alt text. */
+function reportCellValue(cell, label) {
+    let v = listCellValue(cell, cleanCellText);
+    if (!v && cell) {
+        const img = cell.querySelector('img[alt], img[title]');
+        if (img) v = cleanCellText(img.getAttribute('alt') || img.getAttribute('title') || '');
+    }
+    if (!v || !cell) return v;
+    const grouping = cell.tagName === 'TH' || cell.getAttribute('role') === 'rowheader'
+        || (parseInt(cell.getAttribute('rowspan'), 10) || 1) > 1;
+    return grouping ? reportGroupValue(v, label) : v;
+}
+
+/* EVERY COLUMN, UNDER THE REPORT'S OWN HEADINGS — what the AI is given with the case. Two columns
+ * the report gives the same heading (a Name from two objects) are told apart by the object. */
+function reportFieldNames(columns) {
+    const names = new Map();
+    const used = new Set();
+    for (const { key, label, path } of columns) {
+        let name = String(label || '').trim();
+        if (!name) continue;                     // the row-number column
+        if (used.has(name.toLowerCase())) {
+            const from = String(path || '').split(/\s*:\s*/)[0].trim();
+            name = from && from.toLowerCase() !== name.toLowerCase() ? `${name} (${from})` : `${name} (${key})`;
+        }
+        used.add(name.toLowerCase());
+        names.set(key, name);
+    }
+    return names;
+}
+
+/* READ THE REPORT AS IT IS ON THE PAGE NOW — any report table. Returns the cases in report order,
+ * plus the rows that link to a case but whose number could not be read (the panel says so and
+ * logs them). The Lightning grid is read by readWaveReport instead; this is everything else. */
+function readReportGrid(rdoc) {
+    const grids = reportGrids(rdoc);
+    const headers = grids.filter(g => g.header).map(g => ({ header: g.header, display: g.display }));
+    let best = null;
+    for (const g of grids) {
+        if (!g.rows.length) continue;
+        let header = g.header;
+        let display = g.display;
+        if (!header) {
+            // A sticky header drawn as its own table: the header as wide as these rows, and the
+            // one with a case number column if there is a choice.
+            const width = Math.max(...g.rows.map(r => r.cells.length));
+            const same = headers.filter(h => h.header.length === width);
+            const pick = same.find(h => reportColumn(h.header, REPORT_CASE_NUMBER_HEADERS) >= 0) || same[0] || null;
+            header = pick ? pick.header : null;
+            display = pick ? pick.display : null;
+        }
+        let caseCol = reportColumn(header, REPORT_CASE_NUMBER_HEADERS);
+        if (caseCol < 0) {
+            // No column called that: the one whose cells are case numbers.
+            const hits = new Map();
+            for (const r of g.rows.slice(0, 200)) {
+                r.cells.forEach((c, i) => {
+                    if (c && CASE_NUMBER_WHOLE_RE.test(cleanCellText(c.textContent || ''))) hits.set(i, (hits.get(i) || 0) + 1);
+                });
+            }
+            let top = 0;
+            for (const [i, n] of hits) if (n > top) { top = n; caseCol = i; }
+        }
+        const prose = new Set();
+        (header || []).forEach((h, i) => { if (CASE_PROSE_LABEL_RE.test(h)) prose.add(i); });
+        let score = 0;
+        for (const r of g.rows) {
+            if ((caseCol >= 0 && wholeCaseNumberIn(r.cells[caseCol])) || caseIdInElement(r.row)) score++;
+        }
+        if (!best || score > best.score) best = { grid: g, header, display, caseCol, prose, score };
+    }
+    if (!best || !best.score) return { cases: [], unread: [], rowsSeen: 0, gridEl: null, columns: [] };
+
+    const { grid, header, display, caseCol, prose } = best;
+    const cols = {};
+    for (const [key, names] of Object.entries(REPORT_FIELDS)) cols[key] = reportColumn(header, names);
+    const iconCol = reportColumn(header, REPORT_ICON_FIELDS);
+    const fieldNames = reportFieldNames((display || []).map((label, key) => ({ key, label, path: '' })));
+
+    const cases = [];
+    const unread = [];
+    let rowsSeen = 0;
+    for (const { row, cells } of grid.rows) {
+        const caseCell = caseCol >= 0 ? cells[caseCol] : null;
+        let caseNum = wholeCaseNumberIn(caseCell);
+        let recordId = caseIdInElement(caseCell);
+        if (!caseNum) {
+            for (let i = 0; i < cells.length && !caseNum; i++) {
+                if (i === caseCol || prose.has(i)) continue;
+                caseNum = wholeCaseNumberIn(cells[i]);
+            }
+        }
+        if (!recordId && caseNum) {
+            // The row's case link, whichever cell it is in — only a link whose text IS the number.
+            for (const a of row.querySelectorAll('a[href]')) {
+                const m = (a.getAttribute('href') || '').match(CASE_ID_IN_HREF_RE);
+                if (m && cleanCellText(a.getAttribute('title') || a.textContent || '') === caseNum) { recordId = m[1]; break; }
+            }
+        }
+        if (!caseNum && !recordId) continue;             // a grouping, subtotal or total row
+        rowsSeen++;
+        recordId = salesforceId18(recordId);
+        if (!caseNum) {
+            unread.push({ recordId, cells: cells.length,
+                cols: cells.slice(0, 14).map((c, i) => ({ tag: c ? c.tagName.toLowerCase() : '', label: (header && header[i]) || '',
+                    text: c ? cleanCellText(c.textContent || '').slice(0, 30) : '' })) });
+            continue;
+        }
+        const rec = { caseNum };
+        if (recordId) {
+            rec.recordId = recordId;
+            rec.url = `${location.origin}/lightning/r/Case/${recordId}/view`;
+        }
+        /* A COLUMN THE REPORT DOES NOT CARRY IS LEFT OUT, not sent as ''. The panel lays a sync
+         * over what it already knows, so an empty value would blank a field a list view filled
+         * (the tier, the JIRA, the owner) only because this report has no such column. */
+        for (const [key, at] of Object.entries(cols)) {
+            if (at < 0) continue;
+            rec[key] = reportCellValue(cells[at], header[at]);
+        }
+        if (iconCol >= 0) rec.activityIcon = reportIconValue(cells[iconCol]);
+        if (fieldNames.size) {
+            rec.sfFields = {};
+            for (const [i, name] of fieldNames) rec.sfFields[name] = cells[i] ? reportCellValue(cells[i], header[i]) : '';
+        }
+        cases.push(rec);
+    }
+    return { cases, unread, rowsSeen, gridEl: grid.el, columns: [...fieldNames.values()] };
+}
+
+// The report's own title, for the panel's messages.
+function reportTitle(rdoc) {
+    const el = rdoc && rdoc.querySelector('.report-header .slds-page-header__title, .reportHeader h1, '
+        + '[class*="report-header"] h1, .slds-page-header__title, h1');
+    const t = el ? cleanCellText(el.getAttribute('title') || el.textContent || '') : '';
+    if (t && t.length < 120) return t;
+    return cleanCellText(String(document.title || '').split('|')[0]);
+}
+
+/* HOW MANY ROWS THE REPORT SAYS IT HAS — "Total Records 882" in its header. The Lightning
+ * viewer's metrics strip first; otherwise read off the text, whatever element draws it: the
+ * number may be in a sibling or on the line below the words. null when the report does not say. */
+function reportDeclaredTotal(rdoc) {
+    const body = rdoc && rdoc.body;
+    if (!body) return null;
+    for (const title of rdoc.querySelectorAll('.metricsTitle')) {
+        if (!/^\s*total\s+records\s*$/i.test(title.getAttribute('title') || title.textContent || '')) continue;
+        const value = title.parentElement && title.parentElement.querySelector('.metricsValue');
+        const n = value ? parseInt(String(value.textContent || '').replace(/\D/g, ''), 10) : NaN;
+        if (Number.isFinite(n)) return n;
+    }
+    const walker = rdoc.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+    let node;
+    let looked = 0;
+    while ((node = walker.nextNode()) && looked < 20) {
+        if (!/total\s+records|record\s+count/i.test(node.nodeValue || '')) continue;
+        looked++;
+        let el = node.parentElement;
+        for (let i = 0; i < 4 && el; i++, el = el.parentElement) {
+            const t = (el.textContent || '').replace(/\s+/g, ' ');
+            if (t.length > 240) break;
+            const m = t.match(/(?:total\s+records|record\s+count)\s*:?\s*(\d[\d.,\u00a0 ]*)/i);
+            if (m) {
+                const n = parseInt(m[1].replace(/\D/g, ''), 10);
+                if (Number.isFinite(n)) return n;
+            }
+        }
+    }
+    return null;
+}
+
+/* A SPINNER ON SCREEN IN THE REPORT — a real one. Left out: the Chatter and filter panels beside
+ * the report (Chatter keeps "Loading…" up for as long as the page is open), anything in a button,
+ * and a box merely NAMED for a spinner that holds the table itself (.table-spinner-container
+ * wraps the report grid permanently). */
+const REPORT_SPINNER_SELECTOR = '.slds-spinner, lightning-spinner, .forceInlineSpinner, [role="progressbar"], '
+    + '[class*="spinner" i]:not([class*="container" i]):not([class*="wrapper" i])';
+const REPORT_SPINNER_IGNORE = '.widget-container_reportChatter, .report-chatter-feed-panel, .chatter-loading, '
+    + '[class*="chatter" i], .widget-container_queryBuilder, .query-builder-widget, #reportFilterPanel, '
+    + '.filterPanel, button, [role="button"]';
+
+function reportSpinnerShowing(rdoc) {
+    if (!rdoc) return false;
+    const view = rdoc.defaultView || window;
+    const vw = view.innerWidth || 0;
+    const vh = view.innerHeight || 0;
+    for (const el of rdoc.querySelectorAll(REPORT_SPINNER_SELECTOR)) {
+        if (el.closest(REPORT_SPINNER_IGNORE)) continue;
+        if (el.querySelector('table, [role="grid"], [role="treegrid"]')) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 8 || r.height < 8) continue;
+        if (vw && vh && (r.bottom <= 0 || r.right <= 0 || r.top >= vh || r.left >= vw)) continue;   // off screen
+        if (!reportShown(el)) continue;
+        return true;
+    }
+    return false;
+}
+
+/* IS THE REPORT STILL LOADING? No frame yet, or a spinner up. One guard: rows on the page that
+ * have not changed for ten seconds under a "spinner" are a report that has finished — a
+ * spinner some other part of the page never takes down must not hold the sync for its whole
+ * budget again. */
+let reportBusySince = 0;
+let reportBusySig = '';
+
+function reportFirstCaseLink(rdoc) {
+    return rdoc ? rdoc.querySelector('a[data-object-api-name="Case"], a[href*="/500"], a[href*="=500"]') : null;
+}
+
+function reportBusy(rdoc) {
+    if (!rdoc) return true;
+    if (!reportSpinnerShowing(rdoc)) { reportBusySince = 0; reportBusySig = ''; return false; }
+    const rows = reportCaseRowCount(rdoc);
+    if (!rows) return true;                      // nothing drawn yet — genuinely loading
+    const first = reportFirstCaseLink(rdoc);
+    const sig = rows + '|' + (first ? cleanCellText(first.textContent || '') : '');
+    if (sig !== reportBusySig || !reportBusySince) { reportBusySig = sig; reportBusySince = Date.now(); return true; }
+    return Date.now() - reportBusySince < 10000;
+}
+
+// Kept for the callers that only ask "is it fetching?".
+function reportIsFetching(rdoc) {
+    return reportBusy(rdoc);
+}
+
+/* Cheap: how many rows of the report are cases, for the "is it on screen yet?" poll. In the
+ * Lightning grid, its data rows — whichever columns happen to be drawn: a report left scrolled
+ * across has no Case Number column on the page at all, and counting case links there read a
+ * finished report as one still loading. The grand total row is not a case. */
+function reportCaseRowCount(rdoc) {
+    if (!rdoc) return 0;
+    const wave = waveFullTable(rdoc);
+    if (wave) {
+        let rows = 0;
+        for (const tr of wave.rows) {
+            if (waveIsSpacer(tr) || waveIsHeaderRow(tr)) continue;
+            if (!tr.querySelector('[data-row-index]')) continue;
+            if (tr.querySelector('.lightning-table-grand-total-cell')) continue;
+            rows++;
+        }
+        if (rows) return rows;
+    }
+    let n = 0;
+    for (const row of rdoc.querySelectorAll('tr, [role="row"]')) {
+        if (row.querySelector('tr, [role="row"]')) continue;
+        if (row.querySelector('a[href*="/500"], a[href*="=500"], a[data-object-api-name="Case"], [data-recordid^="500"]')) { n++; continue; }
+        const cells = row.cells ? row.cells : row.children;
+        for (const c of cells) {
+            if (CASE_NUMBER_WHOLE_RE.test(cleanCellText(c.textContent || ''))) { n++; break; }
+        }
+    }
+    return n;
+}
+
+function reportScrollable(el, rdoc, axis = 'y') {
+    if (!el) return false;
+    const page = rdoc.scrollingElement || rdoc.documentElement;
+    const room = axis === 'y' ? el.scrollHeight > el.clientHeight + 4 : el.scrollWidth > el.clientWidth + 4;
+    if (el === page || el === rdoc.documentElement || el === rdoc.body) return room;
+    const o = axis === 'y' ? reportStyle(el).overflowY : reportStyle(el).overflowX;
+    return (o === 'auto' || o === 'scroll' || o === 'overlay') && room;
+}
+
+// What scrolls the report's rows: the grid's own box, and the frame's page if that scrolls too.
+function reportScrollers(rdoc, gridEl) {
+    const out = [];
+    for (let el = gridEl ? gridEl.parentElement : null; el && el !== rdoc.documentElement; el = el.parentElement) {
+        if (reportScrollable(el, rdoc)) out.push(el);
+    }
+    const page = rdoc.scrollingElement || rdoc.documentElement;
+    if (page && !out.includes(page) && reportScrollable(page, rdoc)) out.push(page);
+    return out;
+}
+
+// The one box that scrolls the grid down, and the one that scrolls it across (often the same).
+function reportScrollBoxes(rdoc, gridEl) {
+    let v = null, h = null;
+    for (let el = gridEl ? gridEl.parentElement : null; el && el !== rdoc.documentElement && el !== rdoc.body; el = el.parentElement) {
+        if (!v && reportScrollable(el, rdoc, 'y')) v = el;
+        if (!h && reportScrollable(el, rdoc, 'x')) h = el;
+        if (v && h) break;
+    }
+    const page = rdoc.scrollingElement || rdoc.documentElement;
+    if (!v && page && reportScrollable(page, rdoc, 'y')) v = page;
+    if (!h && page && reportScrollable(page, rdoc, 'x')) h = page;
+    return { v, h };
+}
+
+// Where an element sits in a scroll box's content, in pixels from its top.
+function reportOffsetIn(el, box, rdoc) {
+    const page = rdoc.scrollingElement || rdoc.documentElement;
+    const top = el.getBoundingClientRect().top;
+    if (box === page) return top + box.scrollTop;
+    return top - box.getBoundingClientRect().top - box.clientTop + box.scrollTop;
+}
+
+async function waitWhileReportFetching(maxMs) {
+    const until = Date.now() + maxMs;
+    while (Date.now() < until && !scrapeStopped()) {
+        if (!reportBusy(salesforceReportDocument())) return true;
+        await sleep(80);
+    }
+    return !reportBusy(salesforceReportDocument());
+}
+
+/* WAIT FOR THE REPORT TO BE THERE — the frame created, its rows drawn and its spinner gone — or
+ * for it to say it has no records. The twin of waitForCaseListRows. Polls fast: the report is
+ * usually already on screen, and every 250ms of nothing here is time the engineer watches. */
+async function waitForReportRows(maxMs) {
+    const started = Date.now();
+    const until = started + Math.max(0, maxMs || 0);
+    let sawRows = false;
+    while (!scrapeStopped()) {
+        const rdoc = salesforceReportDocument();
+        const rows = reportCaseRowCount(rdoc);
+        const busy = reportBusy(rdoc);
+        if (rows > 0 && !busy) { sawRows = true; break; }
+        if (rdoc && !rows && !busy && reportDeclaredTotal(rdoc) === 0) {
+            return { rows: 0, empty: true, waitedMs: Date.now() - started, timedOut: false };
+        }
+        if (Date.now() >= until) break;
+        await sleep(100);
+    }
+    if (sawRows) await sleep(120);
+    return { rows: reportCaseRowCount(salesforceReportDocument()), empty: false, waitedMs: Date.now() - started, timedOut: !sawRows };
+}
+
+/* ---------------------------------------------------------------------------
+ * THE LIGHTNING REPORT GRID, READ AS A SHEET
+ * ------------------------------------------------------------------------- */
+
+// The grid's body: the full table, not the frozen header row and first column drawn over it.
+function waveFullTable(rdoc) {
+    if (!rdoc) return null;
+    let best = null, bestScore = -1;
+    for (const t of rdoc.querySelectorAll('table.data-grid-full-table')) {
+        if (!t.querySelector('[aria-colindex]')) continue;
+        const score = (t.rows ? t.rows.length : 0) + (reportShown(t) ? 100000 : 0);
+        if (score > bestScore) { best = t; bestScore = score; }
+    }
+    return best;
+}
+
+const waveInt = (el, attr) => {
+    const n = parseInt(el && el.getAttribute(attr), 10);
+    return Number.isFinite(n) ? n : -1;
+};
+
+const waveIsSpacer = (el) => !!el && el.classList
+    && (el.classList.contains('data-grid-table-row-spacer') || el.classList.contains('data-grid-table-cell-spacer'));
+
+// The heading row. Its cells carry data-row-index 0 too — the same as the first case's — so it is
+// told apart by what it is, never by that number.
+function waveIsHeaderRow(tr) {
+    if (tr.classList.contains('data-grid-header-row') || tr.getAttribute('aria-rowindex') === '1') return true;
+    const c = tr.querySelector('[aria-colindex]');
+    return !!c && (c.getAttribute('data-fixed-row') === 'true' || c.getAttribute('scope') === 'col'
+        || c.getAttribute('role') === 'columnheader' || c.classList.contains('data-grid-header-cell'));
+}
+
+/* A CELL'S VALUE in the Lightning grid. The grid keeps a cell's whole value in data-tooltip (it
+ * truncates with CSS, never by cutting the text) — except where the value is markup, as the
+ * activity icon's is, which is read by its picture's alt text. */
+function waveCellValue(cell) {
+    const box = cell.querySelector('.wave-table-cell-text') || cell;
+    const tip = box.getAttribute('data-tooltip');
+    if (tip && !/[<>]/.test(tip)) {
+        const t = cleanCellText(tip);
+        if (t) return t;
+    }
+    let text = box.textContent || '';
+    if (box.querySelector('button, .slds-assistive-text')) {
+        const clone = box.cloneNode(true);
+        clone.querySelectorAll('button, .slds-assistive-text').forEach(n => n.remove());
+        text = clone.textContent || '';
+    }
+    let v = cleanCellText(text);
+    if (!v) {
+        const img = box.querySelector('img[alt], img[title]');
+        if (img) v = cleanCellText(img.getAttribute('alt') || img.getAttribute('title') || '');
+    }
+    return v;
+}
+
+// The case a cell links to, and the text of that link.
+function waveCaseLink(cell) {
+    const a = cell.querySelector('a[data-object-api-name="Case"][data-id]');
+    if (a) return { id: a.getAttribute('data-id') || '', num: cleanCellText(a.getAttribute('title') || a.textContent || '') };
+    for (const l of cell.querySelectorAll('a[href]')) {
+        const m = (l.getAttribute('href') || '').match(CASE_ID_IN_HREF_RE);
+        if (m) return { id: m[1], num: cleanCellText(l.getAttribute('title') || l.textContent || '') };
+    }
+    return null;
+}
+
+function newWaveSheet() {
+    return { cols: new Map(), rows: new Map(), spans: new Map(), tops: new Map(), rowCount: 0, colCount: 0 };
+}
+
+function absorbWaveHeader(tr, sheet) {
+    for (const cell of tr.cells) {
+        if (waveIsSpacer(cell)) continue;
+        const col = waveInt(cell, 'aria-colindex');
+        if (col < 1) continue;
+        const had = sheet.cols.get(col);
+        if (had && had.label) continue;
+        const pathEl = cell.querySelector('.lightning-table-cell-measure-header-value[title]');
+        sheet.cols.set(col, {
+            label: reportHeaderDisplay(cell),
+            path: cleanCellText((pathEl && pathEl.getAttribute('title')) || cell.getAttribute('title') || ''),
+            name: cell.getAttribute('data-column-name') || ''
+        });
+    }
+}
+
+/* ADD WHAT IS ON SCREEN TO THE SHEET. Returns the rows drawn — the first, and the last of the run
+ * that follows on from it without a break (the step down is measured from that one). */
+function absorbWaveTable(table, sheet, rdoc, box) {
+    const rc = waveInt(table, 'aria-rowcount');
+    if (rc > sheet.rowCount) sheet.rowCount = rc;
+    const cc = waveInt(table, 'aria-colcount');
+    if (cc > sheet.colCount) sheet.colCount = cc;
+    const root = table.closest('.data-grid') || table.parentElement || table;
+    for (const tr of root.querySelectorAll('tr.data-grid-header-row')) absorbWaveHeader(tr, sheet);
+
+    const drawn = [];
+    const blank = [];
+    for (const tr of table.rows) {
+        if (waveIsSpacer(tr)) continue;
+        if (waveIsHeaderRow(tr)) { absorbWaveHeader(tr, sheet); continue; }
+        let row = null;
+        let idx = -1;
+        for (const cell of tr.cells) {
+            if (waveIsSpacer(cell)) continue;
+            const col = waveInt(cell, 'aria-colindex');
+            const at = waveInt(cell, 'data-row-index');
+            if (col < 1 || at < 0) continue;
+            if (!row) {
+                idx = at;
+                row = sheet.rows.get(at);
+                if (!row) { row = { cells: new Map(), links: new Map() }; sheet.rows.set(at, row); }
+            }
+            const value = waveCellValue(cell);
+            if (value || !row.cells.has(col)) row.cells.set(col, value);
+            const rs = parseInt(cell.getAttribute('rowspan'), 10) || 1;
+            if (rs > 1) sheet.spans.set(`${col}:${at}`, { col, from: at, to: at + Math.min(rs, 5000) - 1, value });
+            if (!row.links.has(col)) {
+                const link = waveCaseLink(cell);
+                if (link && link.id) row.links.set(col, link);
+            }
+        }
+        if (row) {
+            drawn.push({ idx, tr });
+            if (box) { try { sheet.tops.set(idx, reportOffsetIn(tr, box, rdoc)); } catch (e) { /* detached mid-read */ } }
+            // Drawn with nothing in it — a grid that paints placeholders while it scrolls and fills
+            // them a moment later. Not a total row, which is empty on purpose.
+            if (!tr.querySelector('.lightning-table-grand-total-cell, [class*="subtotal" i]')) {
+                let filled = false;
+                for (const cell of tr.cells) {
+                    if (waveIsSpacer(cell) || waveInt(cell, 'aria-colindex') <= 1) continue;
+                    if (waveCellValue(cell)) { filled = true; break; }
+                }
+                if (!filled) blank.push(idx);
+            }
+        }
+    }
+    drawn.sort((a, b) => a.idx - b.idx);
+    let last = -1;
+    let lastTr = null;
+    if (drawn.length) {
+        last = drawn[0].idx; lastTr = drawn[0].tr;
+        for (let i = 1; i < drawn.length && drawn[i].idx === last + 1; i++) { last = drawn[i].idx; lastTr = drawn[i].tr; }
+    }
+    return { drawn: drawn.map(d => d.idx), first: drawn.length ? drawn[0].idx : -1, last, lastTr, blank };
+}
+
+// What the grid is showing, in one string — it changes when the grid redraws after a move.
+function waveSignature(table) {
+    if (!table || !table.rows) return '';
+    const rows = table.rows;
+    let a = '', b = '', cols = '';
+    for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        if (waveIsSpacer(r)) continue;
+        const cells = [...r.cells].filter(c => !waveIsSpacer(c));
+        if (!cols && cells.length) cols = `${cells[0].getAttribute('aria-colindex')}-${cells[cells.length - 1].getAttribute('aria-colindex')}`;
+        if (r.getAttribute('aria-rowindex') === '1' || r.classList.contains('data-grid-header-row')) continue;
+        if (!a) a = r.getAttribute('aria-rowindex') || (cells[0] && cells[0].getAttribute('data-row-index')) || '?';
+        if (a && cols) break;
+    }
+    for (let i = rows.length - 1; i >= 0; i--) {
+        const r = rows[i];
+        if (waveIsSpacer(r) || r.getAttribute('aria-rowindex') === '1') continue;
+        b = r.getAttribute('aria-rowindex') || '?';
+        break;
+    }
+    return `${a}:${b}:${rows.length}:${cols}`;
+}
+
+/* WAIT FOR THE GRID TO REDRAW after a move — until what it shows has changed and then held for a
+ * couple of frames. Milliseconds when it redraws; `maxMs` when the move needed no redraw. */
+async function waitForWaveRedraw(rdoc, before, maxMs) {
+    const until = Date.now() + maxMs;
+    let table = waveFullTable(rdoc);
+    let sig = waveSignature(table);
+    while (sig === before && Date.now() < until && !scrapeStopped()) {
+        await sleep(5);
+        table = waveFullTable(rdoc);
+        sig = waveSignature(table);
+    }
+    if (sig === before) return { changed: false, table };
+    // Changed — let it finish: the same picture on the next look too.
+    const settleUntil = Math.min(Date.now() + 400, until + 400);
+    let same = 0;
+    while (same < 1 && Date.now() < settleUntil) {
+        await sleep(5);
+        table = waveFullTable(rdoc);
+        const now = waveSignature(table);
+        if (now === sig) same++; else { sig = now; same = 0; }
+    }
+    return { changed: true, table };
+}
+
+/* WAIT FOR THE CELLS TO FILL — after a look that found rows drawn empty. Until the grid's text
+ * changes, or briefly: a row that is still empty after that is empty in Salesforce too. */
+async function waitForWaveContent(rdoc, maxMs) {
+    const text = () => { const t = waveFullTable(rdoc); return t ? `${waveSignature(t)}|${(t.textContent || '').length}` : ''; };
+    const before = text();
+    const until = Date.now() + maxMs;
+    while (Date.now() < until && !scrapeStopped()) {
+        await sleep(10);
+        if (text() !== before) { await sleep(10); return true; }
+    }
+    return false;
+}
+
+const waveMove = async (rdoc, box, prop, value, maxMs = 900) => {
+    const table = waveFullTable(rdoc);
+    const before = waveSignature(table);
+    const was = box[prop];
+    box[prop] = value;
+    if (box[prop] === was) return { moved: false, table };
+    try { box.dispatchEvent(new Event('scroll')); } catch (e) { /* the grid listens anyway */ }
+    const r = await waitForWaveRedraw(rdoc, before, maxMs);
+    return { moved: true, table: r.table, changed: r.changed };
+};
+
+/* ONE PASS DOWN THE WHOLE REPORT, at the current position across. Starts at the top; each step
+ * brings the last row drawn to the top of the box, so every row passes through the grid. A gap —
+ * the grid drawing from further down than expected — is gone back for at once, and any row still
+ * missing at the bottom is gone back for from the row above it. Ends as soon as every row of the
+ * report has been seen in this pass. */
+async function sweepWaveReport(rdoc, sheet, run) {
+    let table = waveFullTable(rdoc);
+    if (!table) return 'no-grid';
+    const { v } = reportScrollBoxes(rdoc, table);
+    // Rows read in this pass. A row drawn EMPTY is not read yet: a grid that paints placeholders
+    // while it scrolls fills them a moment later, and can redraw a different stretch of rows in
+    // between — so an empty row counts only once it has stayed empty, which is Salesforce's.
+    const seen = new Set();
+    const look = () => {
+        table = waveFullTable(rdoc) || table;
+        const snap = absorbWaveTable(table, sheet, rdoc, v);
+        const empty = new Set(snap.blank);
+        for (const i of snap.drawn) if (!empty.has(i)) seen.add(i);
+        return snap;
+    };
+    // A look, and if it caught rows drawn empty, another once their cells have filled.
+    const take = async () => {
+        const snap = look();
+        if (!snap.blank.length) return snap;
+        const changed = await waitForWaveContent(rdoc, 400);
+        const again = look();
+        if (!changed) for (const i of again.blank) seen.add(i);
+        return again;
+    };
+    const expected = () => (sheet.rowCount > 1 ? sheet.rowCount - 1 : 0);
+    const complete = () => {
+        const n = expected();
+        if (!n || seen.size < n) return false;
+        for (let i = 0; i < n; i++) if (!seen.has(i)) return false;
+        return true;
+    };
+    // Rows 0…k all seen in this pass — where the next step must not skip past.
+    let upTo = -1;
+    const advance = () => { while (seen.has(upTo + 1)) upTo++; };
+
+    /* THE HOLES, gone back for one at a time from the last row above each whose place is known.
+     * A row the grid will not draw from there (the report's numbering has a gap of its own) is
+     * given up on after a few, so a report like that cannot hold the read. */
+    const fillHoles = async () => {
+        const n = expected();
+        if (!n || !v) return;
+        let failures = 0;
+        let moves = 0;
+        for (let i = 0; i < n; i++) {
+            if (seen.has(i)) continue;
+            if (scrapeStopped() || Date.now() > run.deadline || failures > 3 || moves > 400) return;
+            let k = i - 1;
+            while (k >= 0 && !sheet.tops.has(k)) k--;
+            const from = k >= 0 ? sheet.tops.get(k) : 0;
+            await waveMove(rdoc, v, 'scrollTop', Math.max(0, Math.floor(from) - 4));
+            moves++;
+            let snap = await take();
+            for (let step = 0; step < 6 && !seen.has(i) && !(snap.first > i); step++) {
+                const was = v.scrollTop;
+                await waveMove(rdoc, v, 'scrollTop', was + Math.floor(v.clientHeight * 0.5));
+                moves++;
+                if (v.scrollTop === was) break;
+                snap = await take();
+            }
+            if (!seen.has(i)) failures++;
+        }
+    };
+
+    if (!v) { await take(); return complete() ? 'all-rows-loaded' : 'not-scrollable'; }
+    if (v.scrollTop > 0) await waveMove(rdoc, v, 'scrollTop', 0);
+    let snap = await take();
+    advance();
+    let backtracks = 0;
+    let stuck = 0;
+    while (true) {
+        if (scrapeStopped()) return 'stopped';
+        if (Date.now() > run.deadline) return 'time-budget';
+        if (complete()) return 'all-rows-loaded';
+        if (++run.rounds > run.maxRounds) return 'exhausted-rounds';
+        const cur = v.scrollTop;
+        const max = v.scrollHeight - v.clientHeight;
+        if (cur >= max - 1) {
+            // The bottom. The grid can still be growing (rows measured taller than estimated), so
+            // one more look for a redraw before calling it.
+            const r = await waitForWaveRedraw(rdoc, waveSignature(waveFullTable(rdoc)), 150);
+            snap = await take();
+            advance();
+            if (v.scrollHeight - v.clientHeight > cur + 1) continue;
+            if (r.changed && ++stuck <= 3) continue;
+            await fillHoles();
+            return complete() ? 'all-rows-loaded' : 'bottom';
+        }
+        // The next step puts the last row drawn at the very top, its bottom edge still in view, so
+        // the grid's next drawing starts at or above it; a short or stale picture steps most of a
+        // box instead, and a gap that still opens is caught below.
+        let target = cur + Math.max(40, Math.floor(v.clientHeight * 0.85));
+        if (snap.lastTr && snap.last >= 0 && snap.last >= upTo) {
+            const lastTop = reportOffsetIn(snap.lastTr, v, rdoc);
+            const lastBottom = lastTop + snap.lastTr.getBoundingClientRect().height;
+            if (lastBottom - 4 > cur + 40) target = Math.floor(lastBottom) - 4;
+        }
+        const moved = await waveMove(rdoc, v, 'scrollTop', Math.min(target, max));
+        if (!moved.moved) {
+            if (++stuck > 3) { await fillHoles(); return complete() ? 'all-rows-loaded' : 'stuck'; }
+            continue;
+        }
+        stuck = 0;
+        snap = await take();
+        // A gap: the grid now starts below the last row read in an unbroken run. Step back half
+        // a box and read again — a few times at most, then fillHoles deals with what is left.
+        if (snap.first > upTo + 1 && backtracks < 6) {
+            backtracks++;
+            await waveMove(rdoc, v, 'scrollTop', Math.max(0, v.scrollTop - Math.floor(v.clientHeight * 0.6)));
+            snap = await take();
+        } else if (snap.first <= upTo + 1) {
+            backtracks = 0;
+        }
+        advance();
+    }
+}
+
+// The columns the grid has drawn right now — its heading row's cells.
+function waveDrawnCols(table) {
+    const out = new Set();
+    if (!table) return out;
+    const head = [...table.rows].find(r => waveIsHeaderRow(r)) || [...table.rows].find(r => !waveIsSpacer(r));
+    if (!head) return out;
+    for (const cell of head.cells) {
+        if (waveIsSpacer(cell)) continue;
+        const col = waveInt(cell, 'aria-colindex');
+        if (col >= 1) out.add(col);
+    }
+    return out;
+}
+
+/* WHERE ACROSS THE REPORT TO READ IT AGAIN, for the columns the first pass never drew. The grid is
+ * moved across a screen at a time — one redraw of the heading row each, no rows read — noting the
+ * columns drawn at each place, until every column is known; then the FEWEST places that between
+ * them draw every missing column are kept (one, for the 16-column report, after the first pass),
+ * because each is a whole pass down the report. */
+async function findWaveColumnStops(rdoc, sheet, h) {
+    if (!h) return [];
+    const known = () => {
+        const out = new Set(sheet.cols.keys());
+        return out;
+    };
+    const before = known();
+    const allKnown = () => sheet.colCount > 0 && [...Array(sheet.colCount).keys()].every(i => sheet.cols.has(i + 1));
+    const max = h.scrollWidth - h.clientWidth;
+    const places = [];
+    let left = h.scrollLeft;
+    while (!allKnown() && left < max - 1 && !scrapeStopped()) {
+        left = Math.min(max, left + Math.max(60, Math.floor(h.clientWidth * 0.8)));
+        await waveMove(rdoc, h, 'scrollLeft', left);
+        const table = waveFullTable(rdoc);
+        if (table) {
+            absorbWaveTable(table, sheet, rdoc, null);
+            places.push({ left: h.scrollLeft, cols: waveDrawnCols(table) });
+        }
+        left = h.scrollLeft;
+    }
+    // Without a column count, every place that showed something new is a candidate all the same.
+    const need = new Set([...known()].filter(c => !before.has(c)));
+    const chosen = [];
+    while (need.size) {
+        let best = null, bestN = 0;
+        for (const p of places) {
+            let n = 0;
+            for (const c of p.cols) if (need.has(c)) n++;
+            if (n > bestN) { best = p; bestN = n; }
+        }
+        if (!best) break;
+        chosen.push(best.left);
+        for (const c of best.cols) need.delete(c);
+    }
+    return chosen.sort((x, y) => x - y);
+}
+
+// Fill the cells a grouping cell spans — written once, at the top of its group.
+function applyWaveSpans(sheet) {
+    for (const { col, from, to, value } of sheet.spans.values()) {
+        for (let i = from + 1; i <= to; i++) {
+            const row = sheet.rows.get(i);
+            if (row && !row.cells.has(col)) row.cells.set(col, value);
+        }
+    }
+}
+
+// THE SHEET AS CASES — the same records readReportGrid makes, every column in sfFields.
+function waveSheetCases(sheet) {
+    applyWaveSpans(sheet);
+    const keys = [...sheet.cols.keys()].sort((a, b) => a - b);
+    const header = [];
+    for (const k of keys) header[k] = (sheet.cols.get(k).label || '').toLowerCase();
+    let caseCol = reportColumn(header, REPORT_CASE_NUMBER_HEADERS);
+    if (caseCol < 0) {
+        const hits = new Map();
+        for (const row of sheet.rows.values()) {
+            for (const [c, v] of row.cells) if (CASE_NUMBER_WHOLE_RE.test(v)) hits.set(c, (hits.get(c) || 0) + 1);
+        }
+        let top = 0;
+        for (const [c, n] of hits) if (n > top) { top = n; caseCol = c; }
+    }
+    const cols = {};
+    for (const [key, names] of Object.entries(REPORT_FIELDS)) cols[key] = reportColumn(header, names);
+    const iconCol = reportColumn(header, REPORT_ICON_FIELDS);
+    const prose = new Set(keys.filter(k => CASE_PROSE_LABEL_RE.test(header[k] || '')));
+    const groupCols = new Set([...sheet.spans.values()].map(s => s.col));
+    const fieldNames = reportFieldNames(keys.map(k => ({ key: k, label: sheet.cols.get(k).label, path: sheet.cols.get(k).path })));
+
+    const cases = [];
+    const unread = [];
+    let rowsSeen = 0;
+    for (const idx of [...sheet.rows.keys()].sort((a, b) => a - b)) {
+        const row = sheet.rows.get(idx);
+        const cell = (c) => (row.cells.has(c) ? row.cells.get(c) : undefined);
+        let caseNum = '';
+        if (caseCol >= 0) {
+            const v = cell(caseCol) || '';
+            if (CASE_NUMBER_WHOLE_RE.test(v)) caseNum = v;
+        }
+        if (!caseNum) {
+            for (const [c, v] of row.cells) {
+                if (c === caseCol || prose.has(c)) continue;
+                if (CASE_NUMBER_WHOLE_RE.test(v)) { caseNum = v; break; }
+            }
+        }
+        let link = caseCol >= 0 ? row.links.get(caseCol) : null;
+        if (!link && caseNum) link = [...row.links.values()].find(l => l.num === caseNum) || null;
+        if (!link && !caseNum) link = row.links.values().next().value || null;
+        const recordId = salesforceId18(link ? link.id : '');
+        if (!caseNum && !recordId) continue;             // a grouping, subtotal or total row
+        rowsSeen++;
+        if (!caseNum) {
+            unread.push({ recordId, row: idx, cells: row.cells.size,
+                cols: keys.slice(0, 14).map(k => ({ label: header[k] || '', text: String(cell(k) || '').slice(0, 30) })) });
+            continue;
+        }
+        const rec = { caseNum };
+        if (recordId) {
+            rec.recordId = recordId;
+            rec.url = `${location.origin}/lightning/r/Case/${recordId}/view`;
+        }
+        // A column the report does not carry is left out, not sent as '' — see readReportGrid.
+        for (const [key, at] of Object.entries(cols)) {
+            if (at < 0 || !row.cells.has(at)) continue;
+            const v = cell(at);
+            rec[key] = groupCols.has(at) ? reportGroupValue(v, header[at]) : v;
+        }
+        if (iconCol >= 0 && row.cells.has(iconCol)) rec.activityIcon = normaliseActivityIcon(cell(iconCol));
+        rec.sfFields = {};
+        for (const [c, name] of fieldNames) {
+            if (!row.cells.has(c)) continue;
+            rec.sfFields[name] = groupCols.has(c) ? reportGroupValue(cell(c), header[c]) : cell(c);
+        }
+        cases.push(rec);
+    }
+    return { cases, unread, rowsSeen, columns: [...fieldNames.values()] };
+}
+
+/* READ THE WHOLE LIGHTNING GRID: a pass down at the position across the engineer left it, then
+ * one pass down for each position across that brings columns the first pass never drew, then the
+ * holes, if any. The engineer's scroll position is put back afterwards. */
+async function readWaveReport(rdoc, run) {
+    const sheet = newWaveSheet();
+    let table = waveFullTable(rdoc);
+    const { v, h } = reportScrollBoxes(rdoc, table);
+    const home = { top: v ? v.scrollTop : 0, left: h ? h.scrollLeft : 0 };
+    let reason = 'no-rows-found';
+    let passes = 0;
+    try {
+        // From the left-hand edge, so the columns to the right are the only ones still to find —
+        // the engineer may have left the report scrolled across.
+        if (h && h.scrollLeft > 0) await waveMove(rdoc, h, 'scrollLeft', 0);
+        absorbWaveTable(waveFullTable(rdoc) || table, sheet, rdoc, v);
+        reason = await sweepWaveReport(rdoc, sheet, run);
+        passes++;
+        // Across for the columns the first pass never drew — not for a report with no cases in it.
+        const anyCase = [...sheet.rows.values()].some(r => r.links.size || [...r.cells.values()].some(x => CASE_NUMBER_WHOLE_RE.test(x)));
+        if (anyCase && !scrapeStopped() && Date.now() < run.deadline && h) {
+            const stops = await findWaveColumnStops(rdoc, sheet, h);
+            for (const left of stops) {
+                if (scrapeStopped() || Date.now() > run.deadline) break;
+                await waveMove(rdoc, h, 'scrollLeft', left);
+                reason = await sweepWaveReport(rdoc, sheet, run);
+                passes++;
+            }
+        }
+    } finally {
+        try { if (h) h.scrollLeft = home.left; if (v) v.scrollTop = home.top; } catch (e) { /* the page went away */ }
+    }
+    const expected = sheet.rowCount > 1 ? sheet.rowCount - 1 : null;
+    let missingRows = 0;
+    if (expected) for (let i = 0; i < expected; i++) if (!sheet.rows.has(i)) missingRows++;
+    const missingCols = [];
+    for (let c = 1; c <= sheet.colCount; c++) if (!sheet.cols.has(c)) missingCols.push(c);
+    const out = waveSheetCases(sheet);
+    out.reason = reason;
+    out.passes = passes;
+    out.coverage = { rows: sheet.rows.size, expected, missingRows, columns: sheet.cols.size, colCount: sheet.colCount, missingCols };
+    return out;
+}
+
+/* READ ANY OTHER REPORT TABLE: step the box down, collect every row as it goes by keyed on its
+ * case, until the report's own total is reached or the bottom brings nothing new. Each step waits
+ * for the table to change, not for a fixed pause. */
+async function readGenericReport(rdoc, run) {
+    const seen = new Map();
+    const unreadById = new Map();
+    let columns = [];
+    let gridEl = null;
+    let rowsSeen = 0;
+    const declared = run.declared;
+    // What the table is showing: how many rows, and the first and last case on it — a table that
+    // recycles its rows keeps the same count and changes only which cases are in them.
+    const sig = () => {
+        const d = salesforceReportDocument() || rdoc;
+        if (!d) return '';
+        const rows = d.querySelectorAll('tr, [role="row"]').length;
+        const links = d.querySelectorAll('a[href*="/500"], a[href*="=500"], a[data-object-api-name="Case"]');
+        const text = (a) => (a ? (a.getAttribute('href') || '') + (a.textContent || '').slice(0, 40) : '');
+        return `${rows}|${links.length}|${text(links[0])}|${text(links[links.length - 1])}`;
+    };
+    const absorb = () => {
+        rdoc = salesforceReportDocument() || rdoc;
+        const r = rdoc ? readReportGrid(rdoc) : { cases: [], unread: [], rowsSeen: 0, gridEl: null, columns: [] };
+        if (r.gridEl) gridEl = r.gridEl;
+        if (r.columns && r.columns.length > columns.length) columns = r.columns;
+        let fresh = 0;
+        for (const c of r.cases) {
+            const key = c.recordId || String(c.caseNum).toLowerCase();
+            if (seen.has(key)) continue;
+            seen.set(key, c);
+            fresh++;
+        }
+        for (const u of r.unread) if (u.recordId && !unreadById.has(u.recordId)) unreadById.set(u.recordId, u);
+        rowsSeen = Math.max(rowsSeen, seen.size + unreadById.size);
+        return fresh;
+    };
+
+    absorb();
+    let reason = 'no-rows-found';
+    const moved = [];
+    if (seen.size || unreadById.size) {
+        reason = 'no-new-rows';
+        if (declared != null && seen.size >= declared) {
+            reason = 'already-complete';
+        } else {
+            let stable = 0;
+            while (true) {
+                if (scrapeStopped()) { reason = 'stopped'; break; }
+                if (Date.now() > run.deadline) { reason = 'time-budget'; break; }
+                if (++run.rounds > run.maxRounds) { reason = 'exhausted-rounds'; break; }
+                const boxes = rdoc ? reportScrollers(rdoc, gridEl) : [];
+                if (!boxes.length) break;                // every row is on the page already
+                const before = sig();
+                let stepped = false;
+                for (const el of boxes) {
+                    if (!moved.some(m => m.el === el)) moved.push({ el, top: el.scrollTop });
+                    const was = el.scrollTop;
+                    el.scrollTop = Math.min(was + Math.max(200, Math.floor(el.clientHeight * 0.85)), el.scrollHeight);
+                    if (el.scrollTop !== was) stepped = true;
+                    try { el.dispatchEvent(new Event('scroll')); } catch (_) {}
+                }
+                // Until the table changes (a redraw, or more rows fetched) — or briefly, if it does not.
+                const until = Date.now() + (stepped ? 700 : 1200);
+                while (sig() === before && Date.now() < until && !scrapeStopped()) await sleep(30);
+                if (reportSpinnerShowing(rdoc)) await waitWhileReportFetching(4000);
+                const fresh = absorb();
+                if (declared != null && seen.size >= declared) { reason = 'all-rows-loaded'; break; }
+                if (fresh) { stable = 0; continue; }
+                if (stepped) continue;                   // still on the way down
+                const patience = (declared != null && seen.size < declared) ? 5 : 3;
+                if (++stable >= patience) { reason = 'no-new-rows'; break; }
+            }
+        }
+    }
+    for (const m of moved) { try { m.el.scrollTop = m.top; } catch (_) {} }
+
+    // A row first seen without its number and read properly later is not unread.
+    const readIds = new Set([...seen.values()].map(c => c.recordId).filter(Boolean));
+    const unread = [...unreadById.values()].filter(u => !readIds.has(u.recordId));
+    return { cases: [...seen.values()], unread, rowsSeen, reason, passes: 1, columns,
+        coverage: { rows: rowsSeen, expected: declared, missingRows: null, columns: columns.length, colCount: null, missingCols: [] } };
+}
+
+/* READ THE WHOLE REPORT — the Lightning grid as a sheet, anything else by scrolling it through. */
+async function loadWholeReport(opts = {}) {
+    const { maxMs = 150000, maxRounds = 4000 } = opts;
+    const started = Date.now();
+    const rdoc = salesforceReportDocument();
+    const listName = reportTitle(rdoc);
+    const declared = rdoc ? reportDeclaredTotal(rdoc) : null;
+    const wasHidden = document.visibilityState !== 'visible';
+    const run = { deadline: started + maxMs, maxRounds, rounds: 0, declared };
+    let r;
+    if (rdoc && waveFullTable(rdoc)) r = await readWaveReport(rdoc, run);
+    else r = await readGenericReport(rdoc, run);
+    const hidden = wasHidden || document.visibilityState !== 'visible';
+    const cv = r.coverage || {};
+    console.log(`SOTI AI Analyser: Read report "${listName}" — ${r.cases.length} case(s)`
+        + (declared != null ? ` of ${declared} the report declares` : '')
+        + `, ${(r.columns || []).length} column(s)`
+        + (cv.expected ? `, ${cv.rows}/${cv.expected} row(s) seen` : '')
+        + (cv.missingCols && cv.missingCols.length ? `, column(s) never drawn: ${cv.missingCols.join(',')}` : '')
+        + ` in ${Date.now() - started}ms (${run.rounds} step(s), ${r.passes || 1} pass(es), ${r.reason})`);
+    return {
+        listName,
+        origin: location.origin,
+        scrapedAt: Date.now(),
+        cases: r.cases,
+        rowsSeen: r.rowsSeen,
+        unreadRows: r.unread.length,
+        unreadSample: r.unread.slice(0, 2),
+        source: 'report',
+        columns: r.columns || [],
+        listLoad: { rows: r.cases.length, declared, rounds: run.rounds, reason: r.reason, hidden,
+            ms: Date.now() - started, passes: r.passes || 1, coverage: cv }
+    };
+}
+
+/* THE REPORT'S OWN REFRESH BUTTON — the action bar's
+ *     <button id="refreshReport" class="… action-bar-action-refreshReport report-action-refreshReport …">
+ * Looked for in the report's frame first, where the viewer draws its action bar, then on the
+ * Lightning page around it. Matched by that id and class, and failing those by the name "Refresh"
+ * — inside the frame the only Refresh is the report's. */
+const REPORT_REFRESH_SELECTOR = 'button#refreshReport, button.report-action-refreshReport, '
+    + 'button.action-bar-action-refreshReport, button[class*="refreshReport"], button[class*="refresh-report"], '
+    + '[class*="refreshReport"] button, button[name="refreshButton"], button[name="refresh"]';
+
+function findReportRefreshButton(rdoc) {
+    const usable = (btn) => isVisible(btn) && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true';
+    const scopes = [rdoc, document].filter((d, i, all) => d && all.indexOf(d) === i);
+    for (const scope of scopes) {
+        for (const btn of scope.querySelectorAll(REPORT_REFRESH_SELECTOR)) if (usable(btn)) return btn;
+    }
+    if (!rdoc) return null;
+    for (const btn of rdoc.querySelectorAll('button, [role="button"], a.slds-button')) {
+        const names = [btn.getAttribute('title'), btn.getAttribute('aria-label'),
+            (btn.querySelector('.slds-assistive-text') || {}).textContent, btn.textContent];
+        if (!names.some(s => /^refresh$/i.test(String(s || '').replace(/\s+/g, ' ').trim()))) continue;
+        if (usable(btn)) return btn;
+    }
+    return null;
+}
+
+// Press it and wait for the report to run again — bounded; the caller reads what is there after.
+async function refreshSalesforceReport(budgetMs) {
+    const deadline = Date.now() + budgetMs;
+    const rdoc = salesforceReportDocument();
+    const btn = findReportRefreshButton(rdoc);
+    const rows = () => reportCaseRowCount(salesforceReportDocument());
+    if (!btn) return { ok: false, reason: 'no-refresh-button', rows: rows() };
+    const before = rows();
+    const tableBefore = waveFullTable(rdoc);
+    const linkBefore = reportFirstCaseLink(rdoc);
+    try { btn.click(); } catch (e) { return { ok: false, reason: 'click-failed', rows: before }; }
+
+    /* WAIT FOR THE RE-RUN TO START — a spinner, the rows taken down, or the grid drawn anew. A
+     * report that is already current can re-run faster than a spinner is ever painted, so this
+     * gives up after a few seconds and reads what is there. */
+    let started = false;
+    const startDeadline = Math.min(Date.now() + 3000, deadline);
+    while (Date.now() < startDeadline) {
+        await sleep(50);
+        const d = salesforceReportDocument();
+        if (d !== rdoc || reportSpinnerShowing(d) || !rows()) { started = true; break; }
+        if (tableBefore && waveFullTable(d) !== tableBefore) { started = true; break; }
+        if (linkBefore && !linkBefore.isConnected) { started = true; break; }
+    }
+    // …then for it to finish: rows back on the page and no spinner over them.
+    let cleared = false;
+    while (Date.now() < deadline && !scrapeStopped()) {
+        const d = salesforceReportDocument();
+        const n = reportCaseRowCount(d);
+        if (n > 0 && !reportBusy(d)) { cleared = true; break; }
+        if (d && !n && !reportBusy(d) && reportDeclaredTotal(d) === 0) { cleared = true; break; }
+        await sleep(80);
+    }
+    if (cleared) await sleep(120);
+    return {
+        ok: true, started, cleared, rowsBefore: before, rows: rows(),
+        declared: reportDeclaredTotal(salesforceReportDocument())
+    };
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "GET_SALESFORCE_CASE_LIST") {
+        /* (QA Tool addition, from the analyser) A REPORT, not a list view — see "A SALESFORCE
+         * REPORT AS A CASE LIST". Same answer, read from the report's own frame. */
+        if (onSalesforceReportPage()) {
+            (async () => {
+                try {
+                    const wait = await waitForReportRows(Math.max(0, Math.min(Number(request.waitMs) || 20000, 45000)));
+                    const data = await loadWholeReport();
+                    data.listWait = wait;
+                    data.empty = !!wait.empty;
+                    sendResponse(data);
+                } catch (err) {
+                    console.error('SOTI QA Tool: Report read failed', err);
+                    sendResponse(null);
+                }
+            })();
+            return true;
+        }
         // Scroll the whole list into the DOM FIRST. A list view renders about 25 rows and
         // fetches the rest on scroll, so scraping without this reads only what happened to
         // be on screen — and a 30-case queue coming back as 25 looks exactly like a 25-case
@@ -7096,6 +8529,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             const budgetMs = Math.max(2000, Math.min(request.budgetMs || 20000, 60000));
             const deadline = Date.now() + budgetMs;
             try {
+                // (QA Tool addition, from the analyser) A report has its own Refresh, inside its frame.
+                if (onSalesforceReportPage()) {
+                    sendResponse(await refreshSalesforceReport(budgetMs));
+                    return;
+                }
                 const btn = findListRefreshButton(document);
                 if (!btn) {
                     sendResponse({ ok: false, reason: 'no-refresh-button', rows: document.querySelectorAll(CASE_ROW_SELECTOR).length });
@@ -7159,6 +8597,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
      * about to read. Cheap: one selector, nothing touched. */
     if (request.action === "GET_SALESFORCE_LIST_READY") {
         try {
+            /* (QA Tool addition, from the analyser) A REPORT: its rows are in its frame, and a
+             * frame not created yet is a report still loading. */
+            if (onSalesforceReportPage()) {
+                const rdoc = salesforceReportDocument();
+                const rows = reportCaseRowCount(rdoc);
+                const declared = rdoc ? reportDeclaredTotal(rdoc) : null;
+                const busy = reportBusy(rdoc);
+                sendResponse({ ready: rows > 0 && !busy, rows, declared, fetching: busy, empty: !rows && declared === 0, report: true });
+                return true;
+            }
             const rows = document.querySelectorAll(CASE_ROW_SELECTOR).length;
             sendResponse({
                 ready: rows > 0,

@@ -71,81 +71,46 @@
 .qa-runpill-stop:hover { color: #fff; border-color: var(--red); background: rgba(239, 68, 68, .15); }
 
 /* ============================================================
-   THE TOOLBAR AND THE SELECTION BAR
-   ============================================================ */
-.qa-toolbar { flex-wrap: wrap; }
-.qa-owner-select { flex: 1; min-width: 0; }
+   THE CASES TAB — what the analyser's queue gains here
+   ============================================================
+   The toolbar, Current View, the filters, the chips, the Select bar, the cog and
+   the rows are the analyser's classes, styled in styles.css and used as they
+   stand. What is added is only what this tool's queue has and the analyser's
+   does not: the QA run on the list bar, the milestone chips, and the chat button
+   at the end of every row. */
 
-/* WHICH SAVED LIST VIEW THE QUEUE ON SCREEN CAME FROM.
-   The chip strip itself is the analyser's, class for class, and is styled in styles.css —
-   this is the one thing added to it here. A QA sync REPLACES the queue, so at any moment
-   the list below belongs to exactly one of these views, and which one is a question the
-   reviewer would otherwise answer by reading the meta line. The analyser needs no such
-   state: its queue holds several lists at once, so none of its chips is "the current one".
-   Border and weight rather than a fill, so a row of four saved views does not become a row
-   of four blocks with one shouting. */
-.oc-link-chip.active {
-    border-color: rgba(80, 130, 230, .95);
-    background: rgba(80, 130, 230, .22);
+/* THE QA BUTTON. The bar's own button shape, lit in the queue's indigo once
+   something is ticked — the moment it has something to act on. */
+.oc-lb-btn.qa-lb-run { gap: 5px; color: #c7d2fe; }
+.oc-lb-btn.qa-lb-run.is-ready {
+    background: linear-gradient(135deg, var(--blue), #7f86f2);
+    border-color: transparent;
+    color: #fff;
+    box-shadow: 0 2px 10px rgba(99, 102, 241, .35);
 }
-.oc-link-chip.active .oc-link-go { color: #fff; font-weight: 600; }
+.oc-lb-btn.qa-lb-run.is-ready:hover { background: linear-gradient(135deg, #6f72f4, #8b92f6); }
 
-/* ABOVE the list, not below it. This is what you press after ticking, and a
-   control at the bottom of a scrolled list is one you have to go and find. */
-.qa-selbar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-    margin: 0 14px 8px;
-    padding: 7px 10px;
-    background: var(--bg1);
-    border: 1px solid var(--border);
-    border-radius: var(--r8);
-}
-.qa-selbar-acts { margin-left: auto; display: flex; gap: 6px; }
-.qa-checkline {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--txt2);
-    cursor: pointer;
-    user-select: none;
-}
-.qa-checkline:hover { color: var(--txt1); }
-.qa-selcount {
-    font-size: 10.5px;
-    font-weight: 700;
-    color: var(--blue2);
-    font-variant-numeric: tabular-nums;
-}
+/* THE CASE NUMBER IS ONE FIXED WIDTH ON BOTH LINES. The analyser gives it a
+   62px FLOOR, and a bold "C01720260" is 68px — so every row's number pushed its
+   cells 6px right of the headings above them. A fixed basis, the same on the row
+   and the strip, puts every heading over its column; a number dragged narrower
+   than itself ends in an ellipsis rather than shoving the row. 70 matches
+   COL_SIZES.casenum in qa-panel.js. */
+.oc-num, .oc-colhead-num { flex: 0 0 var(--ocw-casenum, 70px); min-width: 0; }
+.oc-num { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* The tick box itself. `accent-color` rather than a hand-drawn control: it is a
-   real checkbox, so it keeps its keyboard behaviour, its focus ring and its
-   indeterminate state, and it costs one line. 15px because 13 is a mis-click
-   target on a row this dense and 18 crowds the case number beside it. */
-.qa-check {
-    width: 15px;
-    height: 15px;
-    accent-color: var(--blue);
-    cursor: pointer;
-    flex-shrink: 0;
-    margin: 0;
-}
-.qa-check:focus-visible { outline: 2px solid var(--blue2); outline-offset: 2px; }
+/* THE REVIEWS TAB'S TWO LIST ACTIONS, under the filter rather than beside it:
+   re-run on the left, the destructive one on its own at the far end. */
+.qa-rev-tools { margin-top: 6px; }
+.qa-rev-tools #btnDeleteReviews { margin-left: auto; }
 
-/* THE ROW'S OWN TICK BOX gets a padded hit area around it, because the row
-   itself opens the case in Salesforce — so a click a few pixels wide of the box
-   would navigate instead of selecting, which is the most annoying miss there is. */
-.qa-row-check {
-    display: flex;
-    align-items: center;
-    padding: 4px 6px 4px 0;
-    margin: -4px 0;
-    flex-shrink: 0;
-}
+/* The milestone chips sit under the tier chips as a second row of the same kind. */
+.qa-ms-chips { margin-top: 5px; }
+
+/* SELECTING. The chat button steps aside with the expander and the ×, for the
+   analyser's reason: a click that lands on it would open a chat when the bar
+   above is about to act on the selection. */
+.oc-selecting .oc-row .qa-row-chat { visibility: hidden; }
 
 /* ============================================================
    WHAT A CASE ROW GAINS
@@ -495,6 +460,8 @@
 /* A note that belongs to the row above it rather than to the block. */
 .qa-set-sub { margin-top: 2px; margin-bottom: 12px; padding-left: 2px; }
 .qa-set-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+/* A note under a row of buttons is about them, and sits a line clear of them. */
+.qa-set-acts + .qa-set-note { margin-top: 10px; }
 .qa-set-status { font-size: 10.5px; font-weight: 600; color: var(--txt2); text-align: right; }
 .qa-set-status.ok { color: var(--green); }
 .qa-set-status.bad { color: var(--red); }
@@ -525,6 +492,48 @@
     color: var(--txt2);
     max-height: 220px;
     overflow: auto;
+}
+
+/* A NOTE UNDER A GOOD ANSWER — see the m.note branch in the chat renderer. Quieter than
+   an error, because it is not one: the answer above it stands, and what this says is how
+   much of the case it stands on. */
+.qa-msg-note {
+    margin-top: 6px;
+    font-size: 10px;
+    line-height: 1.55;
+    color: var(--warn);
+    opacity: .9;
+}
+
+/* THE DISPLAY SIZE CONTROL — a step down, the menu, a step up. */
+.qa-zoom { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
+.qa-zoom-sel { width: 150px; }
+.qa-zoom-step { width: 26px; padding-left: 0; padding-right: 0; justify-content: center; font-size: 13px; font-weight: 700; }
+
+/* A FILE NAME INSIDE A SENTENCE OF SETTINGS PROSE. */
+.qa-mono { font-family: var(--mono); font-size: .94em; color: var(--txt); }
+
+/* HOW THE CASE REACHED COPILOT
+   ---------------------------------------------------------------------------
+   A footnote, and deliberately quiet: on a healthy run it says the same
+   reassuring thing on every card, and a reassurance that shouts is one a
+   reviewer learns to skip — which is exactly the habit that would hide the one
+   card where it does not say it. So it sits at the bottom in the dim type a
+   provenance note belongs in, and only the warning variant takes a colour. */
+.qa-rev-delivery {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--line);
+}
+.qa-rev-delivery .qa-field-k { color: var(--txt3, var(--txt2)); font-weight: 500; }
+.qa-rev-delivery .qa-field-v {
+    font-size: 10.5px;
+    line-height: 1.6;
+    color: var(--txt2);
+}
+.qa-rev-delivery .qa-rev-delivery-warn {
+    color: var(--warn);
+    font-weight: 500;
 }
 
 /* A SCORE THE MEASUREMENT WORKED OUT, not one the write-up gave. The dot is the
@@ -904,86 +913,6 @@
 .qa-row-chat.has-chat:hover { color: #fff; background: rgba(99, 102, 241, .22); border-color: var(--blue); }
 
 /* ============================================================
-   THE TAB BAR, AT SIDE-PANEL WIDTH
-   ============================================================
-   The analyser's tab row holds one control. This one holds six, in a box that
-   can be 320px wide — so the padding comes in a little and the settings tab
-   gives up its word for a gear. It still scrolls when it has to, which is the
-   analyser's own behaviour and is what stops a narrow panel hiding a tab
-   outright. */
-.tab-bar .tab-item { padding: 0 8px; gap: 6px; }
-.tab-icon-only {
-    padding: 0 8px !important;
-    color: var(--txt3);
-}
-.tab-icon-only:hover { color: var(--txt1); }
-.tab-item.active.tab-icon-only { color: var(--blue2); }
-
-/* ============================================================
-   THE UPDATE DIALOG
-   ============================================================
-   Wider than the ask/confirm modal it shares a shell with, because this one has
-   something to read in it: the release notes, and the three steps that install
-   the thing. Everything else here reuses .qa-modal. */
-.qa-upd-modal { max-width: 400px; }
-
-/* The release notes, when a release carried any. Scrolled rather than
-   truncated — this is the one place in the dialog worth reading in full, and a
-   changelog cut off at four lines is a changelog nobody trusts. */
-.qa-upd-notes {
-    margin: 10px 0 0;
-    padding: 8px 10px;
-    max-height: 180px;
-    overflow-y: auto;
-    font-size: 10.5px;
-    line-height: 1.6;
-    color: var(--txt2);
-    white-space: pre-wrap;
-    background: rgba(255, 255, 255, .03);
-    border: 1px solid var(--border);
-    border-radius: var(--r6);
-}
-
-/* HOW TO ACTUALLY INSTALL IT. Written out rather than left as "install the
-   update", because this is the step people get wrong, and on this extension
-   getting it wrong used to mean losing every review. */
-.qa-upd-how {
-    margin-top: 11px;
-    font-size: 10.5px;
-    line-height: 1.6;
-    color: var(--txt2);
-}
-.qa-upd-how b { color: #fff; font-size: 11px; }
-.qa-upd-how ol { margin: 5px 0 0 0; padding-left: 18px; }
-.qa-upd-how li { margin: 3px 0; }
-.qa-upd-how code {
-    font-family: var(--mono);
-    font-size: 10px;
-    background: rgba(255, 255, 255, .07);
-    border-radius: 3px;
-    padding: 1px 4px;
-}
-/* The reassurance, and it is only there because it is now true — the manifest
-   key pins the extension ID, so a folder rename no longer starts the new build
-   with empty storage. Green, because it is the answer to the fear the steps
-   above raise. */
-.qa-upd-safe {
-    margin-top: 9px;
-    padding: 7px 9px;
-    font-size: 10px;
-    line-height: 1.55;
-    color: #7ee0b8;
-    background: rgba(34, 197, 94, .09);
-    border: 1px solid rgba(34, 197, 94, .35);
-    border-radius: var(--r6);
-}
-
-/* Five controls will not sit on one line in a 400px dialog, so they wrap and
-   they wrap from the left — a right-aligned wrap puts the primary action in the
-   middle of the second row. */
-.qa-upd-acts { flex-wrap: wrap; justify-content: flex-start; }
-
-/* ============================================================
    THE QUEUE'S COLUMNS, AS THIS TOOL HAS THEM
    ============================================================
    Almost all of this is already in the analyser's stylesheet, which this file
@@ -1016,57 +945,20 @@
    carried no score at all. */
 .oc-row-main > .oc-tag.oc-tag-empty { color: var(--txt4); border-color: transparent; background: transparent; }
 
-/* THE TICK BOX'S SHARE OF THE HEADING STRIP.
-   15px of checkbox plus the 6px of padding .qa-row-check carries on its right;
-   the 6px gap between it and the case number is the strip's own flex gap, the
-   same one the row uses. Get this wrong and every heading on the line is out by
-   twenty pixels. */
-.qa-colhead-check { flex: 0 0 21px; }
-
-/* AND THE CHAT BUTTON'S.
-   The analyser's strip ends with a 47px spacer standing in for an expander and
-   a remove cross; this row ends with one 24px chat button, plus the 1px right
-   border the row has and the strip does not. */
-.qa-colhead .oc-colhead-spacer { flex: 0 0 25px; }
+/* THE ROW'S CONTROLS' SHARE OF THE HEADING STRIP.
+   The analyser's strip ends with a 47px spacer standing in for its expander and
+   remove cross; this row has the 24px chat button and its 6px gap in front of
+   them, so the spacer is 30px wider. Get this wrong and every heading on the
+   line sits a control's width away from its column. */
+.qa-colhead .oc-colhead-spacer { flex: 0 0 77px; }
 
 /* The strip is a heading for the list, so it belongs with the list — hard
    against it, under the controls that change it. */
 .qa-colhead { margin-top: 2px; }
 
-/* THE COLUMN COG, at the end of the owner row.
-   ------------------------------------------------------------
-   It used to sit on a strip of its own between the filters and
-   the selection bar, which is where the analyser keeps it —
-   but the analyser's strip holds four buttons and this one held
-   one. A single icon alone on a line reads as a control that
-   has lost its neighbours, and it put twenty-eight pixels of
-   nothing between the chips and the thing they filter.
-
-   It is an ordinary .btn so it lines up with "Select this
-   owner's cases" beside it — same height, same border, same
-   hover — and only the width is overridden, because a button
-   holding one glyph should be square rather than as wide as a
-   word. */
-.qa-cog {
-    flex-shrink: 0;
-    width: 26px;
-    padding-left: 0;
-    padding-right: 0;
-    /* The glyph is bigger than the 10px .btn label beside it, or a cog at label
-       size reads as a speck. The LINE HEIGHT is then pinned back to what that
-       10px label's own line box comes out at, so the two buttons are the same
-       height to the pixel and their borders line up: left to itself, a 12px
-       glyph makes this button a pixel taller than the one it sits against,
-       which at this size looks like a misalignment rather than a size. */
-    font-size: 12px;
-    line-height: 11px;
-    color: var(--txt2);
-}
-.qa-cog:hover { color: var(--txt1); }
-/* Marked while its panel is open. The chips in this view mark themselves the
-   same way, and a settings panel with nothing pointing back at what opened it is
-   a panel people close by guessing. */
-.qa-cog.active {
+/* THE COG, marked while its column chooser is open — a settings panel with
+   nothing pointing back at what opened it is a panel people close by guessing. */
+.oc-lb-btn.oc-lb-icon.active {
     color: #fff;
     background: rgba(99, 102, 241, .22);
     border-color: var(--blue);

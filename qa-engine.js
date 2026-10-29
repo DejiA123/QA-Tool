@@ -667,14 +667,29 @@
      * cut at the end: losing the last third of a case is losing the resolution,
      * which is the part QA cares about most.
      * ------------------------------------------------------------------- */
+    /* HOW BIG A BUDGET IS, INCLUDING THE CASE WHERE THERE ISN'T ONE.
+     *
+     * `Infinity` — or 0, which is the same thing said by a caller that has no number — means
+     * DO NOT CUT. That is not a theoretical setting: when the material goes up as a file
+     * there is no message box in the way, and every cut made here is evidence thrown away to
+     * fit a limit that no longer exists. `undefined` still means "use the default", because
+     * the callers that want the old chat-box budgets simply pass nothing. */
+    function budgetOf(v, dflt) {
+        if (v === Infinity || v === 0 || v === null) return Infinity;
+        const n = Number(v);
+        return isFinite(n) && n > 0 ? n : dflt;
+    }
+
+    const POST_SEP = '\n\n' + '-'.repeat(30) + '\n\n';
+
     function buildTranscript(data, opts = {}) {
-        const perPost = opts.perPost || 2500;
-        const maxChars = opts.maxChars || 120000;
+        const perPost = budgetOf(opts.perPost, 2500);
+        const maxChars = budgetOf(opts.maxChars, 120000);
         const items = asList(data && data.qaFeed && data.qaFeed.items).filter(i => i && typeof i === 'object');
-        const lines = [];
-        let used = 0;
-        let dropped = 0;
-        let cut = 0;        // posts whose text was trimmed to fit
+        // { text, clipped } rather than a bare string: how many messages were trimmed is
+        // counted AFTER the ones that got dropped have gone, or the banner claims more
+        // trimmed messages than there are messages below it.
+        const blocks = [];
 
         for (const i of items) {
             const who = i.fromUs === true ? 'SOTI' : i.fromUs === false ? 'CUSTOMER' : 'UNKNOWN SIDE';
@@ -682,9 +697,10 @@
                 : i.internal ? 'INTERNAL NOTE'
                 : i.kind === 'email' ? 'EMAIL' : 'POST';
             const when = i.at ? fmtDateTime(i.at) : (i.label ? `${i.label} (no absolute date)` : 'date not known');
+            let clipped = false;
             let body = String(i.body || '').replace(/\n{3,}/g, '\n\n').trim();
             if (body.length > perPost) {
-                cut++;
+                clipped = true;
                 body = body.slice(0, perPost) + `\n… [${body.length - perPost} more characters of this post not shown]`;
             }
             /* SAY IT WAS UNREADABLE RATHER THAN SHOWING NOTHING. A blank body under a real
@@ -697,35 +713,63 @@
             for (const r of asList(i.replies)) {
                 const rWhen = r.at ? fmtDateTime(r.at) : (r.label || 'date not known');
                 let rBody = String(r.body || '').trim();
-                if (rBody.length > perPost) rBody = rBody.slice(0, perPost) + '…';
+                if (rBody.length > perPost) { clipped = true; rBody = rBody.slice(0, perPost) + '…'; }
                 block += `\n    -> [${rWhen}] [REPLY] ${r.author}: ${rBody}`;
             }
-
-            if (used + block.length > maxChars) { dropped++; continue; }
-            used += block.length + 4;
-            lines.push(block);
+            blocks.push({ text: block, clipped });
         }
 
-        let text = lines.join('\n\n' + '-'.repeat(30) + '\n\n');
+        /* WHICH END GOES, WHEN AN END HAS TO GO.
+         *
+         * THE OLDEST, and that is a reversal of what this did before. Filling forward from
+         * the first post and skipping whatever would not fit kept the opening of the case and
+         * lost the end of it — and the end of a case is the resolution, the closure note and
+         * where the record stands today, which is most of what a QA review is written about.
+         * The opening is not lost with it: MEASURED FACTS is computed over the WHOLE case,
+         * every time, so the first response, the silence gaps and the meeting list survive
+         * intact no matter how much of the transcript had to go.
+         *
+         * Nothing is dropped at all on the attachment path — maxChars is Infinity there and
+         * this loop never runs. It is the fallback path's rule, not the normal one. */
+        let dropped = 0;
+        if (maxChars !== Infinity) {
+            const sizeOf = (arr) => arr.reduce((n, b) => n + b.text.length, 0) + Math.max(0, arr.length - 1) * POST_SEP.length;
+            while (blocks.length > 1 && sizeOf(blocks) > maxChars) { blocks.shift(); dropped++; }
+            // One post, still too big for the budget. Keeping it whole would blow the budget
+            // the caller gave us; dropping it would return an empty transcript. Clip it and
+            // say so in the same breath.
+            if (blocks.length === 1 && blocks[0].text.length > maxChars) {
+                const room = Math.max(500, maxChars - 160);
+                blocks[0] = {
+                    clipped: true,
+                    text: blocks[0].text.slice(0, room)
+                        + `\n… [this single message is longer than the whole transcript budget; ${(blocks[0].text.length - room).toLocaleString()} characters of it are not shown]`
+                };
+            }
+        }
+
+        const cut = blocks.filter(b => b.clipped).length;
+        let text = blocks.map(b => b.text).join(POST_SEP);
         /* SAID FIRST, not in a footnote. When a case has been shortened to fit, that is a
          * fact about the evidence and it has to be read before the evidence is. */
         if (cut || dropped) {
             const bits = [];
-            if (cut) bits.push(`${cut} of these ${lines.length} message(s) have had their text trimmed`);
-            if (dropped) bits.push(`${dropped} further message(s) are missing entirely`);
-            text = `[THIS TRANSCRIPT IS A SHORTENED COPY OF THE CASE — ${bits.join(', ')}, because the whole case was `
-                + 'larger than one request could carry. It is a SAMPLE. Do not conclude that anything is absent from this '
-                + 'case on the strength of not seeing it here, and do not describe what a trimmed message said. The '
-                + 'MEASURED FACTS above were computed over the WHOLE case and are complete.]\n\n' + text;
+            if (cut) bits.push(`${cut} of the ${blocks.length} message(s) below have had their text trimmed`);
+            if (dropped) bits.push(`the ${dropped} OLDEST message(s) on the case are missing entirely`);
+            text = `[THIS TRANSCRIPT IS A SHORTENED COPY OF THE CASE — ${bits.join(', and ')}, because the whole case was `
+                + 'larger than one request could carry. It is a SAMPLE, and what it keeps is the NEWEST part of the case. '
+                + 'Do not conclude that anything is absent from this case on the strength of not seeing it here, and do not '
+                + 'describe what a trimmed message said. The MEASURED FACTS above were computed over the WHOLE case and are '
+                + 'complete.]\n\n' + text;
         }
         if (dropped) {
             /* WHAT IS MISSING, SAID OUT LOUD. A truncated transcript that does not admit to
              * being truncated invites the write-up to conclude that nothing happened in the
              * part it cannot see — "no follow-up was sent", "the case went quiet" — about
              * messages that are sitting on the record. */
-            text += `\n\n[${dropped} further post(s) are NOT included here — the case is longer than one request can carry. `
-                + 'Do not conclude that anything is missing from this case: what you have is a SAMPLE of it. '
-                + 'The measured facts above were computed over the WHOLE case and remain true.]';
+            text += `\n\n[${dropped} earlier post(s) are NOT included above — the case is longer than one request can carry, `
+                + 'so the oldest of it was left out. Do not conclude that anything is missing from this case: what you have '
+                + 'is the most recent part of it. The measured facts above were computed over the WHOLE case and remain true.]';
         }
         return text;
     }
@@ -803,10 +847,19 @@
         return L.join('\n');
     }
 
-    // The one place the training list is written out for a model. Kept here so the prompt and
-    // the parser can never disagree about what the valid answers are.
+    /* The one place the training list is written out for a model. Kept here so the prompt and
+     * the parser can never disagree about what the valid answers are.
+     *
+     * THE HEADING IS DELIBERATELY NOT BRACKETED. A line opening with a bracketed ALL-CAPS
+     * name is how ai-provider.js finds where a prompt's rules stop and its case material
+     * starts, and everything from the first one goes up as the attached file. This list is
+     * not case material — it is the schema the answer is parsed back against, and
+     * parseTraining below matches what returns to these exact labels. Bracketed, it became
+     * the split point, and the valid answers went into the upload while the header that
+     * references them stayed in the message. Plain capitals, like the "RULES:" and
+     * "HEADERS TO FILL:" headings it sits beside. See buildQaPrompt. */
     function trainingBlock() {
-        return '[TRAINING AREAS — pick ONLY from this list, by its exact label. Pick the one to three that this case actually shows evidence for, most important first. If the case shows no training need, write "None".]\n'
+        return 'TRAINING AREAS — pick ONLY from this list, by its exact label. Pick the one to three that this case actually shows evidence for, most important first. If the case shows no training need, write "None".\n'
             + TRAINING_AREAS.map(a => `- ${a.label}: ${a.covers}`).join('\n');
     }
 
@@ -1066,7 +1119,12 @@
                     : p.side === 'them' ? 'someone on the customer side'
                     : 'another participant on the record'}`);
             }
-            return '[WHO IS WHO ON THIS RECORD]\nThe people on this record are NOT identified. Their names were removed before '
+            /* UNBRACKETED, for the same reason trainingBlock's heading is: the legend is how
+             * to READ the material, not a piece of it, and a bracketed heading here would
+             * make it the point at which ai-provider.js cuts the prompt into message and
+             * uploaded file — putting the key to the labels inside the very file whose
+             * labels it explains. */
+            return 'WHO IS WHO ON THIS RECORD\nThe people on this record are NOT identified. Their names were removed before '
                 + 'this reached you and replaced with the role labels below. Use these labels and only these labels, and do not '
                 + 'speculate about who anyone is.\n' + rows.join('\n');
         };
@@ -1138,6 +1196,229 @@ Nothing below asks you to assess, rate or judge a person, and nobody below is id
 THE QUESTION: `;
 
     /* ---------------------------------------------------------------------
+     * WHY EVERY PROMPT BELOW COMES BACK IN TWO HALVES
+     * ---------------------------------------------------------------------
+     * `{ system, request }`, not one string — and the seam is the whole point.
+     *
+     * The relay is M365 Copilot driven through its own web page, and its chat
+     * box has a character limit. Sent as one lump of text, a case that exceeds
+     * it is cut into numbered messages, or condensed, or (last of all) trimmed
+     * with the trim declared — and a long email chain is exactly the material
+     * that loses most on the way through. ai-provider.js has a better path than
+     * any of those: hand the evidence over as an UPLOADED FILE and leave only
+     * the instructions in the box. The analyser has always taken it. This tool
+     * never did, for one reason: the whole prompt went as a single `user` turn,
+     * and that path only opens when the material arrives as a `system` turn it
+     * can split. So every audit went up as chat text, whole cases were sampled
+     * to fit, and nothing was ever attached.
+     *
+     * WHERE THE CUT FALLS, AND WHY IT IS EXACT. ai-provider.js splits the system
+     * turn at the FIRST line that opens with a bracketed ALL-CAPS name, and
+     * uploads everything from there as "<case number>-case-material.txt". So the
+     * order below is a contract, not a layout: rules, headers, training list and
+     * alias legend first, none of them bracketed; then [CASE FACTS], and from
+     * that line on it is the case. Bracket something above that line and it
+     * leaves the message; forget to bracket the first data section and the whole
+     * case stays in the chat box. See dataSectionIdx and buildAttachment in
+     * ai-provider.js.
+     *
+     * AND THE CONTRACT IS NOW CHECKED RATHER THAN REMEMBERED. Both of those
+     * failures used to be silent, which is why one of them had already happened
+     * — a heading bracketed here moved the cut and put the QA sheet's own schema
+     * inside the uploaded file. Every builder below returns through splitPrompt,
+     * which repairs the instructions half, guarantees the material half opens the
+     * data section, and verifies the seam against the very regex ai-provider.js
+     * uses. See THE SPLIT POINT, MADE A CONTRACT INSTEAD OF A CONVENTION below.
+     *
+     * A SHORT CASE STILL GOES INLINE. The upload has a floor (attachMinChars),
+     * below which a file is a round trip to save nothing, and ai-provider.js
+     * decides that on its own — the halves are put in front of it either way.
+     * ------------------------------------------------------------------- */
+
+    /* HOW MUCH OF THE CASE TRAVELS WHEN IT TRAVELS AS A FILE.
+     *
+     * buildTranscript's defaults — 2,500 characters a post, 120,000 for the
+     * transcript — are shaped by the chat box, and on the upload path there is
+     * no chat box. Left as they were, the tool would attach a file and STILL
+     * hand it a sample: long posts clipped mid-sentence and older messages
+     * dropped, with the transcript honestly declaring itself shortened, to fit
+     * a limit that no longer applied to it.
+     *
+     * NOT A SECOND SET OF GUESSES. The only number that means anything here is
+     * the one ai-provider.js will actually enforce — attachMaxChars, which is a
+     * MEASURED ceiling rather than a hopeful one (sentinel lines planted at the
+     * start, middle and end of an upload were quoted back correctly at 2.1 MB,
+     * and the supported figure stops where that evidence stops). So the panel
+     * reads that number off the provider and hands it here, and this does the
+     * arithmetic once: everything except the transcript is reserved for, and the
+     * transcript gets the rest.
+     *
+     * PER-POST CLIPPING GOES AWAY ENTIRELY on this path, and that is the change
+     * that matters most to a QA review. A single email carrying a forty-reply
+     * chain was the post most likely to be clipped and is the one most likely to
+     * hold the commitment, the chase or the apology the audit turns on — and a
+     * post cut at 2,500 characters does not read as cut, it reads as short.
+     *
+     * WHY RESERVE ANYTHING AT ALL. Past its ceiling ai-provider.js trims the END
+     * of the material and declares the cut inside the file. That is honest, and
+     * it is still the wrong end: the end of a QA transcript is the resolution.
+     * Staying under the ceiling means the cut, if there ever is one, is made
+     * HERE — oldest-first, with the measured facts intact (see buildTranscript).
+     */
+    /* THE THREE THINGS THE TRANSCRIPT SHARES ITS CEILING WITH, sized so the sum can never
+     * exceed it — because the moment it does, the trim is made by ai-provider.js, from the
+     * END of the material, which on a QA prompt is the newest half of the transcript.
+     *
+     * The description is reserved for rather than left to take what it likes: it is the
+     * customer's own problem statement, it is normally a page or two, and a quarter of a
+     * megabyte of it is already far past anything a support case has produced. Bounded, so
+     * the arithmetic below is a guarantee instead of an expectation. */
+    const ATTACH_DESCRIPTION = 250000;  // the reported description
+    const ATTACH_HEADROOM = 20000;      // case facts, measured facts, the stored review, section markers
+    const ATTACH_FLOOR = 120000;        // below this an "attachment budget" is not one; fall back to something usable
+
+    function attachedSize(room) {
+        const ceiling = budgetOf(room, 0);
+        // No ceiling to respect: the material is bounded only by what the provider will
+        // take, and it says so inside the file if it ever has to cut.
+        if (ceiling === Infinity) return { perPost: Infinity, maxChars: Infinity, description: Infinity };
+        return {
+            perPost: Infinity,
+            maxChars: Math.max(ATTACH_FLOOR, ceiling - ATTACH_HEADROOM - ATTACH_DESCRIPTION),
+            description: ATTACH_DESCRIPTION
+        };
+    }
+
+    /* THE REPORTED DESCRIPTION, CUT ONLY IF IT MUST BE AND NEVER QUIETLY.
+     *
+     * `description.slice(0, n)` was the whole of this, and a description cut that way does
+     * not read as cut — it reads as a customer who stopped mid-sentence, which is a fact
+     * about the case that is not true. */
+    function descriptionBlock(text, limit) {
+        const body = String(text || '').trim();
+        if (!body) return '';
+        const cap = budgetOf(limit, 6000);
+        if (body.length <= cap) return `[CASE DESCRIPTION AS REPORTED]\n${body}\n\n`;
+        return `[CASE DESCRIPTION AS REPORTED]\n${body.slice(0, cap)}\n`
+            + `… [${(body.length - cap).toLocaleString()} further characters of the reported description are not shown. `
+            + 'Do not treat the description as ending where this does.]\n\n';
+    }
+
+    /* The default, for a caller with no provider to ask — 2,000,000 is ai-provider.js's own
+     * attachMaxChars, so this is what the panel gets anyway on a stock configuration. */
+    const ATTACHED_SIZE = attachedSize(2000000);
+
+    /* ---------------------------------------------------------------------
+     * THE SPLIT POINT, MADE A CONTRACT INSTEAD OF A CONVENTION
+     * ---------------------------------------------------------------------
+     * Everything above rests on one rule living in another file: ai-provider.js
+     * cuts the system turn at the FIRST line opening with a bracketed ALL-CAPS
+     * name, and uploads from there. Two ways to break it, and the note above
+     * admits that both are silent:
+     *
+     *   • bracket a heading in the INSTRUCTIONS half — the rules, the QA headers,
+     *     the training list — and the cut moves up. The schema the answer is
+     *     parsed against leaves the message and goes into the file, where it
+     *     competes with a hundred kilobytes of email for the model's attention.
+     *     That is how a run comes back with every header missing.
+     *   • forget to bracket the first line of the MATERIAL half and there is no
+     *     cut at all: nothing is attached, the whole case goes into the chat box,
+     *     and it is trimmed to fit exactly as it was before.
+     *
+     * Neither raises an error today. Both are one careless edit away, in a file
+     * where the rule is not written down — and the symptom of each is a worse
+     * answer, not a failure, which is the kind of bug that survives for months.
+     *
+     * So the rule is enforced here rather than remembered. splitPrompt() takes
+     * the two halves, repairs an instructions half that would move the cut,
+     * guarantees the material half starts one, and checks its own work against
+     * the very regex ai-provider.js uses. It is cheap — two regex passes over a
+     * prompt that is about to be uploaded anyway — and it means a future edit to
+     * a heading cannot quietly change where the case is sent.
+     * ------------------------------------------------------------------- */
+
+    /* The rule itself, copied verbatim from dataSectionIdx in ai-provider.js. Copied rather
+     * than imported because qa-engine.js must be loadable without the provider (the tests
+     * and the parser do not need a browser), and a copy that is checked on every build is
+     * safer than an import that is not always there. */
+    const DATA_SECTION_RE = /^\[[A-Z][A-Z0-9 &/()'’,.…—-]{2,}/m;
+
+    function dataSectionIdx(text) {
+        const m = String(text || '').match(DATA_SECTION_RE);
+        return m ? m.index : -1;
+    }
+
+    /* TAKE THE BRACKETS OFF A HEADING THAT MUST NOT MOVE THE CUT.
+     *
+     * Only at the start of a line, and only the pair that wraps a whole ALL-CAPS heading —
+     * "[MEASURED FACTS]" mid-sentence in a rule is left exactly as it is, because that is a
+     * reference to a section rather than the start of one, and rewriting it would break the
+     * sentence that points the model at the block.
+     */
+    function unbracketHeadings(text) {
+        return String(text || '').replace(
+            /^\[([A-Z][A-Z0-9 &/()'’,.…—-]{2,}?)\]([ \t]*)$/gm,
+            '$1$2'
+        ).replace(
+            // A heading whose bracket never closed on the same line ("[CASE FACTS" or
+            // "[TRAINING AREAS — …" ), which is how the one real instance of this bug was
+            // written. Drop the opening bracket and any stray closer at the end of the line.
+            /^\[([A-Z][A-Z0-9 &/()'’,.…—-]{2,}[^\n]*)$/gm,
+            (whole, rest) => rest.replace(/\]\s*$/, '')
+        );
+    }
+
+    /* THE TWO HALVES, JOINED SO THE CUT LANDS EXACTLY BETWEEN THEM.
+     *
+     * Returns the { system, request } pair every builder hands back, plus `split` — the
+     * character offset ai-provider.js will cut at — so a caller can check the contract held
+     * without re-deriving it. See previewSplit below, which the panel uses to tell a
+     * reviewer, before a single case is sent, what is going into the file.
+     */
+    function splitPrompt(instructions, material, request) {
+        let head = unbracketHeadings(String(instructions || '').replace(/\s+$/, ''));
+        let body = String(material || '').replace(/^\s+/, '');
+
+        /* The material must OPEN the data section, or there is no cut and nothing is
+         * attached. Anything that does not already start with a bracketed ALL-CAPS heading
+         * gets one — a wrapper rather than a rewrite, so the material below it is untouched
+         * and still reads the way its builder wrote it. */
+        if (dataSectionIdx(body) !== 0) body = '[CASE MATERIAL]\n' + body;
+
+        const system = head ? `${head}\n\n${body}` : body;
+        const at = dataSectionIdx(system);
+        const want = head ? head.length + 2 : 0;
+
+        /* THE CHECK IS NOT DECORATION. unbracketHeadings handles every shape of bracketed
+         * heading seen so far; a shape it does not handle would move the cut silently, which
+         * is the whole failure this exists to stop. Say so loudly in the console — the answer
+         * will still be produced, and it will still be grounded in the same material, but
+         * whoever is looking at a run of empty headers deserves to be told why. */
+        if (at !== want) {
+            console.warn('[QA Tool] the prompt\'s rules/material seam is not where it should be — '
+                + `ai-provider.js will cut at ${at}, the case material starts at ${want}. `
+                + 'Something above the material opens a line with a bracketed ALL-CAPS name: '
+                + JSON.stringify(system.slice(Math.max(0, at), Math.max(0, at) + 80)));
+        }
+
+        return { system, request: String(request || ''), split: want, instructions: head, material: body };
+    }
+
+    /* WHAT WOULD BE SENT, WITHOUT SENDING IT. The panel shows this on the card and in the
+     * run log, so "the whole case went as a file" is something a reviewer reads rather than
+     * something they have to trust. */
+    function previewSplit(prompt) {
+        const system = String((prompt && prompt.system) || '');
+        const at = dataSectionIdx(system);
+        return {
+            ok: at >= 0,
+            instructionChars: at >= 0 ? at : system.length,
+            materialChars: at >= 0 ? system.length - at : 0,
+            heading: at >= 0 ? (system.slice(at).split('\n', 1)[0] || '').slice(0, 60) : ''
+        };
+    }
+
+    /* ---------------------------------------------------------------------
      * THE QA PROMPT
      * ---------------------------------------------------------------------
      * The output is the QA SHEET, header for header, so a run can be pasted
@@ -1160,16 +1441,16 @@ THE QUESTION: `;
         const description = String((data && data.description) || (caseRec && caseRec.description) || '').trim();
         const transcript = buildTranscript(data, O.transcript || {});
 
-        return `${O.retry ? RETRY_PREFACE : ''}You are auditing ONE SUPPORT CASE RECORD for SOTI Support's internal case-audit process — the routine check a service desk runs over its own tickets to see whether its process was followed. You are the auditor, not the person who worked the case: what is being examined is the RECORD and the HANDLING on it, not the customer's problem${who ? ', and not any individual — nobody in this material is identified' : ''}.
+        const instructions = `${O.retry ? RETRY_PREFACE : ''}You are auditing ONE SUPPORT CASE RECORD for SOTI Support's internal case-audit process — the routine check a service desk runs over its own tickets to see whether its process was followed. You are the auditor, not the person who worked the case: what is being examined is the RECORD and the HANDLING on it, not the customer's problem${who ? ', and not any individual — nobody in this material is identified' : ''}.
 
 Fill in EXACTLY the headers below, in this order, one per line, and output nothing before or after them. Each header is a column of the team's QA sheet.
 
 RULES:
-- Ground every statement ONLY in the case material below. Never invent a date, a version, an article number, a JIRA code or a name. If something is not in the material, say "Not evident from the case".
+- Ground every statement ONLY in the case material given with this request — it is either written out below or attached to this message as a file, and either way it is the only thing you may draw on. Never invent a date, a version, an article number, a JIRA code or a name. If something is not in the material, say "Not evident from the case".
 - The [MEASURED FACTS] block is arithmetic already done for you. Quote it, never recompute it, and never contradict it. If it says the first response was missed, it was missed.
 - The transcript is OLDEST FIRST. The end of it is where the case stands now.
 - The person who reported the problem is the CUSTOMER. Anyone writing on behalf of SOTI Support is the AGENT. Never swap these roles.
-- ${who ? `Everyone on this record appears under a role label (${AGENT}, Customer 1, and so on) — see [WHO IS WHO ON THIS RECORD] below. Write about the labels. Never use a personal name, and never guess at one.` : 'Refer to people by their role.'}
+- ${who ? `Everyone on this record appears under a role label (${AGENT}, Customer 1, and so on) — see WHO IS WHO ON THIS RECORD below. Write about the labels. Never use a personal name, and never guess at one.` : 'Refer to people by their role.'}
 - Assess the SOTI SIDE of the handling, not the customer's conduct. A difficult customer is not a finding against ${AGENT}; how the case was handled around them is.
 - Be specific and quote. "Poor communication" is worthless to whoever reads this; "the 12 March reply answered the licensing question but ignored the enrolment error the customer asked about twice" is something a team can act on.
 - Be fair. Say what was done WELL as readily as what was not — a review with an empty Positive(s) line on a competently handled case is a bad review.
@@ -1193,13 +1474,28 @@ Coaching Pointer: one sentence of practical guidance, in the second person, sayi
 
 ${trainingBlock()}
 
-${legend}[CASE FACTS]
+${legend}`.replace(/\s+$/, '');
+
+        /* FROM [CASE FACTS] DOWN, THIS IS THE CASE AND NOTHING ELSE. It is the half that
+         * becomes the uploaded file, so nothing that governs how to ANSWER may appear in it
+         * — an instruction the model has to go and find in an attachment is competing with
+         * a hundred kilobytes of email for its attention, where the same instruction in the
+         * message is simply the message. */
+        const material = `[CASE FACTS]
 ${facts}
 
 ${measurementBlock(m, R)}
 
-${description ? `[CASE DESCRIPTION AS REPORTED]\n${description.slice(0, (O.transcript && O.transcript.description) || 6000)}\n\n` : ''}[CASE TRANSCRIPT — OLDEST FIRST]
+${descriptionBlock(description, O.transcript && O.transcript.description)}[CASE TRANSCRIPT — OLDEST FIRST]
 ${transcript || '(No feed posts could be read for this case.)'}`;
+
+        /* WHAT ACTUALLY GETS TYPED INTO THE BOX AS THE QUESTION. Short on purpose: the
+         * instructions above it are the specification, and repeating them here would give a
+         * model two places to read the schema from and a chance to disagree with itself. It
+         * names the case so the Copilot conversation is identifiable in the sidebar. */
+        return splitPrompt(instructions, material,
+            `Audit ${caseNo ? `case ${caseNo}` : 'this case record'} now. Output exactly the headers listed above, `
+            + `in that order, one per line, with nothing before them and nothing after them.`);
     }
 
     /* THE 30/60/90 PROMPT — the management-review write-up for an aging case.
@@ -1221,13 +1517,13 @@ ${transcript || '(No feed posts could be read for this case.)'}`;
         const jira = (data && data.jiraNumber) || (caseRec && caseRec.jira) || '';
         const transcript = buildTranscript(data, Object.assign({ perPost: 2000, maxChars: 100000 }, O.transcript || {}));
 
-        return `${O.retry ? RETRY_PREFACE : ''}Produce a 30/60/90 case analysis for management review of this aging support case. This is a document about the CASE and what happens to it next, not about any person. Use EXACTLY the template layout below — same headers, same order — and output nothing before or after it.
+        const instructions = `${O.retry ? RETRY_PREFACE : ''}Produce a 30/60/90 case analysis for management review of this aging support case. This is a document about the CASE and what happens to it next, not about any person. Use EXACTLY the template layout below — same headers, same order — and output nothing before or after it.
 
 RULES:
-- Ground EVERY statement ONLY in the case material below. Never invent facts, versions, dates or links. If something decisive is unknown, say so in a short phrase.
+- Ground EVERY statement ONLY in the case material given with this request — it is either written out below or attached to this message as a file, and either way it is the only thing you may draw on. Never invent facts, versions, dates or links. If something decisive is unknown, say so in a short phrase.
 - The transcript is OLDEST FIRST; the end of it is where the case stands now.
 - The person who reported the problem is the CUSTOMER; anyone writing for SOTI Support is a SUPPORT ENGINEER. Never swap these roles.
-${who ? '- Everyone on this record appears under a role label — see [WHO IS WHO ON THIS RECORD] below. Use those labels, never a personal name.' : ''}
+${who ? '- Everyone on this record appears under a role label — see WHO IS WHO ON THIS RECORD below. Use those labels, never a personal name.' : ''}
 - "30/60/90:" MUST be "${milestone}"${age !== null ? ` (the case is ${age} days old)` : ''}.
 - "Date of Update:" MUST be ${today}.
 - Quote a JIRA / MCMR code ONLY if it already appears on this case${jira ? ` (this case carries ${jira})` : ' (this case carries none)'}. Never any other code.
@@ -1242,13 +1538,25 @@ Next steps: "- " bullets — the concrete actions still to do to move this case 
 Research Links: real URLs that appear in the case material, or "None".
 30/60/90 JIRA Justification: 1-3 sentences on whether this aged case warrants a JIRA or development escalation at this milestone, referencing the case age, the business impact, and whether a product defect is suspected.
 
-${measurementBlock(m, R)}
+${legend}`.replace(/\s+$/, '');
 
-${legend}[CASE FACTS]
+        /* THE MEASURED BLOCK MOVED DOWN HERE, below the rules rather than above the facts.
+         * It is bracketed, it is derived from the case, and it is therefore case material —
+         * so it belongs on the file side of the cut with the rest of the evidence. Left where
+         * it was, it would have been the FIRST bracketed section and the split would have
+         * happened there, sending the template's own rules up inside the attachment. The
+         * order the model reads it in is unchanged: facts, measurements, then transcript. */
+        const material = `[CASE FACTS]
 ${caseFactsBlock(caseRec, data)}
+
+${measurementBlock(m, R)}
 
 [CASE TRANSCRIPT — OLDEST FIRST]
 ${transcript || '(No feed posts could be read for this case.)'}`;
+
+        return splitPrompt(instructions, material,
+            `Write the 30/60/90 analysis for ${caseNo ? `case ${caseNo}` : 'this case'} now, using exactly the `
+            + `template above — same headers, same order, nothing before it and nothing after it.`);
     }
 
     /* ---------------------------------------------------------------------
@@ -1267,13 +1575,15 @@ ${transcript || '(No feed posts could be read for this case.)'}`;
      * `ctx` is the stored case context (see the panel's saveContext) rather than
      * a live scrape, because a chat happens days after the run.
      * ------------------------------------------------------------------- */
-    function buildChatSystem(ctx, review) {
+    function buildChatSystem(ctx, review, opts) {
+        const O = opts || {};
+        const rules = [];
         const parts = [];
         const legend = String((ctx && ctx.legend) || '');
-        parts.push(`You are helping a case auditor at SOTI Support discuss ONE SUPPORT CASE RECORD they are auditing. You are talking to the AUDITOR. This is an internal check of a support desk's own records — of what the record shows and whether the desk's process was followed on it. It is not about any person, and ${legend ? 'nobody in the material below is identified: the names were removed before it reached you and replaced with role labels' : 'the individuals are not the subject'}.
+        rules.push(`You are helping a case auditor at SOTI Support discuss ONE SUPPORT CASE RECORD they are auditing. You are talking to the AUDITOR. This is an internal check of a support desk's own records — of what the record shows and whether the desk's process was followed on it. It is not about any person, and ${legend ? 'nobody in the material below is identified: the names were removed before it reached you and replaced with role labels' : 'the individuals are not the subject'}.
 
 RULES:
-- Answer ONLY from the case material below. If the material does not settle a question, say so plainly — "the case does not say" is a good answer and a guess is not.
+- Answer ONLY from the case material given with this request — it is either written out below or attached to this message as a file, and either way it is the only thing you may draw on. If the material does not settle a question, say so plainly — "the case does not say" is a good answer and a guess is not.
 - Never invent a date, a version, an article number, a JIRA code, a name or a quote.
 - Quote and cite. When you make a claim about what happened, name the date and who wrote it, so the reviewer can go and look.
 - The [MEASURED FACTS] block is arithmetic already done from the case timestamps. Treat it as true, never recompute it, and never contradict it.
@@ -1284,9 +1594,23 @@ ${legend ? '- Everyone on this record appears under a role label. Use those labe
 - Be direct and brief. The auditor is working through a queue: answer the question asked, in as few words as it takes, and stop.
 - Plain text and short "- " bullets. No markdown headings, no emoji.`);
 
-        if (legend) parts.push(legend);
-        parts.push(`[CASE FACTS]\n${ctx.facts || '(not recorded)'}`);
-        if (ctx.measured) parts.push(ctx.measured);
+        /* A LEGEND STORED BEFORE THIS TOOL LEARNED TO ATTACH still carries the bracketed
+         * "[WHO IS WHO ON THIS RECORD]" heading it used to have, and a bracketed ALL-CAPS
+         * line is exactly where ai-provider.js cuts a prompt into message and uploaded file.
+         * An old context would therefore put the key to the role labels inside the very file
+         * those labels appear in — harmless enough, but the legend is small and belongs in
+         * the message with the rest of the reading instructions. Normalised on the way out
+         * rather than migrated in storage: these contexts are a cache of already-read cases,
+         * and rewriting eighty of them to correct a heading is not worth the risk of a
+         * migration. Everything below this line is the case itself. */
+        if (legend) rules.push(legend.replace(/^\[(WHO IS WHO ON THIS RECORD)\]/, '$1'));
+
+        /* FROM HERE DOWN IT IS THE CASE, and the seam between this and the block above is
+         * the one ai-provider.js cuts at. splitPrompt enforces that rather than trusting it
+         * — see the note above it — so a chat asks its question in the box and reads the
+         * record out of an attached file, exactly as the write-up does. */
+        parts.push(`[CASE FACTS]\n${(ctx && ctx.facts) || '(not recorded)'}`);
+        if (ctx && ctx.measured) parts.push(ctx.measured);
 
         if (review && review.raw && !review.error && !looksRefused(review.raw)) {
             parts.push(`[THE QA REVIEW ALREADY WRITTEN FOR THIS CASE]
@@ -1297,8 +1621,18 @@ ${review.raw}`);
             parts.push('[THE QA REVIEW ALREADY WRITTEN FOR THIS CASE]\nNone — this case has not been reviewed yet, or its write-up failed.');
         }
 
-        parts.push(`[CASE TRANSCRIPT — OLDEST FIRST]\n${ctx.transcript || '(No feed posts were read for this case.)'}`);
-        return parts.join('\n\n');
+        /* THE TRANSCRIPT THE CHAT READS IS NOT NECESSARILY THE ONE IN THE INDEX.
+         *
+         * ctx.transcript is the short copy kept inside the case index so a card can be drawn
+         * and a chat can still work offline. The FULL one is written to a key of its own when
+         * the case is read, and the panel loads it just before it sends — because a chat that
+         * quietly answers from a clipped copy of the case is the same failure as a write-up
+         * that does, and here nothing on screen would say so. Falls back to the index copy,
+         * which is what every case read before this existed has. */
+        const transcript = O.transcript || (ctx && ctx.transcript) || '';
+        parts.push(`[CASE TRANSCRIPT — OLDEST FIRST]\n${transcript || '(No feed posts were read for this case.)'}`);
+
+        return splitPrompt(rules.join('\n\n'), parts.join('\n\n'), '').system;
     }
 
     /* THE QUESTIONS A REVIEWER ACTUALLY ASKS NEXT, offered as one-press chips.
@@ -1364,14 +1698,14 @@ ${review.raw}`);
             ].join('\n');
         }).join('\n\n');
 
-        return `${O.retry ? RETRY_PREFACE : ''}You are summarising what a set of CASE AUDIT RECORDS have in common, so that a support desk can decide what to put in its next training session.
+        const instructions = `${O.retry ? RETRY_PREFACE : ''}You are summarising what a set of CASE AUDIT RECORDS have in common, so that a support desk can decide what to put in its next training session.
 
 The audits below all cover cases handled by the same desk role. Nobody is identified in them. You are describing what the RECORDS repeatedly show and what practice would fix it — not assessing a person.
 
 Fill in EXACTLY these headers, one per line, and output nothing before or after them.
 
 RULES:
-- Base everything ONLY on the audit records below. Do not invent a case, a date or a behaviour.
+- Base everything ONLY on the audit records given with this request — written out below, or attached to this message as a file. Do not invent a case, a date or a behaviour.
 - You are looking for what REPEATS. One case with a late reply is an incident; the same finding in three of five cases is a pattern, and only a pattern belongs in a coaching row.
 - If the records genuinely show no repeated problem, say so — a fabricated development area wastes a coaching conversation and costs the team's trust in this process.
 - The SMART goal must be Specific, Measurable, Achievable, Relevant and Time-bound, and it must be about something the handling of a case controls. "Improve communication" is not a goal. "Send a written summary in the call log within 4 hours of every customer meeting, for all cases in October" is.
@@ -1384,8 +1718,20 @@ Coaching Pointer / SMART Goal: one measurable goal for the next month, in one or
 Due Date: a sensible review date for that goal, one month from today, as a date only.
 Notes: anything a Team Lead should know before the conversation — including what these records show being done WELL, which must not be left out.
 
-[${records.length} CASE AUDIT RECORD(S) FROM THE SAME DESK ROLE]
+`.replace(/\s+$/, '');
+
+        /* THE COUNT MOVED OUT OF THE HEADING. It used to open "[5 CASE AUDIT RECORD(S)…]",
+         * which reads perfectly well and is invisible to the rule that finds the start of the
+         * case material — that rule wants a LETTER after the bracket, and a digit is not one.
+         * A month of a busy agent's audits is usually small enough to stay in the message
+         * either way; this is so that when it is not, it goes as a file like everything else
+         * rather than being quietly cut to fit. */
+        const material = `[CASE AUDIT RECORDS — ${records.length} FROM THE SAME DESK ROLE]
 ${lines}`;
+
+        return splitPrompt(instructions, material,
+            'Write the coaching row for these audit records now. Output exactly the headers listed above, '
+            + 'one per line, with nothing before them and nothing after them.');
     }
 
     /* ---------------------------------------------------------------------
@@ -1537,7 +1883,14 @@ ${lines}`;
             if (m) num = m;
         }
         const n = num ? Math.min(100, Math.max(0, parseInt(num[1], 10))) : null;
-        let band = (text.split('/')[1] || '').trim().replace(/\(.*$/, '').trim();
+        /* ONE OF THE FOUR BAND WORDS, OR NONE. Told to write "72/Good", a model often writes
+         * "72/100" or "72/100 — Good" instead — and the text after the slash was taken as the
+         * band whatever it said, so the run log read "reviewed — 72/100 (100)". The word is
+         * looked for anywhere after the number; a scale is not a band, and a missing word is
+         * worked out from the number exactly as the prompt defines it. */
+        const after = text.replace(/^[^/]*\//, '');
+        const word = after.match(/\b(excellent|good|needs\s*work|poor)\b/i);
+        let band = word ? ({ excellent: 'Excellent', good: 'Good', poor: 'Poor' }[word[1].toLowerCase()] || 'Needs work') : '';
         if (!band && n !== null) band = bandFor(n);
         return { value: n, band };
     }
@@ -1654,6 +2007,13 @@ ${lines}`;
         cleanName,
         looksRefused,
         PROMPT_SIZES,
+        ATTACHED_SIZE,
+        attachedSize,
+        descriptionBlock,
+        splitPrompt,
+        previewSplit,
+        dataSectionIdx,
+        unbracketHeadings,
         CHAT_RETRY_PREFACE,
         buildChatSystem,
         chatSuggestions,

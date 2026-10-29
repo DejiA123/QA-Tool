@@ -10,9 +10,53 @@ other's settings, cases or reviews.
 
 ---
 
+## What's new in 3.0.0
+
+* **Copilot works again, the way it does in the SOTI AI Analyser v9.5.4.** Microsoft now
+  forwards `m365.cloud.microsoft/chat` to `copilot.cloud.microsoft`, and 2.1.0 could only ever
+  be granted the first — so every write-up failed five times with *"Signing in redirected the
+  tab to https://copilot.cloud.microsoft"*. The relay files are the analyser's v9.5.4 ones, the
+  manifest asks for both hosts, and a **Connect Copilot** dialog asks for them in one click and
+  tests the connection straight away. **After installing 3.0.0, press *Grant access to Copilot*
+  once** when the dialog appears — Chrome only adds the new host when asked.
+* **A locked-out relay stops the run** at the first case instead of asking five times per case;
+  a sign-in redirect is told apart from a missing permission and offers *Open Copilot to sign in*.
+* **The Cases tab is the analyser's**: Add Case menu, Sync From Salesforce and ↻, Current View,
+  the comma-separated filter, tier / JIRA / ★ Focus chips, the Select bar, the cog, the row
+  expander and ×, and a right-click menu — with **QA selected** and **30/60/90** on the list bar.
+* **Terms of use**, as in the analyser: shown the first time the panel opens (and again when the
+  terms change), accepted with *I agree*, recorded on the device with the date, and readable any
+  time from **⋮ → Settings → Read the Terms of use**. Settings also carries the ownership notice.
+* **The integrity check**, as in the analyser and with the analyser's key: every official copy
+  carries `integrity.json`, a SHA-256 of each code file signed by Ayodeji Augustine. At start-up
+  the tool hashes its own files and checks the signature; a changed, unsigned or forged copy shows
+  a red *Unofficial copy* strip on every screen, and Settings names the changed files. To publish
+  a build, sign it last: `node .qa-build-tools/sign-integrity.mjs <integrity-signing-key.pem>`
+  (the key never goes in this folder; the tool folder is left out of the zip).
+* The Connect Copilot test no longer **sticks at 95%** when Copilot draws the whole answer at once
+  under a toolbar of screen-reader labels, and the test message is no longer **typed twice**.
+* **Agent Cases is there from the start**, as in the analyser: the Agent Cases report is in
+  Current View on first start, and **Sync From Salesforce** opens and reads it when no case list
+  is open. Saved lists can now be **Salesforce reports** as well as list views — paste a
+  `/lightning/r/Report/00O…/view` link into *Add a Salesforce list view*. The report is read by
+  the analyser's v9.5.4 report reader (content.js).
+* **Display size** (zoom) in Settings, 70%–130%, plus Ctrl + / Ctrl − / Ctrl 0.
+* The ⚙ tab is gone — **⋮ → Settings** is where Settings lives, as in the analyser.
+* The **GitHub update check is removed** — button, dot, dialog, schedule and the `api.github.com`
+  permission. A new build arrives by replacing the folder; your reviews are kept (see below).
+* Fixes found on the way: a short multi-paragraph Copilot answer was cut to its first line (it
+  made *Test the case upload* fail); a short answer under a Copy / Regenerate bar could come
+  back as "Regenerate"; a message box smaller than expected threw *"material is not defined"*
+  instead of re-splitting the message (both in the analyser's v9.5.4 relay too); chat answers could print their opening twice; "78/100" was
+  read as the band "100"; a failed write-up showed a score instead of **!**; reviewed cases said
+  "not read" in the chat picker; re-running a case after signing in kept failing; column
+  headings sat 6px off their columns; the Reviews filter was squeezed to a few letters.
+
+---
+
 ## What it does
 
-Given a Salesforce case list, it goes through the ticked cases **one at a time**, opening each
+Given a Salesforce case list, it goes through the selected cases **one at a time**, opening each
 in a background window and reading everything on it — emails, Chatter posts, internal notes,
 call logs and replies, with their dates and times. Then, for each case:
 
@@ -52,15 +96,19 @@ the top of every review card, the written judgement is prose below it.
 
 1. Chrome → `chrome://extensions`
 2. Turn on **Developer mode** (top right)
-3. **Load unpacked** → choose this folder (`QA Tool v2.0.0`)
+3. **Load unpacked** → choose this folder (`QA Tool v3.0.0`)
 4. Pin the teal **QA** icon to the toolbar and click it to open the side panel
 
 Then, once:
 
-* **Settings → Grant site access** and allow the Microsoft 365 Copilot host when Chrome asks.
+* The **Connect Copilot** dialog opens by itself. Press **Grant access to Copilot** and allow
+  it when Chrome asks — it asks for `m365.cloud.microsoft` and `copilot.cloud.microsoft`
+  together, because Microsoft moves the chat from one to the other. The connection is tested as
+  soon as it is allowed. (Missed it? **⋮ → Settings → The AI → Grant access to Copilot**.)
   Reviews are written through a Copilot tab the tool drives itself, so nothing leaves the
   browser for a service you are not already signed in to.
-* **Settings → Test the relay** to confirm it works before starting a run.
+* **⋮ → Settings → Test the case upload** once, to prove a whole case file reaches Copilot and
+  is read to its end.
 
 ---
 
@@ -69,47 +117,58 @@ Then, once:
 ### 1. Get the cases in
 
 Open the Salesforce case **list view** you review from (Cases → whichever queue) and press
-**Sync case list**. The tool refreshes the list first — a Lightning list view is a snapshot of
-when it loaded and does not re-query because time has passed — then scrolls it to the end and
-reads every row.
+**Sync From Salesforce** (or the **↻** beside it — the same sync in one glyph). The tool
+refreshes the list first — a Lightning list view is a snapshot of when it loaded and does not
+re-query because time has passed — then scrolls it to the end and reads every row. The count
+and the time of the last sync are in the button's tooltip.
 
 After the first sync it remembers the list, so later syncs work from any tab: if the list is
 open elsewhere it brings it to the front, and if it is closed it reopens it.
 
-**🗂️ Add list view** saves a queue you review from, the same way the SOTI AI Analyser does.
-Paste the address of a Salesforce case list view — the `/lightning/o/Case/list?filterName=…`
-one — give it a name, and it is kept as a button under the toolbar. Pressing it opens that
-view in Salesforce **and** syncs the queue from it in one go, so switching between "Escalations"
-and "Waiting on SOTI" is one press rather than four. A view that is already open in a tab is
-reused rather than opened again, and the chip for the queue currently on screen is marked.
+**+ Add Case** opens a menu of three ways in, the analyser's:
 
-The **×** on a chip forgets the view and nothing else — the cases already synced stay, and
-nothing changes in Salesforce. (This is the one place the two tools differ: the analyser's
-queue holds several lists at once so deleting one takes its cases with it, while a QA sync
-replaces the queue, so there are no rows that belong to the chip you are removing.)
-
-**🔗 Add case** puts a single case in from its link.
+* **📋 From the Salesforce tab** — adds the case open in your active browser tab.
+* **🔗 Add Case URL** — paste one case's link. A case added by hand is kept when the list is
+  synced again, even though no list view holds it.
+* **📑 Add a List of Cases** — paste a `/lightning/o/Case/list?filterName=…` address and name
+  it. It is kept under **Current View** as a chip: press it to open that view in Salesforce
+  **and** sync the queue from it in one go. Right-click a chip to **rename** or **forget** it;
+  the chip for the queue on screen is marked.
 
 ### 2. Pick what to review
 
-Two ways, and they combine:
-
-* **Tick the boxes** beside the cases you want.
-* **Pick a case owner** from the dropdown and press **Select this owner's cases** — this ticks
-  every case belonging to that agent across the whole queue, not just the ones the current
-  search happens to be showing.
-
-The chips narrow the list: **30-day / 60-day / 90-day**, **Needs 30/60/90** (everything at or
-past its first milestone), **Not yet QA'd**, **Already QA'd**.
+* **Select** turns every row's tick-box on — a click on a row then ticks it instead of opening
+  it. **Select all** ticks everything on screen (or **Ctrl+A**), the **bin** takes the ticked
+  cases off the list (local only), and **Cancel** or **Esc** stops selecting. Pressing **QA** with
+  nothing ticked starts selecting for you.
+* **The filter box** matches the case number, subject, account, contact, JIRA, status and
+  owner. **Commas give alternatives** — `Imran, Ayse` is everything those two own, and a name
+  that owns cases in the queue is matched against the owner only, as whole words. This is the
+  by-owner workflow: filter to the agent, Select → Select all.
+* **The chips** narrow the list: the entitlement tiers, **JIRA** (cases with a defect raised),
+  **★ Focus** (waiting on SOTI, new, or a red activity dot), and this tool's own —
+  **30-day / 60-day / 90-day**, **Needs 30/60/90**, **Not yet QA'd**, **Already QA'd**.
+* **▸** on a row shows what the case is about, where its QA stands, and **QA this case**,
+  **Open review** and **💬 Chat**. Right-click a row for the same, plus copy and remove.
+* **⚙ → Columns** (or right-click the headings) chooses what each row shows; drag a heading's
+  right edge to resize it.
 
 Every row that has reached a milestone carries a coloured flag — amber at 30, orange at 60,
 red at 90 — so the cases due a management review are findable without reading a single age.
 
 ### 3. Run it
 
+Both buttons are on the bar just above the cases:
+
 * **QA _n_ cases** — the full quality review, one row of the QA sheet per case.
 * **30/60/90** — the management-review write-up for aging cases. It warns first if any of the
   ticked cases are under 30 days old.
+
+Copilot is checked **before** anything is read: if Chrome has not given the tool access, the
+Connect Copilot dialog opens instead and starts the same run once Copilot has answered. If the
+relay is refused part-way — access withdrawn, or Microsoft asking you to sign in — the run
+**stops at that case** rather than failing every case after it, says which of the two it was,
+and **Re-run the incomplete ones** on the Reviews tab picks the cases up again.
 
 **Delete** on the Reviews tab clears the list. It says the number it will take, and it takes
 what the filter is showing — "Delete all 27" with no filter on, "Delete these 3" when you
@@ -158,6 +217,101 @@ no readable text` — because a forty-message case that lost thirty-five of them
 genuine five-message case are opposite conclusions that used to look identical. A feed
 that was still loading when the read stopped says so, in the log and in the write-up, and
 the timings are reported as a floor rather than a fact.
+
+### The case goes up as a file
+
+The relay is M365 Copilot driven through its own web page, and a chat box has a character
+limit. A case does not: a long email chain with forty replies on it is hundreds of
+kilobytes of evidence, and it is exactly the case a QA review most needs to read in full.
+
+So the case material is **attached**, the way the analyser has always attached one. What
+goes into the chat box is the instructions, the QA headers, the training list and the role
+legend — about eight thousand characters, one message. Everything from `[CASE FACTS]`
+down — the facts, the measured findings, the description and the whole transcript — goes
+up as `C01725481-case-material.txt` next to it, named after the case so you can recognise
+it later in your own OneDrive and clear it out.
+
+This used to be a single lump of text in the chat box, and the cost was paid twice. Big
+cases were **cut to fit**: every post clipped at 2,500 characters and the transcript at
+120,000, with the transcript honestly declaring itself a sample — so the write-up was
+grounded in part of a case and said so. And what survived that was split across numbered
+messages, because it still did not fit. On a genuinely large case that was 1.3 MB of
+evidence going out as eight messages with 790,000 characters thrown away. The same case
+now goes as one message and one file, complete.
+
+**Nothing is clipped on the way into the file.** The per-post limit is gone entirely on
+this path — a single email carrying a forty-reply chain is the post most likely to hold the
+commitment or the chase an audit turns on, and a post cut at 2,500 characters does not read
+as cut, it reads as short. The transcript's own budget is not a second guess either: the
+panel reads `attachMaxChars` off the provider — a ceiling that was measured rather than
+hoped for — and `attachedSize` in `qa-engine.js` reserves what the facts, the measured
+block and the description need out of it, so what is left is the transcript's and the sum
+cannot overflow. If a case ever did have to lose something, the cut is made here rather
+than by the provider, and it is made at the **oldest** end: the newest half of a QA
+transcript is the resolution and where the record stands today, and the early timeline
+survives regardless in `[MEASURED FACTS]`, which is computed over the whole case every
+time.
+
+**How the split is decided, and why it can no longer break quietly.** `ai-provider.js` cuts
+the prompt at the first line opening with a bracketed ALL-CAPS name and uploads everything
+from there. That makes the order of the prompt a contract rather than a layout: rules,
+headers, training areas and legend first, none of them bracketed; `[CASE FACTS]` and
+everything after it is the case. Bracket a heading above that line and the QA sheet's own
+schema leaves the message and goes into the file; forget to bracket the first data section
+and the whole case stays in the chat box. Both failures are silent, both produce a worse
+answer rather than an error — and one of them had already happened.
+
+So the rule is enforced instead of remembered. Every prompt builder returns through
+`splitPrompt`, which strips the brackets off any heading in the instructions half that
+would move the cut, guarantees the material half opens the data section, and checks its own
+work against the very regex `ai-provider.js` uses, warning in the console if the seam is
+not where it should be. A heading edited carelessly can no longer change where the case is
+sent.
+
+**Every case goes as a file, however small.** `ai-provider.js` has an upload floor —
+`attachMinChars`, 8,000 characters — below which it judges a file not worth the round trip.
+That number was set for the analyser, whose payload is a log bundle measured in megabytes,
+and it is the wrong shape of number for a case audit, because **a support case is prose**.
+Measured against real shapes: three messages is 1,900 characters of material, ten is 3,300,
+twenty is 5,200, and a busy case with **thirty** messages on it still comes to about 7,200.
+Every one of those sits under the floor — so every one of them was typed into the chat box
+and no attachment was ever offered. The only cases that cleared 8,000 were the ones
+carrying a long quoted email chain, which is why it looked intermittent rather than broken.
+
+The panel therefore drops the floor at boot, the same way it switches the product reference
+off: for this tool the case is **always** attached. The cost is a few seconds and one small
+`.txt` per case. What it buys is a message that stays the same tiny size whatever the case
+is, one place for the model to read evidence from, and no case competing with its own
+instructions for room.
+
+**The chat reads the whole case too.** A chat is a review continued by other means —
+"justify that score", "what did the customer actually ask on the 3rd" — and both of those
+are answered by the post a clipped copy is most likely to have dropped. The full transcript
+is written to a key of its own when the case is read (not onto the case index, which
+`chrome.storage` rewrites whole on every save, so caching one case would mean rewriting
+eighty), and it is loaded the moment before a question is sent. A case read by an older
+build, or one whose document has aged out, falls back to the index copy and the chat works
+exactly as it did.
+
+**Every review records how it travelled.** A write-up built on the whole case and one built
+on a transcript that was trimmed by six hundred thousand characters arrive looking
+identical — same headers, same confident prose, same score. So each ask records what
+`ai-provider.js` did with the prompt and what the relay reported back, and the card says it
+at the bottom: *the case went to Copilot as C01725481-case-material.txt — 412,830
+characters, complete*. The run log stays quiet unless something was actually lost, because
+a reassurance printed on all thirty cases of a run is one nobody reads. The case this
+catches is the important one: the site had no usable upload control, the relay quietly fell
+back to typing the case as text, and the answer came back looking fine.
+
+**Test it before a run depends on it.** Settings → **Test the case upload** sends a made-up
+case with three markers hidden at its start, its middle and its end, and asks Copilot to
+read all three back. Getting the last one proves the file arrived, was read, and was read
+to its end — which is the one thing a working relay test cannot tell you.
+
+**Nothing rides along with it.** The analyser uploads its product reference — ports,
+services, log sources — beside the case, because it answers technical questions out of
+them. This tool ships no knowledge folder and asks a different question: how a record was
+handled. One file goes up, and it is the case.
 
 ### When the relay will not answer
 
@@ -284,46 +438,13 @@ check on the written row beside it.
 
 ---
 
-## Updates
+## New versions
 
-The dot beside the version number appears **on its own**. The panel checks GitHub six
-hours after the last answer it got, re-arms itself after every check, and re-reads the
-clock when you come back to the panel — so a laptop that slept through the timer notices
-on the next look rather than on the next restart. A failed check (almost always GitHub's
-hourly rate limit) comes back in thirty minutes rather than waiting the full six. When a
-newer build turns up it says so once, not at every check.
+There is **no update check** any more — no button, no dot, no request to GitHub. A new build
+arrives as a folder: unzip it, copy it over this one (or load the new folder), then press
+**Reload** on `chrome://extensions`.
 
-Pressing the button still always asks now, whatever the dot says.
-
-> **One-time note when you upgrade to this build:** `api.github.com` has moved from an
-> optional permission to a granted one, so the check works on a fresh install without
-> anybody pressing anything first. Chrome asks you to re-enable the extension once after
-> the permissions change. It is used for the version check and nothing else, and the
-> download still goes through Chrome's own downloads rather than through the panel.
-
-
-The **↻ button beside the version number** in the title bar asks GitHub what has been
-published and shows a dot when it is newer than the build you are running. Pressing it always
-re-checks — a remembered answer is never passed off as a check.
-
-It watches a github repository, and it looks in three
-places in this order: a published **release** (the only one that can carry notes saying what
-changed), then a **tag**, then **`manifest.json` on `main`** — which works on a repository with
-neither, and is the only one of the three that cannot be wrong, because the manifest is the
-file actually being shipped.
-
-**Permission.** The check needs Chrome's permission to reach `api.github.com`, which it asks
-for the first time you press the button — never at start-up. That host is used for the version
-check and nothing else, and it hands file contents back base64-encoded, so
-`raw.githubusercontent.com` is never contacted and is not on the allow-list. The download
-itself goes through Chrome's own downloads, not through the panel. After the permission
-exists, an automatic check runs at most once every six hours.
-
-**Nothing installs itself.** An extension cannot rewrite its own folder on disk — no API
-exists for it and none should. So the button downloads a zip and the last step is yours:
-unzip, copy over this folder, then **Reload** on `chrome://extensions`.
-
-### Your reviews survive an update
+### Your reviews survive a new version
 
 `manifest.json` carries a `key`, which **pins the extension ID**. Without one, Chrome derives
 the ID of an unpacked extension from its *folder path* — and this folder is named for its
@@ -335,19 +456,19 @@ the analyser's, and git-ignored in both places. It is only needed to publish a s
 losing it costs you that and nothing else — the ID comes from the public half, which is in the
 manifest and is meant to be there.
 
-**Back up anyway** before rebuilding a Chrome profile or moving to another machine: *Settings →
-Back up my data*, or the same button in the update dialog. It writes every key the extension
-holds to a JSON file, read with `null` rather than a named list — a backup that silently omits
-the chats is worse than no backup, because it is trusted. Restoring is additive: it writes the
-keys the file holds and leaves everything else alone.
+**Back up anyway** before rebuilding a Chrome profile or moving to another machine:
+**⋮ → Settings → Your data → Back up my data**. It writes every key the extension holds to a
+JSON file, read with `null` rather than a named list — a backup that silently omits the chats
+is worse than no backup, because it is trusted. **Restore from a backup** reads one back in;
+it is additive — it writes the keys the file holds and leaves everything else alone — and the
+panel reloads afterwards.
 
 ---
 
 ## The repository
 
 This folder **is** the repository — extension files at the root, so a zip of `main` unzips to
-something you can copy straight over an install. It lives at
-a github repository, which is the repository the update button watches.
+something you can copy straight over an install.
 
 ### Cutting a release
 
@@ -358,15 +479,8 @@ git commit -m "QA Tool v1.1.0 — <what changed>"
 git push
 ```
 
-Pushing the bumped manifest is **on its own enough** for the update button to see the new
-version: the third route in `update.js` reads `manifest.json` off `main`.
-
-Two optional extras, in increasing order of effort and usefulness:
-
-* `git tag v1.1.0 && git push --tags` — the dialog then links to the tag.
-* Publish a **GitHub release** — the release body is what appears in the dialog as the notes
-  saying what changed. This is the only route that can tell somebody *why* they should update,
-  so it is worth the two minutes on anything more than a fix.
+Then zip the folder as `QA Tool v<version>` and hand that out — nothing in the tool checks for
+it, so telling the team is the release.
 
 ### Line endings
 
@@ -459,6 +573,7 @@ counted, and an explicit instruction to the write-up not to call it late.
 | Cases read at the same time | 2 | Every case being read is a whole Salesforce page in memory |
 | Send cases with the names removed | on | Role labels out, real names back in the answer. Turning it off usually means Copilot refuses the review — see [The names do not go out](#the-names-do-not-go-out) |
 | The team | the nine names on the coaching sheet | Decides the sheet's order and who appears with no cases yet — **not** who may be reviewed |
+| Display size | 100% | The whole panel smaller or larger, 70%–130% — text, buttons and case columns together. Applied at once and kept on this computer; Ctrl + / Ctrl − / Ctrl 0 work anywhere in the panel |
 
 An agent who turns up in the queue without being on the team list is still reviewed and still
 gets a coaching row.
@@ -475,20 +590,26 @@ gets a coaching row.
 | `case-reader.js` | The background reader window: one window, one tab per case |
 | `content.js` | The Salesforce reader. **The SOTI AI Analyser's, carried over whole**, with a QA appendix at the end that returns the feed as records rather than as prose |
 | `reader-wake.js` | Keeps an occluded reader tab rendering. The analyser's, unchanged |
-| `ai-provider.js` | The Copilot relay. The analyser's, unchanged |
-| `copilot-bridge.js` | Injected into the relay tab. The analyser's, unchanged |
-| `styles.css` | The analyser's stylesheet, unchanged, so the two tools look like siblings |
-| `qa-styles.css` | Only what QA adds - tick boxes, the run pill, the chat, the sheets |
+| `ai-provider.js` | The Copilot relay. The analyser's v9.5.4, with a few QA Tool additions, each marked `(QA Tool addition)` |
+| `copilot-bridge.js` | Injected into the relay tab. The analyser's v9.5.4, with one QA Tool addition, marked the same way |
+| `styles.css` | The analyser's v9.5.4 stylesheet, unchanged, so the two tools look like siblings |
+| `qa-styles.css` | Only what QA adds — the QA button, the run pill, the chat, the sheets |
 | `background.js` | Opens the side panel, and keeps a clock running for the relay |
-| `update.js` | The version check against this repository, the update dialog, and backup/restore |
+| `backup.js` | Back up and restore everything the tool stores |
+| `display-size.js` | Settings → Display size, applied before the first paint |
 | `icons/` | The toolbar mark: a teal "QA" badge, drawn so it is not mistaken for the analyser's indigo hexagon at 16px |
 
 ### Keeping it in step with the analyser
 
-`content.js`, `reader-wake.js`, `ai-provider.js`, `copilot-bridge.js` and `styles.css` are
-verbatim copies. When the analyser fixes something in one of them, replace the file here —
-except `content.js`, where everything after the `QA TOOL — THE STRUCTURED FEED READ` banner is
-this tool's and has to be re-appended.
+`content.js`, `reader-wake.js` and `styles.css` are verbatim copies, and `ai-provider.js` and
+`copilot-bridge.js` nearly so. When the analyser fixes something in one of them, replace the
+file here — then:
+
+* in `ai-provider.js` and `copilot-bridge.js`, search the old copy for `QA Tool addition` and
+  carry each one across (and replace the first line's notice), unless the analyser has made the
+  same fix itself;
+* in `content.js`, everything after the `QA TOOL — THE STRUCTURED FEED READ` banner is this
+  tool's and has to be re-appended.
 
 The knowledge corpus and the OCR libraries are deliberately **not** copied: QA is about how a
 case was handled, not about what the product does, so ~30 MB of product documentation would
@@ -511,7 +632,7 @@ whose posts could not be attributed to a side gets `first response: could not be
 
 **A failed write-up still keeps the measurement.** The expensive half of a review is opening
 the case and reading its feed to the end; if the relay fails afterwards, the findings are saved
-with the error and re-running that one case is a tick and a button.
+with the error and re-running that one case is one button on its review card.
 
 **A chat is only as current as the last read.** The material is captured when the case is read, not when you ask - so on a case that has moved on since, press *Read it again* in the chat before you trust an answer about what is happening now.
 

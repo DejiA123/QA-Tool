@@ -1,3 +1,4 @@
+/* © 2026 Ayodeji Augustine. All rights reserved. SOTI AI Analyser is proprietary — see LICENSE.txt. Any change to this file breaks its signature, and the copy is then marked as modified on every screen. */
 /* SOTI AI Analyser - Full Premium Styles */
 *,
 *::before,
@@ -17,6 +18,14 @@
    the attribute means the same thing everywhere it is used from here on. */
 [hidden] { display: none !important; }
 
+/* NOT IN THIS BUILD. Set by applyEditionToMarkup() on anything the Global build leaves out
+   (see edition.js). A class of its own, !important, so code that later un-hides the same
+   block for its own reasons — admin mode revealing the feed box — cannot bring it back. */
+.edition-off { display: none !important; }
+
+/* AI Settings → Display size zooms the root and sets --ui-zoom beside it (applyUiScale in
+   sidepanel.js). Zoom scales 100vw/100vh as if they were ordinary pixels, so every calc() on
+   a viewport unit divides it by --ui-zoom to stay inside the panel. */
 :root {
     color-scheme: dark;
     --bg0: #0d1321;
@@ -165,8 +174,21 @@ body.case-mismatch {
     z-index: 100;
 }
 
+/* THE PILLS WERE BEING SQUASHED BY THE SCROLLBAR, top and bottom (9.3.2 / Global 1.0.2).
+   On a small laptop the five pills do not fit, the row scrolls — and the row's scrollbar was
+   Windows' own: 10–12px tall with arrow buttons at each end, drawn INSIDE this 36px bar. The
+   30px pills were left 24px to sit in, so their tops and bottoms were cut off, the Cases
+   dot was clipped, and the overflow grew a second, VERTICAL scrollbar at the right edge.
+
+   The cause was `scrollbar-width: thin` / `scrollbar-color`. Since Chrome 121, setting either
+   of those standard properties switches OFF the `::-webkit-scrollbar` rules for that element —
+   so the 3px bar written just below had never been drawn at all, and Chrome drew its native
+   "thin" scrollbar instead. They are gone; the 3px rule is what applies now. overflow-y is
+   pinned hidden so nothing can ever grow a vertical bar here again, and the bar is two pixels
+   taller so the 30px pills and their shadow have room above the 3px track. Scrolling the row
+   with the mouse wheel is wired in sidepanel.js (see wireTabBarScroll). */
 .tab-bar {
-    height: 36px;
+    height: 38px;
     background: var(--bg0);
     border-bottom: 1px solid var(--border);
     display: flex;
@@ -174,9 +196,8 @@ body.case-mismatch {
     padding: 0 10px;
     gap: 4px;
     overflow-x: auto;
+    overflow-y: hidden;
     flex-shrink: 0;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border2) transparent;
 }
 .tab-bar::-webkit-scrollbar { height: 3px; display: block; }
 .tab-bar::-webkit-scrollbar-track { background: transparent; }
@@ -250,39 +271,45 @@ body.case-mismatch {
     color: var(--red);
 }
 
-/* THE LOGO IS A CONTROL — it goes back to the main screen. It has to say so on hover, or a
-   corner that turns out to be clickable is a surprise rather than an affordance; and it has
-   to stay quiet the rest of the time, because it is a wordmark and not a button. Negative
-   margins so the hover background has room to breathe without moving the logo one pixel from
-   where it has always sat. */
+/* THE LOGO IS A WORDMARK, NOT A CONTROL. It used to go back to the main screen on a click,
+   with a hover wash to say so; it no longer does anything, so it no longer looks as though it
+   might — no pointer, no hover, no pressed state. The back arrow beside it is the way back.
+   The margins and padding are kept so the logo sits exactly where it always has. */
 .tl {
     display: flex;
     align-items: center;
     gap: 8px;
+    min-width: 0;
     margin: -4px -6px;
     padding: 4px 6px;
     border-radius: var(--r6);
-    cursor: pointer;
+    cursor: default;
     user-select: none;
-    transition: background .15s ease;
 }
-/* .08, not .05 — on the topbar's #111827 a five-percent white wash is under a point of
-   luminance and simply is not visible, which makes the affordance a promise the pixels do
-   not keep. The wordmark going full white is the other half of the signal. */
-.tl:hover { background: rgba(255, 255, 255, .08); }
-.tl:hover .logo-name { color: #fff; }
-.tl:active { background: rgba(255, 255, 255, .12); }
-.tl:focus-visible { outline: 2px solid var(--blue2); outline-offset: 1px; }
 .logo-hex { font-size: 18px; color: var(--txt3) }
-/* The wordmark and the version share a line rather than stacking. A second line here would
-   push the 48px topbar out of shape, and the version is a suffix to the name — "SOTI AI
-   ANALYSER v8.1.0" is how anybody says it out loud. */
+/* The wordmark and the version share a line rather than stacking, because the version is a
+   suffix to the name — "SOTI AI ANALYSER v9.3.7" is how anybody says it out loud. */
 .logo-block { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-.logo-name { font-size: 11px; font-weight: 700; color: var(--txt1); letter-spacing: .5px; transition: color .15s ease }
+/* EXCEPT WHEN THE VERSION CARRIES A LABEL. manifest.json's version_name can say more than a
+   number ("9.0.1 Beta Testing Internal Use Only"), and on one line a label that long runs under
+   the ⋮ menu at 320–400px — the widths a side panel actually opens at — covering the only way
+   into Settings. applyAppVersion() adds .has-label when version_name says more than version, and
+   the label then takes a second line under the wordmark: two small type sizes at a 1.25 line
+   height are about 26px, well inside the 48px bar. A plain version is untouched. */
+.logo-block.has-label { flex-direction: column; align-items: flex-start; gap: 0; }
+.logo-block.has-label .logo-name,
+.logo-block.has-label .logo-ver { line-height: 1.25; max-width: 100%; }
+.logo-name { font-size: 11px; font-weight: 700; color: var(--txt1); letter-spacing: .5px; white-space: nowrap; flex-shrink: 0; transition: color .15s ease }
 /* Quieter than the name and in the tabular figures, because it is a fact you look up rather
    than a label you read. Hidden by applyAppVersion() when there is no manifest to read one
-   from, so the standalone page never shows an empty "v". */
+   from, so the standalone page never shows an empty "v".
+   It is also the one thing in the bar allowed to give way: at a width too narrow even for the
+   stacked label it is cut short with an ellipsis — the full text is in its tooltip — rather
+   than laid over the menu. */
 .logo-ver {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     font-size: 9.5px;
     font-weight: 600;
     color: var(--txt3);
@@ -290,6 +317,12 @@ body.case-mismatch {
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
 }
+/* The pieces that must NOT give way when the bar is tight: the hexagon, and the menu on the
+   right. Without these the label's ellipsis would be the last thing to shrink, not the first.
+   No margin before the menu: at 320px with the update pill up the bar has no slack at all, so
+   any added spacing makes even a plain "v9.0.1" give way there. */
+.tl > svg { flex-shrink: 0; }
+.topbar .tr { flex-shrink: 0; }
 
 /* BACK. Its own control, left of the wordmark, where every browser and every phone puts it.
    Sized and coloured as a quiet icon button: it appears and disappears as the history does,
@@ -341,10 +374,49 @@ body.case-mismatch {
 .btn-upd:hover { background: rgba(255, 255, 255, .08); border-color: var(--border); color: #fff; }
 .btn-upd:active { background: rgba(255, 255, 255, .12); }
 .btn-upd:focus-visible { outline: 2px solid var(--blue2); outline-offset: 1px; }
-/* With something to install the icon stops being grey. The dot alone is 6px and on a
-   busy topbar 6px is missable; the two together are not. */
-.btn-upd.has-update { color: var(--blue2); }
-.btn-upd.has-update:hover { color: #fff; }
+/* WITH SOMETHING TO INSTALL THE BUTTON STOPS BEING AN ICON. A blue glyph and a 6px dot are
+   a hint, and a hint is the wrong shape for this: it does not say what it wants, and nobody
+   presses a refresh arrow to find out. So the control widens into a labelled pill — the same
+   button in the same place, now readable at a glance and obviously pressable. It shrinks back
+   to the bare icon the moment the panel is running the newest build, so the wide state always
+   means exactly one thing.
+
+   `width: auto` overrides the fixed 24px above; min-width keeps the square shape as the floor
+   so the collapsed state is untouched. */
+.btn-upd.has-update {
+    width: auto;
+    min-width: 24px;
+    gap: 4px;
+    padding: 0 7px;
+    color: var(--blue2);
+    background: rgba(129, 140, 248, .14);
+    border-color: rgba(129, 140, 248, .5);
+    /* ONCE, ON ARRIVAL — not a loop. The pill appears without anybody pressing anything, so
+       it needs the small movement that makes a change register; it then has to be sat beside
+       all afternoon, which is the thing a permanent pulse makes impossible. */
+    animation: upd-pill-in .4s ease-out;
+}
+.btn-upd.has-update:hover {
+    color: #fff;
+    background: rgba(129, 140, 248, .26);
+    border-color: var(--blue2);
+}
+.btn-upd-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .3px;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.btn-upd-label[hidden] { display: none !important; }
+@keyframes upd-pill-in {
+    from { opacity: .35; transform: scale(.9); }
+    to   { opacity: 1;   transform: scale(1); }
+}
+/* The colour and the word carry the whole message without it. */
+@media (prefers-reduced-motion: reduce) {
+    .btn-upd.has-update { animation: none; }
+}
 .btn-upd-dot {
     position: absolute;
     top: 1px;
@@ -506,6 +578,55 @@ body.case-mismatch {
 }
 
 .panel-left { border-top: 1px solid var(--border); border-bottom: none !important; max-height: 100%; }
+
+/* THE SIDEBAR IS ITS OWN COLOUR — a deeper navy than the chat beside it (--bg0), where it used
+   to share --bg1 with nearly everything and read as the same surface continuing. Two areas
+   that do different jobs (the case's facts and actions; the conversation about them) are
+   easier to tell apart at a glance when they are not the same grey. Its two header bars are
+   lifted a step further so they still read as bars on the new ground. */
+.panel-left { background: linear-gradient(180deg, #16203b 0%, #121a31 100%); }
+.panel-left .ph,
+.panel-left .qa-ph { background: #1c2848; }
+.panel-left .ph:hover,
+.panel-left .qa-ph:hover { background: #22305a; }
+.panel-left .qa-panel { background: transparent; }
+
+/* THE EDGE HANDLE and the hidden sidebar — see #plEdge. Wide layout only: below 600px the
+   sidebar is a stacked strip with its own ▶, and a tab on a border that does not exist would
+   be a control with nothing to attach to. */
+.pl-edge-wrap { display: none; }
+@media (min-width: 600px) {
+    .pl-edge-wrap {
+        display: block;
+        position: relative;
+        flex: 0 0 0;
+        width: 0;
+        z-index: 30;
+    }
+    .pl-edge {
+        position: absolute;
+        top: 50%;
+        left: -9px;
+        transform: translateY(-50%);
+        width: 16px;
+        height: 34px;
+        padding: 0;
+        border-radius: 5px;
+        border: 1px solid var(--border2);
+        background: #1c2848;
+        color: var(--txt2);
+        font-size: 10px;
+        line-height: 1;
+        cursor: pointer;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
+        transition: background .15s, color .15s, border-color .15s;
+    }
+    .pl-edge:hover { background: var(--blue); border-color: var(--blue); color: #fff; }
+    .pl-edge:focus-visible { outline: 2px solid var(--blue2); outline-offset: 1px; }
+    /* Hidden: the sidebar goes entirely and the tab sits against the left edge of the chat. */
+    .layout.pl-hidden .panel-left { display: none !important; }
+    .layout.pl-hidden .pl-edge { left: 0; border-radius: 0 5px 5px 0; }
+}
 .panel-right { border-top: 1px solid var(--border); max-height: 100%; }
 
 .ph {
@@ -621,21 +742,35 @@ body.case-mismatch {
    become the same button twice and was removed with its markup. Nothing here styles it
    any more — see the note on .oc-toolbar .btn-sf, which no longer has to work around it. */
 
-/* Meeting-notes AI cleanup button (sits under the Meeting Notes textarea) */
-.btn-clean-notes {
-    width: 100%;
-    margin-top: 2px;
-    background: rgba(129, 140, 248, 0.10) !important;
-    color: var(--blue2) !important;
-    border: 1px solid rgba(129, 140, 248, 0.35) !important;
-    padding: 7px !important;
-    font-weight: 600 !important;
-    font-size: 11px !important;
+/* "FIX ACCESS" on the Stats screen. Amber rather than blue: it is not one of the ordinary
+   controls, it appears only when the screen is refusing to render, and it should read as
+   "there is something wrong here and this is the thing to press". */
+.stats-btn-fix {
+    background: rgba(245, 158, 11, 0.16) !important;
+    border-color: rgba(245, 158, 11, 0.45) !important;
+    color: #fbbf24 !important;
+    font-weight: 700 !important;
 }
-.btn-clean-notes:hover {
-    background: rgba(129, 140, 248, 0.22) !important;
-    color: #fff !important;
+.stats-btn-fix:hover { background: rgba(245, 158, 11, 0.28) !important; color: #fff !important }
+.stats-btn-fix[disabled] { opacity: .6; cursor: default }
+
+/* THE QUIET REFRESH beside "Sync from Salesforce".
+   Square, icon-only, and the same blue family as the button it sits against — it is the
+   same action done without moving you, not a different one, so it should not look like a
+   different one. The spin is the only feedback it has room for; the toast the sync raises
+   is the rest. */
+.oc-refresh {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
+.oc-refresh svg { margin: 0 !important }
+.oc-refresh[disabled] { opacity: .6; cursor: default }
+.oc-refresh.spinning svg { animation: oc-refresh-spin .9s linear infinite; transform-origin: 50% 50% }
+@keyframes oc-refresh-spin { to { transform: rotate(360deg) } }
+
+/* The Meeting Notes card's own Professionalise button (.btn-clean-notes) is gone — tidying
+   the notes is the first choice in the popup its three post buttons open. See .mnp-go. */
 
 /* Fields */
 .fld { display: flex; flex-direction: column; gap: 4px }
@@ -709,6 +844,65 @@ body.case-mismatch {
     border-color: var(--red) !important;
     background: rgba(239, 68, 68, 0.03) !important;
 }
+
+/* WHY MC HOSTED IS BLANK — the note under that field, and never anywhere else.
+   ==========================================================================
+   Two states, two colours, because they are two different jobs: RED is "the customer has
+   not given us their registration code and the case cannot be worked until they do", AMBER
+   is "they gave it, it is right here, put it in the Asset field". An engineer who reads the
+   colour and nothing else should still act on the correct one of those, which is why the
+   amber one is not simply a quieter red.
+
+   A wash and a left edge rather than a full border: the field above it already wears the
+   validation outline, and two boxed things stacked read as two problems. */
+.reg-note {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: -2px;
+    padding: 7px 9px;
+    border-radius: var(--r4);
+    font-size: 10.5px;
+    line-height: 1.45;
+    color: var(--txt2);
+}
+.reg-note.reg-ask {
+    background: rgba(239, 68, 68, .10);
+    border-left: 3px solid rgba(239, 68, 68, .65);
+}
+.reg-note.reg-file {
+    background: rgba(230, 140, 60, .10);
+    border-left: 3px solid rgba(230, 140, 60, .65);
+}
+.reg-note-text { flex: 1 1 100%; min-width: 0 }
+.reg-note strong { color: var(--txt1); font-weight: 700 }
+/* The code itself, as something to be read character by character and pasted — so a
+   monospace face, and a box that says it is a value rather than a sentence. */
+.reg-note-code {
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 10.5px;
+    letter-spacing: .02em;
+    color: #ffd8a8;
+    background: rgba(0, 0, 0, .25);
+    border: 1px solid rgba(230, 140, 60, .35);
+    border-radius: var(--r4);
+    padding: 3px 6px;
+    user-select: all;
+    word-break: break-all;
+}
+.reg-note-btn {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--r4);
+    color: var(--txt2);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: all .2s;
+}
+.reg-note-btn:hover { background: var(--bg2); border-color: var(--blue2); color: var(--blue) }
 
 /* High-visibility resize handle */
 .ftxt::-webkit-resizer {
@@ -820,6 +1014,23 @@ body.case-mismatch {
 }
 .msg.user .mb { background: var(--blue); color: #fff }
 .msg.assistant .mb { background: var(--bg2); border: 1px solid var(--border); color: var(--txt1) }
+
+/* A LINK INSIDE AN ANSWER. md() turns a bare URL into a real anchor, and left to the browser
+   that is #0000EE on a dark bubble — legible in the way a fire escape is. Underlined as well
+   as coloured, because colour alone is not a signal to every reader.
+   `break-all` on the address itself: a product help URL is longer than a side panel is wide,
+   and the bubble's own overflow-wrap does not reach inside a nested inline element. */
+.mb a {
+    color: var(--blue2);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    word-break: break-all;
+}
+.mb a:hover { color: var(--txt1) }
+.mb a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 2px }
+/* On the user's own blue bubble the link colour has to come off the other side of the
+   contrast — --blue2 on --blue is one shade against another. */
+.msg.user .mb a { color: #fff }
 
 .welcome {
     text-align: center;
@@ -1017,8 +1228,28 @@ body.case-mismatch {
     display: flex;
     align-items: center;
     gap: 6px;
+    /* ONE LINE, like .ph-left above it. The collapsed sidebar is 140px, which leaves 116px
+       inside the padding, and "⚡ QUICK OPTIONS" needs about 106 of them — so any arrow wider
+       than ~10px broke the label onto two lines and made this bar taller than Case Info's. */
+    white-space: nowrap;
+    overflow: hidden;
+    min-width: 0;
 }
-.qa-ph-collapse { font-size: 10px; color: var(--txt2); }
+/* ONE ARROW FOR BOTH BARS. Case Info's ▶ had no rule and inherited the body's 16px while this
+   one was pinned at 10px in grey, so the two headings stacked one above the other carried
+   visibly different arrows. Declared once, for both — at 10px, the size the sub-section arrows
+   already use, because at 16px it no longer fits beside QUICK OPTIONS in the collapsed bar.
+   flex-shrink: 0 so a tight bar squeezes the label, never the arrow. */
+.ph-collapse,
+.qa-ph-collapse { font-size: 10px; line-height: 1.5; color: var(--txt1); flex-shrink: 0; }
+/* ROOM FOR THE ARROW IN THE 140px SIDEBAR. Inside 12px of padding a side, QUICK OPTIONS and a
+   10px arrow fit with 0.4px between them — on one line, but with the arrow touching the word.
+   Taking the padding to 10px / 8px on BOTH bars gives it ~7px and keeps the two arrows'
+   right edges in line. Only while collapsed: an open panel has room and is left as it was. */
+@media (min-width: 600px) {
+    .panel-left.collapsed .ph,
+    .panel-left.collapsed .qa-ph { padding-left: 10px; padding-right: 8px; }
+}
 .qa-pb {
     padding: 8px;
     display: flex;
@@ -1286,129 +1517,87 @@ body.case-mismatch {
 }
 
 /* ============================================================
-   THE ACTIONS THIS ENGINEER ADDED
+   THE QUICK OPTIONS GROUPS — ★ Favourites, JIRA Actions,
+   Case Actions, Other (Info). See renderQuickActionGroups.
    ============================================================
-   A plain container, laid out exactly like the fixed buttons
-   above it — the whole point is that a chosen action is
-   indistinguishable from a permanent one once it is on the
-   panel. It inherits .qa-pb's gap, so it needs its own only
-   because it is itself a flex child holding several buttons.
-   Nothing is drawn when it is empty, which is a fresh install.
-   ============================================================ */
-.qa-extra-items { display: flex; flex-direction: column; gap: 6px; }
-.qa-extra-items:empty { display: none; }
-
-/* THE × THAT TAKES ONE BACK OFF.
-   Adding an action is one click, so removing it is one click, on the thing being removed —
-   the same × the saved list-view chips and the queue rows carry. Unticking it in the +
-   chooser still works and always did; this is so that the reverse of a one-click action is
-   not a two-step hunt.
-
-   The ROW is the flex child now, so the action inside it has to be told to fill what is left
-   of it — same adjustment .qa-item-row needed for the length chips. */
-.qa-extra-row { display: flex; align-items: stretch; gap: 4px; }
-.qa-extra-row > .qa-drop-item { flex: 1 1 auto; min-width: 0; }
-.qa-extra-del {
-    flex: 0 0 auto;
-    width: 26px;
-    background: none;
-    border: 1px solid transparent;
-    border-radius: 8px;
-    color: var(--txt4);
-    font-family: var(--font);
-    font-size: 15px;
-    line-height: 1;
-    cursor: pointer;
-    transition: color .15s, background .15s, border-color .15s;
-}
-/* Quiet until the pointer is on the row it belongs to. It sits directly beside a control that
-   starts a several-minute generation, and a permanently lit × next to those reads as "one of
-   these removes things" — the mis-click that costs something is the one onto the action, so
-   the × stays out of the way until you are actually going for it. */
-.qa-extra-row:hover .qa-extra-del { color: var(--txt3); }
-.qa-extra-del:hover { color: #ff9a8b; background: rgba(239, 68, 68, .14); border-color: rgba(239, 68, 68, .35); }
-.qa-extra-del:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; color: var(--txt1); }
-
-/* ============================================================
-   THE + THAT ADDS THEM
-   ============================================================
-   Deliberately not a .qa-drop-item. Everything above it DOES
-   something to the case; this one changes what the panel holds,
-   and giving it the same weight would put a settings control in
-   a row of actions and have people press it looking for one.
-   So: no fill, no border until hover, and the text at the size
-   of a caption rather than a button label.
-   ============================================================ */
-.qa-add-row { position: relative; }
-.qa-add-btn {
-    width: 100%;
+   A group heading is a caption, not a button that looks like
+   an action: no fill and no border, so the eye goes to the
+   actions and the headings read as the index between them. The
+   count is on every heading so a folded group still says how
+   much is inside it. */
+.qa-groups { display: flex; flex-direction: column; gap: 4px; }
+.qa-grp { display: flex; flex-direction: column; gap: 5px; }
+.qa-grp + .qa-grp:not([hidden]) { border-top: 1px solid var(--border); padding-top: 4px; }
+.qa-grp-h {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
+    gap: 7px;
+    width: 100%;
     background: transparent;
-    border: 1px dashed var(--border);
-    border-radius: 8px;
-    color: var(--txt3);
+    border: 0;
+    border-radius: 6px;
+    padding: 5px 4px;
+    color: var(--txt2);
     font-family: var(--font);
-    font-size: 11px;
-    font-weight: 600;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    cursor: pointer;
+    text-align: left;
+}
+.qa-grp-h:hover { color: var(--txt1); background: rgba(255, 255, 255, .04); }
+.qa-grp-h:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.qa-grp-i { width: 14px; text-align: center; flex-shrink: 0; }
+.qa-grp-fav .qa-grp-i { color: #fbbf24; }
+.qa-grp-t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.qa-grp-n {
+    margin-left: auto;
+    flex-shrink: 0;
+    font-size: 9.5px;
+    color: var(--txt3);
+    background: var(--bg3);
+    border-radius: 10px;
+    padding: 1px 6px;
+    letter-spacing: 0;
+}
+.qa-grp-chev { width: 10px; text-align: center; font-size: 10px; color: var(--txt3); flex-shrink: 0; }
+.qa-grp-b { display: flex; flex-direction: column; gap: 6px; }
+.qa-grp-empty { font-size: 10.5px; color: var(--txt3); padding: 2px 4px 4px; line-height: 1.45; }
+
+/* ONE LINE PER ACTION: the action, then its star. The row is the flex child, so the action
+   inside it has to be told to fill what the star leaves. Case Summary's button gets a line of
+   its own (.qa-main-line) because its length chips sit underneath it. */
+.qa-extra-row,
+.qa-main-line { display: flex; align-items: stretch; gap: 4px; }
+.qa-extra-row > .qa-drop-item,
+.qa-main-line > .qa-drop-item { flex: 1 1 auto; min-width: 0; }
+
+/* THE STAR. Hollow and quiet until it is a favourite — it sits beside controls that start
+   several-minute generations and must not read as another one — then filled and gold, which
+   is what a favourite looks like everywhere else. */
+.qa-star {
+    flex: 0 0 auto;
+    width: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: rgba(255, 255, 255, .03);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--txt4);
+    font-size: 14px;
+    line-height: 1;
     cursor: pointer;
     transition: color .15s, border-color .15s, background .15s;
 }
-.qa-add-btn:hover { color: var(--txt1); border-color: var(--blue); background: rgba(255, 255, 255, .04); }
-.qa-add-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
-.qa-add-plus { font-size: 14px; line-height: 1; font-weight: 700; }
+.qa-star:hover { color: #fbbf24; border-color: rgba(251, 191, 36, .45); }
+.qa-star.is-on { color: #fbbf24; }
+.qa-star:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
 
-/* HOW MANY MORE THERE ARE.
-   The + is deliberately the quietest control in the panel — it changes what the panel HOLDS
-   rather than doing anything to the case, so it must not compete with the actions above it.
-   That quiet is why it read as a settings screen nobody had a reason to open. A number is the
-   cheapest possible fix: it does not raise the button's voice, it tells you there is something
-   behind it. Pushed to the right so the button still reads "+ Add actions" first. */
-.qa-add-n {
-    margin-left: auto;
-    min-width: 17px;
-    padding: 0 5px;
-    border-radius: 999px;
-    background: rgba(80, 130, 230, .18);
-    border: 1px solid rgba(80, 130, 230, .42);
-    color: #a7c7ff;
-    font-size: 10px;
-    font-weight: 700;
-    line-height: 15px;
-    text-align: center;
-}
-.qa-add-btn:hover .qa-add-n { background: rgba(80, 130, 230, .30); color: #fff; }
-
-/* The chooser itself. IN FLOW, not an overlay — and that is the second attempt.
-   An overlay above the + would have been nicer (it would leave the actions it configures
-   visible while you tick), but .qa-pb is scroll-capped at 45vh with `overflow-y: auto` in the
-   stacked layout (the wide one lets the panel do the scrolling instead), and
-   an absolutely positioned child of a scrolling box is CLIPPED by it. Opening upward from a
-   control at the bottom of that box is precisely the case that gets cut off, so the prettier
-   version would simply not have been readable. In flow it makes the panel scroll, which is
-   what a scrolling panel is for, and the list is four items. */
-.qa-add-panel {
-    margin-top: 6px;
-    background: var(--bg1);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    overflow: hidden;
-}
-.qa-add-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 7px 10px;
-    border-bottom: 1px solid var(--border);
-    font-size: 10.5px;
-    font-weight: 700;
-    color: var(--txt2);
-    text-transform: uppercase;
-    letter-spacing: .4px;
-}
+/* The close × on the email options' own head. It was shared with the "+ Add actions" chooser,
+   which is gone; the rule stays for the one control still using it. */
 .qa-add-close {
     background: none;
     border: 0;
@@ -1419,20 +1608,6 @@ body.case-mismatch {
     padding: 0 2px;
 }
 .qa-add-close:hover { color: var(--txt1); }
-.qa-add-body { padding: 6px; display: flex; flex-direction: column; gap: 2px; max-height: 40vh; overflow-y: auto; }
-.qa-add-opt {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 7px;
-    border-radius: 6px;
-    font-size: 11.5px;
-    color: var(--txt1);
-    cursor: pointer;
-}
-.qa-add-opt:hover { background: rgba(255, 255, 255, .05); }
-.qa-add-opt input { accent-color: var(--blue); cursor: pointer; flex: 0 0 auto; }
-.qa-add-opt-t { flex: 1 1 auto; min-width: 0; }
 
 /* Log UI Restoration */
 .dz-sub { font-size: 10px; color: var(--txt2); margin-top: 5px; letter-spacing: 1px; }
@@ -1645,6 +1820,45 @@ body.case-mismatch {
     margin-bottom: 6px;
 }
 
+/* SYNC THE JIRA (2026-10-19) — the prompt just above the Meeting Notes arrow, right-aligned with it. */
+.jira-nudge-row {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 2px;
+    margin-bottom: 6px;
+}
+.jira-nudge {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+    max-width: calc(100% - 26px);
+    padding: 3px 10px;
+    background: var(--bg3);
+    border: 1px solid var(--blue);
+    border-radius: 999px;
+    color: var(--txt1);
+    font-family: inherit;
+    font-size: 10.5px;
+    line-height: 1.5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    transition: background .2s;
+}
+.jira-nudge:hover { background: var(--bg2); }
+.jira-nudge-x {
+    background: none;
+    border: none;
+    color: var(--txt3);
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 4px;
+    cursor: pointer;
+}
+.jira-nudge-x:hover { color: var(--txt1); }
+
 /* THE ATTACHMENT COUNT, in the same row as the jump arrow so the composer keeps one strip
    of chrome instead of growing a second one. It is the LEFT half of that row:
    `margin-right:auto` pushes the arrow to the right edge and holds it there whether this
@@ -1744,17 +1958,97 @@ body.case-mismatch {
     overflow-y: auto;
 }
 
-.attach-btn, .send-btn {
+.send-btn {
     background: none;
     border: none;
-    color: var(--txt3);
+    color: var(--blue);
     cursor: pointer;
-    font-size: 16px;
+    font-size: 18px;
     padding: 4px;
     transition: color .2s;
 }
-.send-btn { color: var(--blue); font-size: 18px }
-.attach-btn:hover { color: var(--txt1) }
+/* SEND, OR STOP — the button is a Stop while this case is generating (see syncSendEnabled):
+   a ringed square, quiet grey, turning red under the pointer like the strip's own Stop. */
+.send-btn .send-stop-ico { display: none; }
+.send-btn.is-stop .send-go-ico { display: none; }
+.send-btn.is-stop .send-stop-ico { display: block; }
+.send-btn.is-stop { color: var(--txt1); }
+.send-btn.is-stop:hover { color: #f87171; }
+.send-btn:focus-visible { outline: 2px solid var(--blue2); outline-offset: 2px; border-radius: 50%; }
+
+/* THE "+" AND ITS MENU — option C. One round indigo button, the same height as a line of the
+   text box, that opens a small menu naming both things it can add. The + turns into an × while
+   the menu is open, so the same control visibly closes it again. The menu opens UPWARDS, over
+   the chat, because the input row sits at the very bottom of the panel. */
+.attach-wrap { position: relative; flex-shrink: 0; display: flex; }
+.attach-plus {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 0;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    color: #fff;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, .3);
+    cursor: pointer;
+    transition: box-shadow .15s ease, filter .15s ease, transform .15s ease;
+}
+.attach-plus svg { transition: transform .2s ease; }
+.attach-plus:hover { filter: brightness(1.1); box-shadow: 0 6px 16px rgba(99, 102, 241, .42); }
+.attach-plus:active { transform: scale(.95); }
+.attach-plus:focus-visible { outline: 2px solid var(--blue2); outline-offset: 2px; }
+.attach-plus[aria-expanded="true"] svg { transform: rotate(45deg); }
+
+.attach-menu {
+    position: absolute;
+    left: -4px;
+    bottom: calc(100% + 12px);
+    width: 236px;
+    max-width: calc(100vw / var(--ui-zoom, 1) - 32px);
+    padding: 5px;
+    border-radius: 12px;
+    background: #111a2e;
+    border: 1px solid rgba(129, 140, 248, .3);
+    box-shadow: 0 14px 34px rgba(0, 0, 0, .55);
+    z-index: 60;
+    transform-origin: bottom left;
+    animation: attach-menu-in .14s ease-out;
+}
+.attach-menu[hidden] { display: none; }
+@keyframes attach-menu-in {
+    from { opacity: 0; transform: translateY(4px) scale(.98); }
+    to { opacity: 1; transform: none; }
+}
+.attach-mi {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 9px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--txt1);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.attach-mi:hover, .attach-mi:focus-visible { background: rgba(99, 102, 241, .16); outline: none; }
+.attach-mico {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    display: grid;
+    place-items: center;
+    color: #c7d2fe;
+    background: rgba(99, 102, 241, .16);
+}
+.attach-mt { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.attach-mt b { font-size: 12px; font-weight: 600; color: var(--txt1); }
+.attach-mt small { font-size: 10.5px; color: var(--txt3); margin-top: 1px; }
 
 /* Reasoning Blocks */
 .reasoning-block {
@@ -1815,10 +2109,14 @@ body.case-mismatch {
     100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
 }
 
-.drag-active.attach-btn {
+/* Files dragged over the "+": it keeps its colour and pulses, rather than taking the big
+   dashed drop-zone treatment the panels get, which does not fit a 32px circle. */
+.drag-active.attach-plus {
     animation: diagnostic-pulse 1s infinite;
-    background: var(--bg3) !important;
-    border-radius: 50%;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+    outline: 2px dashed #c7d2fe !important;
+    outline-offset: 3px;
+    transform: none;
 }
 
 @keyframes pulse-dot {
@@ -1851,11 +2149,47 @@ body.case-mismatch {
     position: relative;
     box-shadow: 0 20px 50px rgba(0,0,0,0.5);
 }
+/* THE TOAST SITS ON TOP OF THE CHAT BOX, AND IT USED TO SWALLOW CLICKS THERE.
+ *
+ * This was the whole of "after it puts the drafted email into Salesforce, the chat box stops
+ * working". Nothing about the chat box changes — it is never disabled and its handlers are
+ * never unbound. What happens is that the toast, which is `position:fixed` at the bottom of
+ * the panel exactly where the composer is, is left lying over it INVISIBLY.
+ *
+ * Two things combine:
+ *
+ *   · Hiding a toast only strips the `show` class (see hideToast, and the timeout in toast()).
+ *     The TEXT stays, so the element keeps the height of the last message it showed, and the
+ *     hidden state is a 100px downward shift — which clears a one-line toast off the bottom
+ *     of the panel and does not come close to clearing a tall one.
+ *   · `left:50%` with an auto width makes the available width HALF the panel, so in a 420px
+ *     side panel a toast wraps into a ~210px column. The account-email confirmation is the
+ *     longest message this panel produces ("Email drafted on the case (…). NOTHING HAS BEEN
+ *     SENT — read it and press Send yourself." plus the Cc names that need adding by hand),
+ *     and in that column it is 252px tall. Shifted down 100px it still covers everything from
+ *     172px above the bottom edge — the composer, the attach buttons, the notes-jump row.
+ *
+ * Measured at 420×760: `document.elementFromPoint` over the middle of #chatIn returned the
+ * toast, not the textarea, with the toast at opacity 0. Clicking the box did nothing, so
+ * nothing could be typed into it, and it stayed that way until a SHORTER toast happened to
+ * replace the text.
+ *
+ * `pointer-events: none` is the fix, and it is right in both states rather than only the
+ * hidden one: a toast carries no buttons and no links (the whole element is touched in
+ * exactly two places, toast() and hideToast()), so there is nothing on it to click, and a
+ * VISIBLE one blocking the composer for the sixteen seconds this message is up was the same
+ * bug in its milder form.
+ *
+ * The width is fixed alongside it because the half-panel column is what made the toast tall
+ * enough to reach the composer in the first place: wrapping at the panel's width instead
+ * takes that same message from 252px to 144px, and it is readable rather than a ribbon. */
 .toast {
     position: fixed;
     bottom: 20px;
     left: 50%;
     transform: translateX(-50%) translateY(100px);
+    width: max-content;
+    max-width: min(88%, 520px);
     background: var(--bg2);
     border: 1px solid var(--border);
     padding: 8px 16px;
@@ -1864,6 +2198,7 @@ body.case-mismatch {
     transition: all .3s;
     z-index: 2000;
     opacity: 0;
+    pointer-events: none;
 }
 .toast.show { transform: translateX(-50%) translateY(0); opacity: 1 }
 .toast.s { border-color: var(--green); color: var(--green) }
@@ -1874,6 +2209,35 @@ body.case-mismatch {
    in. 'i' is its quieter counterpart: work is happening, nothing is wrong. */
 .toast.w { border-color: var(--warn); color: var(--warn) }
 .toast.i { border-color: var(--blue2); color: var(--blue2) }
+
+/* ---- Installing an update: the JIRA bar, floating where the toast sits ----
+   Centred with translateX(-50%) like the toast, so it has its own entry keyframes: the shared
+   slideUp animates `transform` and would throw the box half a panel sideways while it ran. */
+.upd-prog {
+    position: fixed;
+    left: 50%;
+    bottom: 20px;
+    transform: translateX(-50%);
+    width: min(380px, calc(100vw / var(--ui-zoom, 1) - 32px));
+    box-sizing: border-box;
+    padding: 10px 14px 9px;
+    background: var(--bg2);
+    border: 1px solid var(--blue2);
+    border-radius: var(--r6);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, .45);
+    z-index: 2001;
+    animation: upd-prog-in .3s ease-out;
+}
+.upd-prog[hidden] { display: none; }
+@keyframes upd-prog-in {
+    from { transform: translate(-50%, 10px); opacity: 0; }
+    to { transform: translate(-50%, 0); opacity: 1; }
+}
+.upd-prog-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.upd-prog-lbl { min-width: 0; font-size: 12px; font-weight: 600; color: var(--blue2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.upd-prog-pct { flex-shrink: 0; font-size: 15px; font-weight: 700; color: var(--blue2); font-variant-numeric: tabular-nums; }
+.upd-prog-stage { margin-top: 7px; min-height: 14px; font-size: 10.5px; color: var(--txt2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (prefers-reduced-motion: reduce) { .upd-prog { animation: none; } }
 
 .m-jira {
     max-width: 900px;
@@ -1913,6 +2277,14 @@ body.case-mismatch {
     gap: 8px;
     animation: slideUp 0.3s ease-out;
 }
+
+/* A BUTTON THAT HAS BECOME ITS OWN STOP while what it started is running — see
+   armButtonAsStop in sidepanel.js. A small filled square before the word, the universal
+   "stop" mark; red only under the pointer, like the progress strip's Stop. */
+.btn-is-stop { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.btn-is-stop .btn-stop-sq { width: 8px; height: 8px; border-radius: 2px; background: currentColor; flex-shrink: 0; }
+.btn-is-stop:hover:not(:disabled) { color: #fff !important; background: rgba(220, 60, 60, .22) !important; border-color: rgba(220, 60, 60, .55) !important; }
+.btn-is-stop.spinning, .btn-is-stop.spinning * { animation: none !important; }
 
 /* Deliberately quiet: cancelling is an escape hatch, not the expected action, so it must be
    findable without competing with the progress it sits under. Turns red only on hover, when
@@ -2293,6 +2665,25 @@ body.case-mismatch {
     letter-spacing: 0.3px;
 }
 
+/* The date the picture reached the case — the date of the email it came in. The same date is
+   printed across the top of the copy Copilot is sent. See imageDateInfo in sidepanel.js. */
+.img-date-tag {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(15, 23, 42, .82);
+    color: #fff;
+    font-size: 8.5px;
+    font-weight: 700;
+    line-height: 1.35;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    pointer-events: none;
+}
+.img-date-tag ~ .img-ocr-tag { bottom: 14px; }
+
 .img-del {
     position: absolute;
     top: -5px;
@@ -2403,6 +2794,106 @@ body.case-mismatch {
 }
 
 .power-pill:hover { background: var(--bg3); border-color: var(--border2); color: var(--txt1) }
+
+/* THE ACTIVE CASE'S NPS, PINNED UNDER THE TAB ROW.
+   Sized and coloured as CHROME rather than as content: the same ground, the same 1px bottom
+   rule and the same flex-shrink:0 as .tab-bar directly above it, so the two read as one block
+   of fixed furniture and the scrolling content starts cleanly beneath them.
+
+   A full-width strip has room the top bar never did, so the averages are spelled out here
+   ("90-day 100") instead of being two bare numbers with the labels hidden in a tooltip. */
+.nps-bar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    /* 30px, as drawn in the approved mockup (design E) — the monospace number needs the room. */
+    height: 30px;
+    padding: 0 12px;
+    /* ALWAYS THE WARM ORANGE (9.3.1 / Global 1.0.1). It used to switch to this only when a
+       score was below 100 (.is-stale below); the team preferred it as the strip's own look. */
+    background: color-mix(in srgb, var(--warn) 7%, var(--bg0));
+    border-bottom: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .2px;
+    white-space: nowrap;
+    /* Narrow panel: scroll the averages rather than let the strip grow a second row and
+       shove the whole app down by 28px. Scrollbar hidden — at 28px tall it would be most
+       of the strip. */
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.nps-bar::-webkit-scrollbar { display: none }
+
+.nps-bar-key { color: var(--txt4); font-weight: 700; letter-spacing: .6px; flex-shrink: 0 }
+.nps-bar-vals { display: flex; align-items: center; gap: 14px; min-width: 0 }
+
+/* Label and number are one unit, so a cramped strip never separates an average from its own
+   value — "365-day" at one end and "50" at the other is worse than no strip at all. */
+.nps-item { display: flex; align-items: baseline; gap: 5px; flex-shrink: 0 }
+.nps-item-k { color: var(--txt3); font-weight: 600 }
+.nps-item-v { color: var(--txt1); font-weight: 700; font-variant-numeric: tabular-nums }
+
+/* The value that sends the case down the self-recovery route is the one that has to catch the
+   eye, so it is marked individually — and the strip warms with it, because a single amber
+   number in a quiet bar is easy to scroll straight past. */
+.nps-item-v.is-low { color: var(--warn) }
+/* The strip is orange all the time now, so .is-stale no longer changes the ground — it is
+   kept as a hook (renderCaseNps still sets it) and the low values carry the signal. */
+.nps-bar.is-stale {
+    background: color-mix(in srgb, var(--warn) 7%, var(--bg0));
+    border-bottom-color: color-mix(in srgb, var(--warn) 45%, var(--border));
+}
+/* Before a sync has read a score. Said in words, muted, so it never reads as a score. */
+.nps-item-v.is-none { color: var(--txt3); font-weight: 600 }
+
+/* THE CASE NUMBER, directly after the averages — DESIGN E of the 2026-09-30 mockups, the
+   maintainer's pick: "NPS 90-day avg 100 · 365-day avg 80 ▏ CASE C01733834". No boxes: a
+   middle dot between the averages, a short warm rule, a small CASE label, the number in bright
+   monospace (no copy icon — removed on request; a click still copies). It used to be an orange pill
+   pushed to the far right edge, a window-width away from the scores on a wide screen.
+   flex-shrink:0 keeps it whole on a narrow panel (the strip scrolls instead). */
+.nps-mid { color: var(--txt4); margin: 0 -8px; flex-shrink: 0; }
+.nps-bar-sep {
+    flex-shrink: 0;
+    width: 1px;
+    height: 14px;
+    background: color-mix(in srgb, var(--warn) 55%, transparent);
+}
+.nps-bar-case {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 0;
+    border: 0;
+    background: none;
+    font-family: var(--font);
+    cursor: pointer;
+}
+.nps-case-lab {
+    color: var(--txt4);
+    font-size: 8.5px;
+    font-weight: 800;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+}
+.nps-case-num {
+    color: #fff;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .3px;
+    font-variant-numeric: tabular-nums;
+}
+/* No copy icon after the number — removed at the maintainer's request. Clicking still copies;
+   the hover colour and the tooltip are what say so. */
+.nps-case-num { transition: color .15s; }
+.nps-bar-case:hover .nps-case-num { color: var(--warn); }
+.nps-bar-case:focus-visible { outline: 2px solid var(--blue2); outline-offset: 3px; border-radius: 3px; }
+.nps-bar-case[hidden] { display: none }
 
 .power-dot {
     width: 6px;
@@ -2617,21 +3108,226 @@ body.case-mismatch {
    longer has a home in the chat area, so a rounded card treatment for it there matched
    nothing. It is a sidebar section now and takes the sidebar's own styling. */
 
+/* THE MEETING NOTES CARD — as approved from the mockup. A lifted card rather than a bordered
+   rectangle, because it is the one thing on the home screen the engineer WRITES into, and it
+   should read as a place rather than as another field. */
 .mn-block {
+    position: relative;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    border-radius: 14px;
+    border: 1px solid rgba(129, 140, 248, .22);
+    background: linear-gradient(180deg, rgba(99, 102, 241, .10), rgba(99, 102, 241, .02) 38%, rgba(255, 255, 255, .015));
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .35), inset 0 1px 0 rgba(255, 255, 255, .04);
+    overflow: hidden;
+}
+/* A thin accent along the top edge — the card's one flourish now the chip row is gone, so the
+   heading still reads as the top of a place to write rather than as a loose label. */
+.mn-block::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, #6366f1, #8b5cf6 55%, rgba(139, 92, 246, 0));
+    pointer-events: none;
+}
+.mn-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 13px 13px 12px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(90deg, rgba(99, 102, 241, .10), rgba(99, 102, 241, 0) 70%);
+}
+.mn-ico {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, .35);
+}
+.mn-t { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.mn-t b { font-size: 12.5px; font-weight: 650; letter-spacing: .1px; color: var(--txt1); }
+.mn-t span { font-size: 10px; color: var(--txt3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mn-chip {
+    margin-left: auto;
+    flex-shrink: 0;
+    font: 600 10px/1 var(--mono);
+    color: #c7d2fe;
+    background: rgba(99, 102, 241, .16);
+    border: 1px solid rgba(129, 140, 248, .3);
+    padding: 4px 7px;
+    border-radius: 20px;
+}
+.mn-info {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    color: var(--txt3);
+    border: 1px solid var(--border2);
+    font-size: 10px;
+    font-weight: 700;
+    cursor: help;
+}
+/* No chip: the info mark takes the right edge on its own. The case-number chip was removed
+   from this card in 9.3.1 / Global 1.0.1 (the number is on the NPS strip now), so the info
+   mark always takes the right edge. */
+.mn-chip[hidden] + .mn-info { margin-left: auto; }
+.mn-top > .mn-info { margin-left: auto; }
+
+/* The "Summary · Troubleshooting · Next steps" chip row that sat here is gone — the same three
+   headings are written inside the box, one line below. The box now opens straight under the
+   heading, with the breathing room the chip row used to take. */
+.mn-block .mn-wrap { margin: 12px 12px 0; }
+.mn-block .mn-txt {
+    background: rgba(13, 19, 33, .75);
+    border: 1px solid var(--border2);
+    border-radius: 10px;
+    padding: 10px 11px;
+}
+.mn-block .mn-ghost { padding: 10px 11px; border-radius: 10px; }
+.mn-block .mn-txt:focus { border-color: rgba(129, 140, 248, .55); box-shadow: 0 0 0 3px rgba(129, 140, 248, .14); }
+
+/* The character count, on the right under the box. (The green "● Kept with this case" that
+   sat opposite it is gone — see the note in the markup.) */
+.mn-meta { display: flex; justify-content: flex-end; gap: 8px; padding: 7px 14px 0; font-size: 9.5px; color: var(--txt4); }
+
+.mn-foot { padding: 11px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+.mn-row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+.mn-act {
+    height: 32px;
+    border-radius: 9px;
+    border: 1px solid var(--border2);
+    background: var(--bg2);
+    color: var(--txt1);
+    font: 600 10.5px var(--font);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+    min-width: 0;
+    transition: border-color .15s, background .15s;
+}
+.mn-act svg { color: var(--blue2); flex-shrink: 0; }
+.mn-act:hover { border-color: rgba(129, 140, 248, .5); background: #1b2742; }
+.mn-act:disabled { opacity: .5; cursor: default; }
+.mn-hint { font-size: 9.5px; color: var(--txt4); text-align: center; }
+
+/* THE "PROFESSIONALISE FIRST?" POPUP */
+.modal.mnp {
+    position: relative;
+    max-width: 380px;
+    border: 1px solid rgba(129, 140, 248, .3);
+    border-radius: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, .6);
+}
+.mnp-h { display: flex; gap: 10px; align-items: flex-start; padding-right: 18px; }
+.mnp-h b { font-size: 13px; display: block; margin-bottom: 3px; color: var(--txt1); }
+.mnp-h p { font-size: 11px; color: var(--txt2); line-height: 1.5; }
+.mnp-case { font-size: 10.5px; color: var(--txt3); background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; }
+.mnp-case b { color: var(--txt1); }
+.mnp-go {
+    height: 36px;
+    border: 0;
+    border-radius: 9px;
+    color: #fff;
+    font: 650 12px var(--font);
+    cursor: pointer;
+    background: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);
+    box-shadow: 0 6px 16px rgba(99, 102, 241, .35), inset 0 1px 0 rgba(255, 255, 255, .18);
+}
+.mnp-go:hover { filter: brightness(1.08); }
+.mnp-raw {
+    height: 32px;
+    border-radius: 9px;
+    border: 1px solid var(--border2);
+    background: transparent;
+    color: var(--txt1);
+    font: 600 11px var(--font);
+    cursor: pointer;
+}
+.mnp-raw:hover { background: var(--bg2); }
+.mnp-tog {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 10.5px;
+    color: var(--txt2);
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+    cursor: pointer;
+}
+.mnp-also { margin-left: auto; color: var(--txt4); white-space: nowrap; }
+.mnp-close {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 22px;
+    height: 22px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--txt3);
+    font-size: 16px;
+    cursor: pointer;
+}
+.mnp-close:hover { background: var(--bg2); color: var(--txt1); }
+
+/* A SWITCH, drawn over a real checkbox — the checkbox stays in the DOM (visually hidden) so
+   it keeps its keyboard and screen-reader behaviour; the span is only its picture. Shared
+   by the popup and Settings, which are the same setting. */
+.mnp-tog input, .set-toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.set-sw {
+    width: 30px;
+    height: 17px;
+    border-radius: 20px;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    position: relative;
+    flex-shrink: 0;
+    transition: background .15s;
+}
+.set-sw::after {
+    content: '';
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: var(--txt3);
+    transition: left .15s, background .15s;
+}
+input:checked + .set-sw { background: var(--blue); border-color: var(--blue); }
+input:checked + .set-sw::after { left: 14px; background: #fff; }
+input:focus-visible + .set-sw { outline: 2px solid var(--blue2); outline-offset: 2px; }
+.set-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    background: var(--bg2);
     border: 1px solid var(--border);
     border-radius: 10px;
     padding: 10px;
-    background: rgba(255, 255, 255, 0.02);
+    cursor: pointer;
+    position: relative;
 }
-
-.mn-head {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
+.set-toggle .set-sw { margin-top: 2px; }
+.set-toggle-t b { font-size: 11.5px; display: block; color: var(--txt1); }
+.set-toggle-t span { font-size: 10.5px; color: var(--txt3); line-height: 1.45; display: block; margin-top: 2px; }
 
 /* The placeholder is a worked EXAMPLE of good notes, so it needs to read as
    guidance rather than as text the user has already typed: dimmer than real
@@ -2656,12 +3352,6 @@ body.case-mismatch {
     line-height: 1.5;
 }
 
-/* Disabled state for the case-gated Professionalise button */
-.btn-clean-notes:disabled,
-.btn-clean-notes[aria-disabled="true"] {
-    opacity: .45;
-    cursor: not-allowed;
-}
 
 /* ============================================================
    MAIN-WINDOW SPACING
@@ -2799,6 +3489,27 @@ body.case-mismatch {
 }
 .oc-search::placeholder { color: var(--txt3); }
 .oc-search:focus { border-color: var(--blue); }
+/* SAVE — the filter in the box becomes a list in Current View. Only there while there is
+   something to save, so it costs the box no width the rest of the time. */
+.oc-save-view {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 9px;
+    background: rgba(129, 140, 248, .12);
+    border: 1px solid rgba(129, 140, 248, .45);
+    border-radius: 6px;
+    color: #c7d2fe;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background .15s ease, color .15s ease;
+}
+.oc-save-view:hover { background: var(--blue); border-color: var(--blue); color: #fff; }
+.oc-save-view:focus-visible { outline: 2px solid var(--blue2); outline-offset: 1px; }
 .oc-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .oc-chip {
     font-family: inherit;
@@ -2862,7 +3573,9 @@ body.case-mismatch {
 }
 .oc-row:hover { border-color: var(--blue2); background: rgba(255, 255, 255, .04); }
 
-/* WAITING ON SOTI — this case is on you.
+/* THIS CASE IS ON YOU — the status is "Waiting on SOTI response", or it is "New" and
+   nobody has picked it up yet. Two statuses, one wash, because they mean the same thing to
+   the person reading the queue: do something about this one. See statusNeedsSoti.
    The left border is the entitlement tier and stays that colour, so the red is carried by
    the other three borders and a tint, which reads as "this row" without claiming to be the
    tier. Deliberately a wash rather than a solid fill: several of these in a row must still
@@ -3194,6 +3907,9 @@ body.case-mismatch {
 .oc-col-jira        { flex: 0 1 var(--ocw-jira, 86px); min-width: 44px; }
 .oc-col-status      { flex: 0 1 var(--ocw-status, 88px); min-width: 44px; }
 .oc-col-owner       { flex: 0 1 var(--ocw-owner, 66px); min-width: 40px; }
+.oc-col-ownerManager { flex: 0 1 var(--ocw-ownerManager, 96px); min-width: 44px; }
+.oc-col-tempOwner   { flex: 0 1 var(--ocw-tempOwner, 86px); min-width: 44px; }
+.oc-col-analysis    { flex: 0 1 var(--ocw-analysis, 120px); min-width: 44px; }
 .oc-col-account     { flex: 0 1 var(--ocw-account, 96px); min-width: 44px; }
 .oc-col-entitlement { flex: 0 1 var(--ocw-entitlement, 80px); min-width: 40px; }
 .oc-col-contact     { flex: 0 1 var(--ocw-contact, 86px); min-width: 44px; }
@@ -3236,6 +3952,18 @@ body.case-mismatch {
    text anywhere may select — a drag across a list of case subjects otherwise highlights half
    the queue. Set on <body> for the life of the drag. */
 body.oc-resizing { cursor: col-resize !important; user-select: none !important; }
+
+/* MOVING A COLUMN — see wireColumnHeadingDrag. A heading can be picked up (grab cursor), the one
+   being carried dims, and a 2px bar on the left or right edge of the heading under the pointer
+   is where it will land. The same classes serve the names in the ⚙ chooser. */
+.oc-colhead .oc-col-movable { cursor: grab; }
+.oc-colhead .oc-col-movable:active { cursor: grabbing; }
+.oc-col-dragging { opacity: .4; }
+.oc-colhead .oc-col-drop-before { box-shadow: inset 2px 0 0 var(--blue2); background: rgba(129, 140, 248, .10); }
+.oc-colhead .oc-col-drop-after  { box-shadow: inset -2px 0 0 var(--blue2); background: rgba(129, 140, 248, .10); }
+.oc-col-opt.oc-col-movable { cursor: grab; }
+.oc-col-opt.oc-col-drop-before { box-shadow: inset 2px 0 0 var(--blue2); background: rgba(129, 140, 248, .10); }
+.oc-col-opt.oc-col-drop-after  { box-shadow: inset -2px 0 0 var(--blue2); background: rgba(129, 140, 248, .10); }
 /* Every fixed cell truncates rather than growing: one long account name must not push the
    whole grid out of step for its row alone. */
 .oc-row-main > .oc-tag,
@@ -3326,7 +4054,32 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
    button `flex: 1; min-width: 150px`. min-width outranks width, so not even
    `width: 36px !important` could hold it, and it rendered 150px wide. The ↻ is gone
    now, and with it the reason for the exclusion. */
-.oc-toolbar .btn-sf { flex: 1; min-width: 150px; justify-content: center; }
+/* THE SYNC BUTTON TAKES THE ROW; THE REFRESH SQUARE DOES NOT.
+   `:not(.oc-refresh)` is load-bearing, and this is the second time this file has needed an
+   exclusion here. This selector is (0,2,0) and sits near the end of the stylesheet, so it
+   beats the `.oc-refresh` block further up on both specificity AND order — which is exactly
+   how the refresh arrow ended up 150px wide and stretching: it was being handed `flex: 1`
+   by the rule meant for the button beside it. */
+.oc-toolbar .btn-sf:not(.oc-refresh) { flex: 1; min-width: 150px; justify-content: center; }
+/* …and the square itself, written HERE rather than only in the block above so it cannot be
+   out-ranked by anything that matches `.oc-toolbar .btn-sf`. Fixed on every axis: a button
+   whose only content is a 14px glyph has nothing to size itself from. */
+.oc-toolbar .btn-sf.oc-refresh {
+    flex: 0 0 auto;
+    width: 34px;
+    min-width: 34px;
+    max-width: 34px;
+    padding: 0 !important;
+    justify-content: center;
+    /* AND THE HEIGHT, which `padding: 0` above takes away: a .btn has no height of its own,
+       it is padding around a line of text, and this button has no text. `align-self:
+       stretch` ties it to the row — so it is exactly as tall as "Sync from Salesforce"
+       beside it and stays that way if the button padding is ever changed. min-height is the
+       floor for a layout where the row does not stretch; without both it renders as a 34x14
+       sliver, which is what it did. */
+    align-self: stretch;
+    min-height: 28px;
+}
 .btn-add { background: var(--blue); color: #fff; border: none; }
 .btn-add:hover { filter: brightness(1.1); }
 
@@ -3340,7 +4093,7 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
     display: flex;
     flex-direction: column;
     min-width: 258px;
-    max-width: min(320px, calc(100vw - 28px));
+    max-width: min(320px, calc(100vw / var(--ui-zoom, 1) - 28px));
     padding: 4px;
     background: var(--bg1);
     border: 1px solid var(--border2, var(--border));
@@ -3370,24 +4123,30 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
 /* ============================================================
    ACTIONS ON THE WHOLE LIST
    ============================================================
-   Sync every case, save a list-view link, choose the columns,
-   empty the list. All four were behind a ⋮ menu, which is the
-   right home for things nobody needs often — and these turned
-   out to be the opposite.
+   Sync every case, choose the columns, empty the list. All of
+   them were behind a ⋮ menu, which is the right home for things
+   nobody needs often — and these turned out to be the opposite.
 
-   Styled as a quiet BLOCK rather than as four more primary
-   buttons: the two loud ones at the top of the view (Add Case,
+   "SAVE A LIST-VIEW LINK" WAS THE FOURTH AND IS NO LONGER HERE.
+   It read as another thing you DO to a list that already exists,
+   when it is in fact the third way to PUT CASES IN — so it sits
+   in the Add Case menu now, under Add Case URL, as "Add a List
+   of Cases". Nothing in this rule changed with it: the row is
+   flex and simply holds one control fewer.
+
+   Styled as a quiet BLOCK rather than as more primary buttons:
+   the two loud ones at the top of the view (Add Case,
    Sync from Salesforce) are what you press on most visits, and
-   promoting these to the same weight would leave six shouting
+   promoting these to the same weight would leave five shouting
    controls above a list nobody can see any more.
 
-   ONE LINE. They were four stacked full-width rows, which came
+   ONE LINE. They were stacked full-width rows, which came
    to about a hundred pixels of a panel whose whole job is the
-   list underneath — three cases' worth, spent on four controls
+   list underneath — three cases' worth, spent on controls
    that are each one short phrase. Sharing a line costs the
    labels a word or two; the full sentence is in every title,
    and the row wraps rather than clipping when the panel is
-   dragged too narrow to hold four.
+   dragged too narrow to hold them.
    ============================================================ */
 .oc-actions {
     display: flex;
@@ -3458,11 +4217,19 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
    Inline, the heading was the first thing on a wrapping line of chips, so on a narrow panel
    with several views saved it read as one run-on strip and a long view name wrapped around
    the label itself. */
+/* "CURRENT VIEW" AND ITS LISTS ON ONE LINE — the maintainer's call, 2026-09-25. The column
+   below was for a narrow panel with several views saved, and it cost a whole line to say one
+   word over one chip on the far commoner case of a single view. */
+/* ONE LINE, HOWEVER MANY LISTS (9.3.4 / Global 1.0.4). With saved filters beside the Salesforce
+   lists the chips no longer wrap — a block of buttons over the queue is what this strip must
+   never become. The row scrolls sideways instead, fades at the edge that has more past it, and a
+   ▾ at its end names every list. See renderOpenCaseLinks. */
 .oc-links {
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 5px;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 6px 8px;
     /* THE GAP ABOVE IS THE POINT OF THE TOP MARGIN. Add Case / Sync from Salesforce sit
        directly over this strip and the two were four pixels apart, which read as one block of
        controls — so "Current View" looked like a third button rather than a heading over the
@@ -3472,50 +4239,268 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
     padding: 0 14px 10px;
 }
 .oc-links-label {
+    flex-shrink: 0;
+    white-space: nowrap;
     font-size: 10px;
     font-weight: 700;
     letter-spacing: .4px;
     text-transform: uppercase;
     color: #b7c7db;
 }
-/* The chips' own line. Wraps among themselves and never around the heading. */
+/* The chips' own run: one line, scrolled rather than wrapped. No scrollbar is drawn — the wheel,
+   a trackpad swipe, the fades and the ▾ are the ways along it (a 3px bar is a hairline nobody
+   finds, and Windows draws a fat native one in its place; see the note on .tab-bar). The 2px of
+   vertical padding keeps the lit chip's ring from being clipped by the scroller. */
 .oc-links-row {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 5px;
-    width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 2px 1px;
+    scrollbar-width: none;
 }
-.oc-link-chip {
+.oc-links-row::-webkit-scrollbar { display: none; }
+.oc-links-row.fade-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent); }
+.oc-links-row.fade-l { -webkit-mask-image: linear-gradient(to right, transparent, #000 22px); mask-image: linear-gradient(to right, transparent, #000 22px); }
+.oc-links-row.fade-l.fade-r {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 22px, #000 calc(100% - 26px), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 22px, #000 calc(100% - 26px), transparent);
+}
+/* Between the Salesforce lists and the saved filters. */
+.oc-links-sep {
+    flex: 0 0 1px;
+    align-self: center;
+    height: 14px;
+    margin: 0 2px;
+    background: var(--border2);
+}
+
+/* ONE CHIP — quiet, every kind alike (the maintainer's call, 2026-10-12: the solid blue lit chip
+   was too loud). The glyph says the kind before the name is read: ≡ a Salesforce list, a funnel a
+   saved filter, a person the engineer's own cases. The lit one — what the queue is showing — is
+   marked by a soft light fill and white text, never by a colour. */
+.oc-view-chip {
     display: inline-flex;
-    align-items: stretch;
-    border: 1px solid rgba(80, 130, 230, .40);
-    background: rgba(80, 130, 230, .10);
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+    height: 22px;
+    max-width: 170px;
+    padding: 0 9px 0 8px;
     border-radius: 999px;
-    overflow: hidden;
-}
-.oc-link-go {
-    padding: 3px 9px;
-    background: none;
-    border: none;
+    font-family: inherit;
     font-size: 10.5px;
-    color: #a7c7ff;
-    cursor: pointer;
+    font-weight: 600;
+    line-height: 1;
     white-space: nowrap;
-    max-width: 160px;
+    cursor: pointer;
+    transition: background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
+}
+.oc-view-chip:focus-visible { outline: 2px solid var(--blue2); outline-offset: 1px; }
+.oc-view-ic { display: inline-flex; flex-shrink: 0; opacity: .85; }
+/* line-height of its own: the chip is line-height 1, and a name that clips its overflow (for the
+   "…") at exactly one font-size high cut the tails off g, p and y — "Agent Cases" lost the foot of
+   its g (2026-10-12). The 22px chip still centres it. */
+.oc-view-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; line-height: 1.4; }
+.oc-view-chip.is-list,
+.oc-view-chip.is-filter {
+    border: 1px solid var(--border2);
+    background: rgba(255, 255, 255, .03);
+    color: var(--txt2);
+}
+.oc-view-chip.is-list:hover,
+.oc-view-chip.is-filter:hover { border-color: rgba(255, 255, 255, .24); background: rgba(255, 255, 255, .07); color: var(--txt1); }
+.oc-view-chip.is-current,
+.oc-view-chip.is-current:hover {
+    border-color: rgba(255, 255, 255, .34);
+    background: rgba(255, 255, 255, .12);
+    color: #fff;
+}
+.oc-view-chip.is-current .oc-view-ic { opacity: 1; }
+/* How many cases a saved filter holds right now. */
+.oc-view-n {
+    flex-shrink: 0;
+    min-width: 16px;
+    padding: 2px 5px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .08);
+    color: var(--txt2);
+    font-size: 9.5px;
+    font-weight: 700;
+    line-height: 1;
+    text-align: center;
+}
+.oc-view-chip.is-current .oc-view-n { background: rgba(255, 255, 255, .18); color: #fff; }
+
+/* ▾ — every list by name. Only while some are out of sight. */
+.oc-links-more {
+    flex: 0 0 22px;
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid var(--border2);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .04);
+    color: var(--txt2);
+    cursor: pointer;
+}
+.oc-links-more:hover { border-color: rgba(255, 255, 255, .24); background: rgba(255, 255, 255, .07); color: #fff; }
+.oc-links-more:focus-visible { outline: 2px solid var(--blue2); outline-offset: 1px; }
+
+/* THE MENU A CHIP OPENS — right-click, or the ▾. Fixed rather than anchored: it is placed at the
+   pointer and kept inside the panel by openOpenCaseViewMenu. */
+.oc-menu.oc-view-menu {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1200;
+    min-width: 190px;
+    max-width: min(280px, calc(100vw / var(--ui-zoom, 1) - 16px));
+    max-height: min(360px, calc(100vh / var(--ui-zoom, 1) - 16px));
+    overflow-y: auto;
+}
+/* A long list SCROLLS, it does not squash: .oc-menu is a flex column, and without this the
+   group headings — which clip their own overflow, so they have no minimum height — were the
+   first thing shrunk once the lists outgrew the menu, and drew cut in half. */
+.oc-menu.oc-view-menu > * { flex-shrink: 0; }
+.oc-view-menu-head {
+    padding: 6px 10px 4px;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: .4px;
+    text-transform: uppercase;
+    color: var(--txt3);
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
-.oc-link-go:hover { background: rgba(80, 130, 230, .22); color: #fff; }
-.oc-link-del {
-    padding: 0 7px 0 3px;
+.oc-view-menu-sep { height: 1px; margin: 4px 6px; background: var(--border2); }
+.oc-view-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 10px;
     background: none;
     border: none;
-    color: var(--txt4);
-    font-size: 12px;
+    border-radius: 7px;
+    color: var(--txt1);
+    font-family: inherit;
+    font-size: 11.5px;
+    font-weight: 500;
+    text-align: left;
     cursor: pointer;
 }
-.oc-link-del:hover { color: #ff9a8b; background: rgba(239, 68, 68, .14); }
+.oc-view-menu-item:hover,
+.oc-view-menu-item:focus-visible { background: rgba(255, 255, 255, .07); outline: none; }
+.oc-view-menu-t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oc-view-menu-item.is-current { color: #fff; font-weight: 700; background: rgba(255, 255, 255, .06); }
+.oc-view-menu-item.is-current .oc-view-n { background: rgba(255, 255, 255, .18); color: #fff; }
+.oc-view-menu-item.is-danger { color: #ff9a8b; }
+.oc-view-menu-item.is-danger:hover,
+.oc-view-menu-item.is-danger:focus-visible { background: rgba(239, 68, 68, .14); color: #ffb4a8; }
+
+/* ============================================================
+   THE TOP OF THE CASES TAB, FOLDING AWAY ON SCROLL
+   ============================================================
+   See wireOpenCaseTopFold. max-height is the only property that animates a height to and from
+   nothing; the JS pins it to the section's measured height first, so the fold is exactly as
+   long as the section and not a guess. overflow is clipped ONLY while folded or folding —
+   shown, the Add Case menu hangs out below this box and must not be cut off by it. */
+.oc-top {
+    flex-shrink: 0;
+    max-height: var(--oc-top-h, 1200px);
+    transition: max-height .22s ease, opacity .18s ease;
+}
+.oc-top.oc-top-anim,
+.oc-top.oc-top-hidden { overflow: hidden; }
+.oc-top.oc-top-hidden { max-height: 0; opacity: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .oc-top { transition: none; } }
+
+/* ============================================================
+   THE BAR JUST ABOVE THE CASES — Select all · Sync all · ⚙
+   ============================================================ */
+.oc-listbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 2px 14px 6px;
+    flex-shrink: 0;
+}
+.oc-lb-left, .oc-lb-right { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.oc-lb-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 24px;
+    padding: 0 8px;
+    background: rgba(255, 255, 255, .035);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--txt2);
+    font-family: inherit;
+    font-size: 10.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.oc-lb-btn:hover { background: rgba(129, 140, 248, .14); border-color: rgba(129, 140, 248, .45); color: #fff; }
+.oc-lb-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.oc-lb-btn:disabled { opacity: .5; cursor: default; }
+.oc-lb-icon { width: 26px; padding: 0; justify-content: center; }
+/* The empty tick-box on "Select" — the same shape each row grows while selecting, so the
+   button says what it is about to do to them. */
+.oc-lb-box {
+    width: 11px;
+    height: 11px;
+    border: 1.5px solid currentColor;
+    border-radius: 3px;
+    opacity: .8;
+    flex-shrink: 0;
+}
+.oc-lb-count { font-size: 10.5px; font-weight: 700; color: #c7d2fe; white-space: nowrap; }
+/* The bin is the one control here that removes something, so it is the one in red — but only
+   once there is something selected for it to remove. */
+.oc-lb-bin { color: #ff9a8b; border-color: rgba(239, 68, 68, .35); background: rgba(239, 68, 68, .08); }
+.oc-lb-bin:hover { color: #fff; background: rgba(239, 68, 68, .28); border-color: rgba(239, 68, 68, .6); }
+.oc-cog-wrap { position: relative; }
+/* The cog's menu opens to the LEFT of its button, which sits at the panel's right edge. */
+.oc-cog-menu { right: 0; left: auto; top: calc(100% + 4px); min-width: 220px; }
+
+/* SELECTING. Every row grows a tick-box on its left and a click ticks it instead of opening
+   the case; the expander and the row × step aside, because a click that lands on either of
+   them in this mode would do something other than what the bar above is about to do. The
+   column headings take the same 22px on the left so they stay over their columns. */
+.oc-sel-box {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1.5px solid var(--txt3);
+    display: grid;
+    place-items: center;
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1;
+    color: transparent;
+}
+.oc-row.is-selected .oc-sel-box { background: var(--blue); border-color: var(--blue); color: #fff; }
+.oc-row.is-selected { border-color: rgba(129, 140, 248, .7); background: rgba(99, 102, 241, .10); }
+.oc-selecting .oc-row { cursor: pointer; }
+.oc-selecting .oc-row .oc-desc-toggle,
+.oc-selecting .oc-row .oc-row-del { visibility: hidden; }
+.oc-selecting .oc-colhead::before { content: ''; flex: 0 0 16px; }
+/* .oc-link-chip / -go / -del USED TO BE HERE — the saved list's two-part chip with its ×. The
+   Current View chips are .oc-view-chip now (above), one button each, Rename/Delete on right-click. */
 
 /* ============================================================
    THE ROW CHOOSER — a popover over the list, not a settings page
@@ -3593,6 +4578,12 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
    rather than borrowing an entitlement colour it has nothing to do with. */
 .oc-chip.oc-chip-jira { color: #a7c7ff; }
 .oc-chip.oc-chip-jira.active { background: rgba(80, 130, 230, .22); border-color: rgba(80, 130, 230, .6); color: #fff; }
+
+/* Focus sits at the end of the same row and is not a tier either. Amber rather than a tier
+   colour or JIRA's blue: it is the row's one attention signal, and it has to read as one at a
+   glance without competing with the entitlement colours that carry a different meaning. */
+.oc-chip.oc-chip-focus { color: #f5c26b; }
+.oc-chip.oc-chip-focus.active { background: rgba(245, 158, 11, .20); border-color: rgba(245, 158, 11, .6); color: #fff; }
 
 /* ============================================================
    CASE ACTIVITY — the two feed dates in Case Info
@@ -3706,6 +4697,60 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
 /* The one-value prompt (case number, list URL). */
 .mask-note { font-size: 11px; line-height: 1.55; color: var(--txt2); margin: 0 0 12px; }
 .mask-err { margin-top: 8px; font-size: 10.5px; color: #ff9a8b; }
+
+/* CONNECT COPILOT — the first-run access dialog. See maybeOfferCopilotSetup. */
+.modal.m-cps { max-width: 420px; }
+.cps-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.cps-head .mtitle { margin: 0; }
+.cps-icon {
+    flex: 0 0 32px;
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9px;
+    background: rgba(129, 140, 248, .14);
+    color: var(--blue2);
+}
+.cps-msg { margin: 0; font-size: 11.5px; line-height: 1.6; color: var(--txt2); }
+.cps-status {
+    margin-top: 12px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border2);
+    background: rgba(255, 255, 255, .03);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--txt1);
+}
+.cps-status.is-busy { border-color: rgba(129, 140, 248, .35); color: #c7d2fe; }
+.cps-status.is-ok { border-color: rgba(34, 197, 94, .4); background: var(--green-pill); color: #86efac; }
+.cps-status.is-fail { border-color: rgba(239, 68, 68, .4); background: rgba(239, 68, 68, .08); color: #ffb4a8; }
+/* TERMS OF USE — see openTermsDialog. */
+.backdrop#mTerms { z-index: 1400; }
+.modal.m-terms { max-width: 460px; }
+.terms-body { font-size: 11.5px; line-height: 1.6; color: var(--txt2); max-height: 55vh; overflow-y: auto; }
+.terms-body p { margin: 0 0 8px; }
+.terms-body b { color: var(--txt1); }
+.terms-body ul { margin: 0 0 8px; padding-left: 18px; }
+.terms-body li { margin: 3px 0; }
+/* Ownership, the integrity check and the terms, in AI Settings. */
+.about-own { margin-top: 14px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border2); background: rgba(255, 255, 255, .03); font-size: 11px; line-height: 1.6; color: var(--txt2); }
+.about-own strong { display: block; color: var(--txt1); margin-bottom: 4px; }
+.about-integrity { margin-top: 6px; font-weight: 600; }
+.about-integrity.is-ok { color: var(--green); }
+.about-integrity.is-bad { color: #ffb4a8; }
+.about-terms { margin-top: 4px; }
+.about-terms a { color: var(--blue2); }
+/* A changed copy, on every screen. Red, and not dismissable. */
+.integrity-banner { flex-shrink: 0; padding: 6px 12px; background: rgba(239, 68, 68, .14); border-bottom: 1px solid rgba(239, 68, 68, .45); color: #ffd1ca; font-size: 11px; font-weight: 600; line-height: 1.45; }
+/* How far the connection check has got. */
+.cps-progress { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.cps-progress-track { flex: 1 1 auto; height: 6px; border-radius: 999px; background: rgba(255, 255, 255, .08); overflow: hidden; }
+.cps-progress-fill { display: block; height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--blue), var(--blue2)); transition: width .25s ease; }
+.cps-progress.is-done .cps-progress-fill { background: var(--green); }
+.cps-progress-pct { flex: 0 0 auto; min-width: 34px; text-align: right; font-size: 11px; font-weight: 700; color: var(--txt1); font-variant-numeric: tabular-nums; }
 
 /* ===========================================================================
    WRITE SOMETHING ONTO THE CASE — the Log a Call Note / Write a Post box
@@ -3834,6 +4879,25 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
 /* The never-pressed list is a paragraph of names, not a row of one value — it wraps,
    and it is the one line in here somebody is meant to stop and read. */
 .usage-never .usage-k { color: var(--txt4); line-height: 1.45; }
+/* A SQL script let through as vetted — the one number in this panel an administrator is
+   meant to follow up, so it is the one in amber. See confirmSqlSafeToShare. */
+.usage-flag .usage-v { color: #fbbf24; font-weight: 700; }
+
+/* THE SQL MARKER in an answer's button row — see attachCopyUI. Amber rather than red: it is
+   not an error, it is a thing to check before the text goes anywhere. It sits in the row of
+   controls, never inside the answer, so it reads as the panel's label and not as the model's
+   words. */
+.copy-sql-flag {
+    align-self: center;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #fbbf24;
+    background: rgba(245, 158, 11, .10);
+    border: 1px solid rgba(245, 158, 11, .40);
+    border-radius: 999px;
+    padding: 2px 9px;
+    cursor: help;
+}
 .usage-none { color: var(--txt4); line-height: 1.55; }
 
 .usage-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
@@ -3861,6 +4925,12 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
     color: #fca5a5;
 }
 .usage-btn-danger:hover { background: rgba(239, 68, 68, .2); color: #fff; }
+/* Open Usage · Open Case Usage · Open Feedback — under Set up (2026-10-19). Quiet, link-like. */
+.usage-links { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.usage-link { background: none; border: 1px solid var(--border2); border-radius: 999px; padding: 3px 10px; color: var(--blue2);
+    font: 600 10.5px var(--font); cursor: pointer; }
+.usage-link:hover { color: #fff; border-color: rgba(129, 140, 248, .5); }
+.usage-link:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
 
 .usage-lab {
     display: block;
@@ -4178,6 +5248,114 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
     max-height: 34vh;
 }
 
+/* ===========================================================================
+   THE OUT-OF-OFFICE BOX — see #mOoo and draftOutOfOfficeEmails
+   ========================================================================= */
+.modal.m-ooo { max-width: 560px; max-height: 95vh; overflow-y: auto; }
+.m-ooo .mtitle { font-size: 14px; font-weight: 650; color: var(--txt1); margin-bottom: 6px; }
+.ooo-grid { display: flex; flex-direction: column; gap: 6px; }
+.ooo-grid .acct-lab { margin: 8px 0 0; }
+.ooo-dates { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ooo-dates .finput { width: 100%; color-scheme: dark; }
+.ooo-tok { text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--txt4); margin-left: 6px; }
+.ooo-body { min-height: 160px; max-height: 30vh; }
+.m-ooo .acct-cc-head { margin-top: 14px; align-items: center; }
+.ooo-all {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--txt2);
+    font-size: 10px;
+    padding: 2px 8px;
+    cursor: pointer;
+}
+.ooo-all:hover { color: #fff; border-color: var(--blue); }
+/* THE CASE LIST IS NEVER THE PART SQUEEZED TO MAKE ROOM.
+   The box is a flex column capped at 95vh, and this list was the only thing in it
+   allowed to shrink — every field above it holds its height, the message keeps its
+   160px — so in a side panel it came down to two cases of twenty-six. It now keeps
+   room for seven or eight however tall the form is (the box scrolls instead), can be
+   dragged taller by its corner, and Expand gives it the whole box. */
+.ooo-cases {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 0 0 auto;
+    height: clamp(240px, 46vh, 560px);
+    min-height: 150px;
+    max-height: 85vh;
+    resize: vertical;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px;
+    background: var(--bg2);
+}
+.ooo-expand { margin-left: 2px; white-space: nowrap; }
+.ooo-expand[aria-pressed="true"] { color: #fff; border-color: var(--blue); background: rgba(99, 102, 241, .18); }
+/* EXPANDED: the email folds to one line and the list takes every pixel left in the box,
+   with the Draft button still in view underneath it. */
+.ooo-summary { display: none; }
+.modal.m-ooo.ooo-list-max { height: 95vh; }
+.m-ooo.ooo-list-max > .mask-note,
+.m-ooo.ooo-list-max .ooo-grid { display: none; }
+.m-ooo.ooo-list-max .ooo-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 9px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg2);
+    font-size: 11px;
+    color: var(--txt2);
+}
+.ooo-summary-t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-ooo.ooo-list-max .ooo-summary .ooo-all { flex-shrink: 0; }
+.m-ooo.ooo-list-max .ooo-cases { flex: 1 1 0; height: auto; min-height: 200px; max-height: none; resize: none; }
+.ooo-case {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 6px;
+    border-radius: 6px;
+    font-size: 11px;
+    color: var(--txt1);
+    cursor: pointer;
+}
+.ooo-case:hover { background: rgba(255, 255, 255, .05); }
+.ooo-case input { accent-color: var(--blue); flex-shrink: 0; }
+.ooo-case-num { font-family: var(--mono); font-size: 10.5px; color: #c7d2fe; flex-shrink: 0; }
+.ooo-case-t { color: var(--txt2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ooo-case-who { margin-left: auto; color: var(--txt3); font-size: 10px; white-space: nowrap; flex-shrink: 0; }
+.ooo-case.no-link { opacity: .5; cursor: default; }
+/* Each case is two lines: number, subject and contact on top, and the case's status under
+   them — red for "Waiting on SOTI response" / "New", the cases the email is really for. */
+.ooo-case { align-items: flex-start; }
+.ooo-case input { margin-top: 1px; }
+.ooo-case-main { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.ooo-case-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ooo-case-status {
+    align-self: flex-start;
+    font-size: 9.5px;
+    font-weight: 600;
+    line-height: 1.3;
+    padding: 1px 7px;
+    border-radius: 20px;
+    color: var(--txt2);
+    background: rgba(255, 255, 255, .05);
+    border: 1px solid var(--border);
+    white-space: nowrap;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ooo-case-status.needs-soti { color: #ff9a8b; border-color: rgba(239, 68, 68, .5); background: rgba(239, 68, 68, .12); }
+.ooo-case-status.unknown { color: var(--txt4); font-weight: 500; font-style: italic; border-color: transparent; background: transparent; padding-left: 0; }
+.ooo-case.needs-soti { background: rgba(239, 68, 68, .06); }
+.ooo-case.needs-soti:hover { background: rgba(239, 68, 68, .11); }
+.ooo-case.needs-soti .ooo-case-num { color: #ff9a8b; }
+
 /* CLOSE THE WORKING CASE, in the queue row's expander beside Sync now. Shaped like its
    neighbour because they are peers — both act on this one case — but it takes red on hover,
    because this one throws a conversation away and the other one reads a field. */
@@ -4257,6 +5435,7 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
     box-shadow: 0 3px 14px rgba(99, 102, 241, .52), inset 0 1px 0 rgba(255, 255, 255, .22);
 }
 .tab-item.tab-pinned:focus-visible { outline: 2px solid var(--blue2); outline-offset: 2px; }
+
 
 .tab-cases-icon {
     width: 14px;
@@ -4410,6 +5589,70 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
 .tab-item.tab-stats.active .tab-stats-icon { opacity: 1; }
 .tab-item.tab-stats .tab-name { flex: 0 0 auto; font-weight: 700; }
 
+/* THE PILLS GET SMALLER RATHER THAN THE BAR GETTING A SCROLLBAR.
+   ============================================================
+   Four pills — Cases, Stats, Roadmaps, RSS Feed — come to about 400px with their gaps and the
+   bar's padding, and a side panel is around 420px wide. So they fitted by a hair on a good day
+   and overflowed on every other one: the bar grew its horizontal scrollbar, the last pill was
+   cut off, and the panel's top-level navigation became something you had to scroll to see.
+
+   Trimming the horizontal metrics — the bar's padding and gaps, the pill padding, the label,
+   the icon and the count chip — brings the row to about 375px, which fits with room to spare
+   and still reads as the same control. The HEIGHT is left alone: these are the panel's primary
+   targets, and a shorter pill is harder to hit for no gain in the direction that was actually
+   short. The bar keeps its overflow-x for anything narrower still.
+
+   IT HAS TO SIT HERE, BELOW `.tab-item.tab-stats`, and that is not housekeeping. A media query
+   adds NO specificity, so `.tab-item.tab-stats { padding: 0 12px }` further up the file and
+   `.tab-item.tab-stats { padding: 0 9px }` inside this query are an exact tie — and a tie is
+   broken by document order. Written above that rule, as this was at first, the query applied
+   cleanly to the Cases pill and did almost nothing to the other three: measured at 420px, the
+   row went from 369px to 354px instead of to 335px, because only one pill in four was
+   listening. Anything added here belongs after the rule it means to override. */
+@media (max-width: 599px) {
+    .tab-bar { padding: 0 6px; gap: 3px; }
+    .tab-item.tab-pinned,
+    .tab-item.tab-stats {
+        padding: 0 9px;
+        gap: 5px;
+        font-size: 10.5px;
+        letter-spacing: 0;
+    }
+    .tab-item.tab-pinned.has-count { padding: 0 4px 0 9px; }
+    .tab-cases-icon,
+    .tab-stats-icon { width: 12px; height: 12px; }
+    .tab-cases-count {
+        min-width: 17px;
+        height: 17px;
+        padding: 0 4px;
+        font-size: 9.5px;
+    }
+}
+
+/* FIVE PILLS NOW, NOT FOUR — and the narrow sizing above was measured for four. Resources Hub
+   joined the row in 9.3.1, and a queue of 873 cases puts three digits in the Cases count: in
+   real Chrome the row needed 454px, a side panel is 400–420px, and once the row had been scrolled
+   (the wheel does it, over the row) the Cases pill sat half off the left edge — "chopped", in the
+   maintainer's word, 2026-10-12.
+
+   Below 480px the four secondary pills drop their icons (the word says what each is; Cases keeps
+   its icon and count, it is the one with a number on it) and the spacing comes in by a pixel or
+   two. Measured with the real markup: 454px → 380px, so the whole row fits from 380px up. Under
+   that it still scrolls, and the edge it is scrolled past fades (paintTabBarEdges) so a pill at
+   the edge reads as "more this way" rather than as a broken one. After the 599px block on
+   purpose — see the note above it about ties and document order. */
+@media (max-width: 479px) {
+    .tab-bar { gap: 2px; }
+    .tab-item.tab-stats { padding: 0 8px; gap: 0; }
+    .tab-item.tab-stats .tab-stats-icon { display: none; }
+}
+.tab-bar.fade-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); }
+.tab-bar.fade-l { -webkit-mask-image: linear-gradient(to right, transparent, #000 22px); mask-image: linear-gradient(to right, transparent, #000 22px); }
+.tab-bar.fade-l.fade-r {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 22px, #000 calc(100% - 22px), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 22px, #000 calc(100% - 22px), transparent);
+}
+
 /* The screen itself. Same skeleton as .oc-view — it is shown in the same slot, instead of
    .layout, and anything that differed in the box model would make switching tabs shift the
    whole panel by a pixel. */
@@ -4457,6 +5700,9 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
     transition: background .15s, color .15s, border-color .15s;
 }
 .stats-btn:hover { background: var(--bg3); color: var(--txt1); border-color: var(--border2, var(--border)); }
+/* Sign in, once signed in (2026-10-19): quiet green words, still a button to sign in again. */
+.stats-btn.is-signed-in { color: #86efac; border-color: rgba(34, 197, 94, .35); }
+.stats-btn.is-signed-in:hover { color: #bbf7d0; border-color: rgba(34, 197, 94, .55); }
 /* The way out, and it is the one that always works — so it is the one that is filled in. */
 .stats-btn-go {
     background: rgba(99, 102, 241, .16);
@@ -4467,6 +5713,30 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
     background: rgba(99, 102, 241, .28);
     border-color: rgba(129, 140, 248, .60);
     color: #fff;
+}
+
+/* THE HEAD STACKS IN A SIDE PANEL, because side by side it does not fit and the half that
+   loses is the half that says where you are.
+   ============================================================
+   `.stats-acts` is flex-shrink:0 — three buttons ending in "Open in Power BI" — and
+   `.stats-title` is min-width:0, so in a 420px panel the buttons took what they needed and
+   the title took what was left. "Regional performance stats" then wrapped down THREE lines
+   beside the buttons and the line under it was ellipsised to "Power BI — y…", which is the
+   one line on this screen whose whole job is to say which of the three reports you are
+   looking at.
+
+   Stacking gives the title the full width, where all three headings fit on one line and the
+   subtitle fits without a cut. The buttons wrap underneath and keep their own row. */
+@media (max-width: 599px) {
+    .stats-head {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+        padding: 10px 12px 8px;
+    }
+    .stats-acts { flex-wrap: wrap; }
+    /* It has a full row now, so it no longer has to be clipped to fit beside anything. */
+    .stats-title-s { white-space: normal; overflow: visible; text-overflow: clip; }
 }
 
 /* THE THREE SUB-TABS — mine, my region's, everybody's.
@@ -4581,6 +5851,167 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
     border: 0;
     display: block;
 }
+
+/* ============================================================
+   THE STATS AGENT — it is the whole screen now
+   ============================================================
+   The Power BI iframe used to hold this space and take flex:1 with it. It is gone (it could
+   be looked at and never read — see the note in the markup), so the agent takes the room. */
+.stats-agent {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0 14px 14px;
+}
+
+/* THE TRANSCRIPT. Scrolls, and is the only thing here that grows. */
+.stats-chat {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    border-radius: var(--r8, 8px);
+    border: 1px solid var(--border);
+    background: var(--bg1);
+    font-size: 11.5px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+/* An agent nobody has asked anything yet has nothing to show, and a blank box above a text
+   field reads as a screen that failed to load — so it opens with what it can be asked. */
+.stats-chat-empty { color: var(--txt3) }
+.stats-chat-empty ul { margin: 6px 0; padding-left: 18px }
+.stats-chat-empty strong { color: var(--txt1) }
+
+/* ---- Suggested questions: a collapsible panel directly above the input ----
+   It sits between the transcript and the box you type in, so it never scrolls away and never
+   moves when an answer arrives. Header and arrow follow Quick Options (.qa-ph) so the two
+   collapse the same way and read as the same kind of control; the arrow rule (.ph-collapse) is
+   shared outright rather than copied. */
+.stats-suggest-panel {
+    flex-shrink: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--r8, 8px);
+    background: var(--bg1);
+    overflow: hidden;
+    margin: 2px 0 6px;
+}
+.stats-suggest-ph {
+    padding: 7px 10px;
+    background: var(--bg2);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+    transition: background .2s;
+}
+.stats-suggest-ph:hover { background: var(--bg3) }
+.stats-suggest-ph:focus-visible { outline: 2px solid var(--blue2); outline-offset: -2px }
+.stats-suggest-ph-left {
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--txt1);
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+/* A COLUMN, not a wrapped row. These are whole questions, not tags, and at the width this
+   panel actually runs at (~380–500px) two side by side wrap to three lines each and neither
+   can be read at a glance. One per line reads as a list of things you may ask. */
+.stats-suggest-body {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+    padding: 8px 10px;
+}
+.stats-suggest-btn {
+    max-width: 100%;
+    align-self: flex-start;
+    padding: 6px 11px;
+    background: transparent;
+    border: 1px solid var(--blue2);
+    border-radius: 999px;
+    color: var(--blue2);
+    font-family: var(--font);
+    font-size: 11.5px;
+    line-height: 1.35;
+    text-align: left;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+}
+.stats-suggest-btn:hover { background: var(--blue2); color: #fff }
+.stats-suggest-btn:focus-visible { outline: 2px solid var(--blue2); outline-offset: 2px }
+.stats-suggest-btn:disabled { opacity: .45; cursor: default }
+.stats-suggest-btn:disabled:hover { background: transparent; color: var(--blue2) }
+
+.stats-msg { padding: 8px 10px; border-radius: var(--r8, 8px) }
+/* The question sits right and tinted, the answer left and plain — the same shape as every
+   chat anyone has used, so no legend is needed to say which is which. */
+.stats-msg.is-user {
+    align-self: flex-end;
+    max-width: 85%;
+    background: var(--blue);
+    color: #fff;
+    white-space: pre-wrap;
+}
+.stats-msg.is-assistant {
+    background: var(--bg2);
+    color: var(--txt1);
+    border: 1px solid var(--border);
+}
+.stats-msg > :first-child { margin-top: 0 }
+.stats-msg > :last-child { margin-bottom: 0 }
+.stats-msg table { border-collapse: collapse; margin: 6px 0 }
+.stats-msg th, .stats-msg td { border: 1px solid var(--border); padding: 3px 7px; text-align: left }
+
+/* Reading walks every page and takes the better part of a minute, so this says WHICH page it
+   is on. A bare spinner for that long reads as a panel that has died. */
+/* The stats screen's copy of the chat progress bar. Everything visual comes from .prog-wrap /
+   .prog-lbl / .prog-bar / .prog-fill so the two cannot drift; this only undoes the things that
+   are true of a bar sitting above the composer and false of one inside a framed screen — the
+   full-width top border it blends into, and the padding that lines it up with the input row. */
+.stats-prog {
+    padding: 10px 12px;
+    margin: 2px 0 4px;
+    border: 1px solid var(--border);
+    border-radius: var(--r8, 8px);
+    background: var(--bg2);
+    flex-shrink: 0;
+}
+
+/* (.stats-agent-status was the spinner-and-a-sentence this screen used to report itself
+   with. It is a real progress bar now — see .stats-prog above and _statsBar in
+   sidepanel.js — so the rule and its spinner keyframes went with it.) */
+.stats-agent-row { display: flex; gap: 8px; align-items: center }
+.stats-agent-in {
+    flex: 1;
+    min-width: 0;
+    height: 32px;
+    padding: 0 10px;
+    border-radius: var(--r8, 8px);
+    border: 1px solid var(--border);
+    background: var(--bg1);
+    color: var(--txt1);
+    font-family: var(--font);
+    font-size: 11.5px;
+}
+.stats-agent-in::placeholder { color: var(--txt4) }
+.stats-agent-in:focus { outline: none; border-color: var(--blue); background: var(--bg2) }
+.stats-agent-btn { flex-shrink: 0; height: 32px }
+
+/* (.stats-agent-out was the single answer box, from when this screen was a report with a
+   question under it. The transcript above replaced it — see .stats-chat / .stats-msg.) */
 
 /* ============================================================
    STICKY NOTES & REMINDERS
@@ -5002,3 +6433,1285 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
 @media (hover: none) {
     .copy-row-quiet { opacity: 1; border-top-color: var(--border); }
 }
+
+/* ===========================================================================
+ * RSS FEED — the team-updates screen
+ * ===========================================================================
+ * A list of posts rather than a framed page, so it is styled here rather than inherited
+ * from whatever the embedded board happens to look like. It reuses .stats-view/.stats-head
+ * for its chrome — same screen furniture as Stats and Roadmaps, because it is the same KIND
+ * of screen and looking different would imply it behaved differently.
+ * ========================================================================= */
+.feed-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 14px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.feed-item {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg2);
+    padding: 11px 13px;
+    /* The unread marker is a left edge rather than a dot or a bold title: it survives a long
+       title wrapping onto three lines, and it reads as "this block is new" rather than "this
+       word is new". */
+    border-left: 3px solid transparent;
+}
+.feed-item.unread { border-left-color: var(--blue); }
+.feed-item.pinned { background: color-mix(in srgb, var(--blue) 7%, var(--bg2)); }
+
+.feed-item-hdr {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 5px;
+}
+.feed-item-title {
+    font-weight: 650;
+    font-size: 12.5px;
+    color: var(--txt1);
+    line-height: 1.4;
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.feed-item-when {
+    font-size: 10px;
+    color: var(--txt2);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.feed-item-pin {
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    color: var(--blue);
+    flex-shrink: 0;
+}
+.feed-item-body {
+    font-size: 11.5px;
+    line-height: 1.65;
+    color: var(--txt1);
+    /* Posts are plain text and routinely carry a list of times or servers laid out by hand —
+       preserving the author's line breaks is the difference between a schedule and a
+       paragraph. Wrapping is still on, so a long line does not scroll the screen. */
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.feed-item-body a { color: var(--blue); }
+.feed-item-from {
+    margin-top: 7px;
+    font-size: 10px;
+    color: var(--txt2);
+}
+.feed-item-acts { margin-top: 8px; display: flex; gap: 6px; }
+
+/* AN UPDATE READ FROM A DOCUMENT — its own paragraphs, sub-headings and lists, spaced like a
+   short article rather than one block of text. See renderFeedBlocks. */
+.feed-item-rich { white-space: pre-wrap; }
+.feed-item-rich .feed-b-p { margin: 0 0 7px; }
+.feed-item-rich .feed-b-h { margin: 10px 0 4px; font-size: 11.5px; font-weight: 700; color: #fff; }
+.feed-item-rich .feed-b-ul { margin: 2px 0 8px; padding-left: 18px; }
+.feed-item-rich .feed-b-ul li { margin: 2px 0; }
+.feed-item-rich > :first-child { margin-top: 0; }
+.feed-item-rich > :last-child { margin-bottom: 0; }
+.feed-b-a { color: var(--blue2); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.feed-b-a:hover { color: #c7d2fe; }
+
+/* AN IMPORTANT POST — amber, the panel's "needs you" colour, on the card's edge and its tag. */
+.feed-item.important { border-left-color: var(--warn); }
+.feed-item-imp {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: rgba(245, 158, 11, .16);
+    color: #fbbf24;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: .4px;
+    text-transform: uppercase;
+}
+
+/* THE STRIP UNDER THE TAB ROW — an important team update not yet read, on every screen.
+   See renderFeedBanner. One line: the tag, the title (ellipsised), Read, and ×. */
+.feed-banner {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px 6px 12px;
+    background: rgba(245, 158, 11, .10);
+    border-bottom: 1px solid rgba(245, 158, 11, .35);
+    font-size: 11px;
+    color: #fde68a;
+}
+.feed-banner-tag {
+    flex-shrink: 0;
+    font-size: 9.5px;
+    font-weight: 800;
+    letter-spacing: .4px;
+    text-transform: uppercase;
+    color: #fbbf24;
+}
+.feed-banner-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.4; font-weight: 600; }
+.feed-banner-read {
+    flex-shrink: 0;
+    padding: 3px 10px;
+    border: 1px solid rgba(245, 158, 11, .55);
+    border-radius: 6px;
+    background: rgba(245, 158, 11, .18);
+    color: #fff;
+    font-family: inherit;
+    font-size: 10.5px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.feed-banner-read:hover { background: rgba(245, 158, 11, .32); }
+.feed-banner-x {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    color: #fde68a;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+}
+.feed-banner-x:hover { background: rgba(255, 255, 255, .08); color: #fff; }
+
+/* ===========================================================================
+ * THE RSS FEED AS A NEWSLETTER (2026-10-14, the maintainer's choice of mockup "B")
+ * ===========================================================================
+ * The masthead, the "In this issue" chips and each story's ribbon are SOTI AI Analyser's own;
+ * everything on a story's white page is the Word document's — its fonts, colours, boxes,
+ * tables and text boxes arrive as inline styles from feedFromDocx / renderWordBlocks, so the
+ * .w-* rules below are only the neutral defaults Word itself assumes. */
+.fn-mast {
+    position: relative;
+    overflow: hidden;
+    flex: none;
+    border-radius: 10px;
+    padding: 16px 16px 14px;
+    color: #fff;
+    background: radial-gradient(120% 140% at 0% 0%, #4f46e5 0%, #1e3a8a 55%, #0f172a 100%);
+    box-shadow: 0 6px 20px rgba(30, 58, 138, .35);
+}
+.fn-mast::after {
+    content: '';
+    position: absolute;
+    right: -30px;
+    top: -30px;
+    width: 140px;
+    height: 140px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, .07);
+    pointer-events: none;
+}
+.fn-mast-k { font-size: 10px; font-weight: 700; letter-spacing: 1.6px; color: #c7d2fe; }
+.fn-mast-h { font-size: 23px; font-weight: 800; line-height: 1.1; letter-spacing: -.3px; margin: 4px 0; overflow-wrap: anywhere; }
+.fn-mast-m { font-size: 12px; color: #dbeafe; }
+.fn-mast-m b { color: #fff; }
+.fn-toc { display: flex; flex-wrap: wrap; gap: 6px; flex: none; }
+.fn-chip {
+    font: 600 10.5px var(--font);
+    color: var(--txt1);
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 9px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.fn-chip:hover { border-color: var(--blue); }
+.fn-chip.imp { border-color: rgba(239, 68, 68, .55); color: #fecaca; }
+.fn-story {
+    flex: none;
+    background: #fff;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .4);
+    scroll-margin-top: 8px;
+}
+.fn-rib {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 12px;
+    font: 700 9.5px var(--font);
+    letter-spacing: .8px;
+    color: #fff;
+}
+.fn-rib-l { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fn-rib-r { flex: none; font-weight: 600; letter-spacing: 0; opacity: .9; }
+.fn-rib.imp { background: #b91c1c; }
+.fn-rib.new { background: #4f46e5; }
+.fn-rib.pin { background: #0e7490; }
+.fn-rib.plain { background: #334155; }
+.fn-paper {
+    color: #000;
+    font-family: Calibri, "Segoe UI", Arial, sans-serif;
+    font-size: 12.5px;
+    line-height: 1.3;
+    padding: 6px 14px 10px;
+    overflow-wrap: anywhere;
+}
+.fn-paper > :first-child { margin-top: 6px !important; }
+.fn-paper > :last-child { margin-bottom: 0 !important; }
+.fn-foot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px 8px;
+    background: #f1f5f9;
+    border-top: 1px solid #e2e8f0;
+    font-size: 11px;
+    color: #475569;
+}
+.fn-from { flex: 1 1 auto; min-width: 0; }
+.fn-live {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #22c55e;
+    margin-right: 5px;
+    vertical-align: 1px;
+    box-shadow: 0 0 0 3px rgba(34, 197, 94, .15);
+}
+.fn-sub-new { color: #93c5fd; font-weight: 700; }
+.w-p { margin: 0; white-space: pre-wrap; }
+.w-mk { display: inline-block; text-indent: 0; }
+.w-box { padding: 4px 7px; margin: 0 0 6px; }
+.w-between { margin: 3px 0; }
+.w-tbl-wrap { overflow-x: auto; margin: 2px 0 8px; }
+.w-tbl { border-collapse: collapse; width: 100%; table-layout: fixed; }
+.w-tbl td { padding: 1px 5px; vertical-align: top; overflow-wrap: anywhere; }
+.w-tbox { padding: 6px 9px; margin: 4px 0 8px; }
+.w-figure { margin: 4px 0 6px; }
+.w-img { display: block; max-width: 100%; height: auto; }
+.w-img-in { display: inline-block; max-width: 100%; height: auto; vertical-align: middle; }
+.fn-paper a { cursor: pointer; }
+
+.feed-empty {
+    margin: 28px 14px;
+    text-align: center;
+    font-size: 11.5px;
+    line-height: 1.7;
+    color: var(--txt2);
+}
+
+.feed-compose {
+    border-bottom: 1px solid var(--border);
+    padding: 12px 14px 14px;
+    background: var(--bg2);
+    flex-shrink: 0;
+}
+
+/* The unread count on the tab itself. Same shape as the Cases badge so the row reads as one
+   set of controls; hidden at zero, because a "0" is a control advertising it has nothing. */
+.tab-feed-badge {
+    background: var(--blue);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    min-width: 15px;
+    height: 15px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+    margin-left: 5px;
+}
+
+/* ============================================================
+   RESOURCES HUB (9.3.1 / Global 1.0.1)
+   ============================================================
+   The tab beside Cases: two release-notes cards over a chat that answers from SOTI Pulse.
+   Same screen shell as Stats (.stats-view / .stats-head), same tokens, so it reads as one of
+   the family — with a proper chat look: avatar, bubbles, a composer that grows as you type. */
+.rhub-cards {
+    flex-shrink: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 8px;
+    margin: 0 14px 10px;
+}
+.rhub-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    text-align: left;
+    border-radius: var(--r10, 10px);
+    border: 1px solid var(--border);
+    background: linear-gradient(135deg, rgba(99, 102, 241, .14), rgba(129, 140, 248, .04) 60%), var(--bg1);
+    color: var(--txt1);
+    font-family: var(--font);
+    cursor: pointer;
+    transition: border-color .15s, transform .15s, background .15s;
+}
+.rhub-card:hover:not(:disabled) { border-color: rgba(129, 140, 248, .55); transform: translateY(-1px) }
+.rhub-card:focus-visible { outline: 2px solid var(--blue2); outline-offset: 2px }
+.rhub-card:disabled { opacity: .55; cursor: default }
+.rhub-card-ico {
+    flex-shrink: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: rgba(99, 102, 241, .18);
+    font-size: 15px;
+}
+.rhub-card-body { display: flex; flex-direction: column; gap: 3px; min-width: 0 }
+.rhub-card-t { font-size: 11.5px; font-weight: 700; line-height: 1.3 }
+.rhub-card-s {
+    font-size: 10.5px;
+    color: var(--txt3);
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.rhub-card-go { font-size: 10.5px; font-weight: 700; color: var(--blue2); margin-top: 2px }
+
+.rhub-chat-wrap {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0 14px 12px;
+}
+.rhub-chat {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 14px 12px;
+    border-radius: var(--r10, 10px);
+    border: 1px solid var(--border);
+    background: var(--bg1);
+    font-size: 11.5px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+/* The empty state says what this can be asked, with one-click questions. */
+.rhub-empty {
+    margin: auto 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 8px;
+    padding: 18px 8px;
+}
+.rhub-empty-ico {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    background: linear-gradient(135deg, var(--blue), var(--blue2));
+    box-shadow: 0 6px 18px rgba(99, 102, 241, .35);
+}
+.rhub-empty-t { font-size: 13px; font-weight: 700; color: var(--txt1) }
+.rhub-empty-s { font-size: 11px; color: var(--txt3); max-width: 340px }
+.rhub-sugg { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin-top: 6px; width: 100%; max-width: 360px }
+.rhub-sugg-btn {
+    padding: 7px 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: 999px;
+    color: var(--txt2);
+    font-family: var(--font);
+    font-size: 11.5px;
+    text-align: left;
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+}
+.rhub-sugg-btn:hover:not(:disabled) { background: rgba(99, 102, 241, .18); border-color: rgba(129, 140, 248, .5); color: var(--txt1) }
+.rhub-sugg-btn:disabled { opacity: .5; cursor: default }
+
+/* One row per message: the answer on the left with its avatar, the question on the right. */
+.rhub-row { display: flex; gap: 8px; align-items: flex-start }
+.rhub-row.is-user { justify-content: flex-end }
+.rhub-av {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: .3px;
+    color: #fff;
+    background: linear-gradient(135deg, var(--blue), var(--blue2));
+}
+.rhub-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: calc(100% - 32px) }
+.rhub-row.is-user .rhub-col { align-items: flex-end; max-width: 85% }
+.rhub-msg { padding: 9px 12px; border-radius: 12px }
+.rhub-msg.is-user {
+    background: var(--blue);
+    color: #fff;
+    border-bottom-right-radius: 4px;
+    white-space: pre-wrap;
+}
+.rhub-msg.is-assistant {
+    background: var(--bg2);
+    color: var(--txt1);
+    border: 1px solid var(--border);
+    border-top-left-radius: 4px;
+}
+.rhub-msg > :first-child { margin-top: 0 }
+.rhub-msg > :last-child { margin-bottom: 0 }
+.rhub-msg table { border-collapse: collapse; margin: 6px 0 }
+.rhub-msg th, .rhub-msg td { border: 1px solid var(--border2); padding: 3px 7px; text-align: left }
+.rhub-msg a { color: var(--blue2) }
+.rhub-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 10px; color: var(--txt4) }
+.rhub-src {
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--border2);
+    color: var(--txt3);
+    text-decoration: none;
+}
+.rhub-src:hover { color: var(--blue2); border-color: rgba(129, 140, 248, .5) }
+.rhub-copy {
+    padding: 1px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border2);
+    background: transparent;
+    color: var(--txt3);
+    font-family: var(--font);
+    font-size: 10px;
+    cursor: pointer;
+}
+.rhub-copy:hover { color: var(--txt1); border-color: var(--border2) }
+
+/* A question has no known length, so this bar slides rather than claiming a percentage. */
+.rhub-prog-indet {
+    width: 35% !important;
+    animation: rhub-slide 1.3s ease-in-out infinite;
+}
+@keyframes rhub-slide {
+    0% { left: -35% }
+    100% { left: 100% }
+}
+
+/* THE COMPOSER — a box that grows with the question, and a round send button inside it. */
+.rhub-composer {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    padding: 6px 6px 6px 12px;
+    border-radius: 14px;
+    border: 1px solid var(--border2);
+    background: var(--bg1);
+    transition: border-color .15s, box-shadow .15s;
+}
+.rhub-composer:focus-within { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(99, 102, 241, .18) }
+.rhub-in {
+    flex: 1;
+    min-width: 0;
+    min-height: 22px;
+    max-height: 140px;
+    padding: 6px 0;
+    resize: none;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--txt1);
+    font-family: var(--font);
+    font-size: 12px;
+    line-height: 1.45;
+}
+.rhub-in::placeholder { color: var(--txt4) }
+.rhub-send {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    background: linear-gradient(135deg, var(--blue), var(--blue2));
+    cursor: pointer;
+    transition: opacity .15s, transform .15s;
+}
+.rhub-send:hover:not(:disabled) { transform: translateY(-1px) }
+.rhub-send:disabled { opacity: .35; cursor: default }
+.rhub-hint { font-size: 10px; color: var(--txt4); text-align: center }
+
+@media (max-width: 599px) {
+    .rhub-cards, .rhub-chat-wrap { margin-left: 12px; margin-right: 12px }
+}
+
+/* ============================================================
+   2026-09-30 BATCH (9.3.2 / Global 1.0.2)
+   ============================================================
+   A window's own close button, Settings → Log Settings and the error log window, the
+   out-of-office language / filter controls, the Knowledge sync status line, and the
+   Roadmaps chat. Kept together at the end so each rule here is read after the one it
+   refines — a media query or a later rule of equal specificity would otherwise win. */
+
+/* A WINDOW'S HEADER THAT STAYS PUT, with a close button in the top-right corner.
+   Sticky inside the modal's own scroll box, so the × is reachable however far down the
+   window has been scrolled — the reason it exists: Cancel sits under a long case list.
+   The negative margins take it to the modal's edges (the modal pads 20px), and the ground
+   is the modal's own so the content scrolls cleanly underneath it.
+   TOP IS -20px, NOT 0 — measured. Chrome measures a sticky offset from INSIDE the scroll
+   box's padding, so `top: 0` pushed the header 20px down over the first line of the window
+   before anything had scrolled. -20px cancels the modal's own padding. */
+.m-head {
+    position: sticky;
+    top: -20px;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: -20px -20px 12px;
+    padding: 14px 14px 12px 20px;
+    background: var(--bg1);
+    border-bottom: 1px solid var(--border);
+    border-radius: 12px 12px 0 0;
+    flex-shrink: 0;
+}
+.m-head .mtitle { margin: 0; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.m-x {
+    flex-shrink: 0;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    border: 1px solid var(--border2);
+    background: rgba(255, 255, 255, .04);
+    color: var(--txt2);
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s, transform .12s;
+}
+.m-x:hover { background: rgba(255, 255, 255, .10); border-color: rgba(255, 255, 255, .22); color: #fff; }
+.m-x:active { transform: scale(.92); }
+.m-x:focus-visible { outline: 2px solid var(--blue2); outline-offset: 2px; }
+.m-x svg { display: block; }
+
+/* ---- Settings → Log Settings ---- */
+.log-set { display: flex; flex-direction: column; gap: 8px; }
+.log-set-head { display: flex; align-items: center; gap: 8px; }
+.log-set-title { color: var(--txt1); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+.log-set-badge {
+    min-width: 18px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--red);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-variant-numeric: tabular-nums;
+}
+.log-set-card {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 11px;
+    border-radius: 10px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+}
+.log-set-status {
+    flex: 1 1 170px;
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 10.5px;
+    line-height: 1.5;
+    color: var(--txt2);
+}
+.log-set-status::before {
+    content: "";
+    flex-shrink: 0;
+    width: 7px;
+    height: 7px;
+    margin-top: 4px;
+    border-radius: 50%;
+    background: var(--txt4);
+}
+.log-set-status.is-clean::before { background: var(--green); box-shadow: 0 0 0 3px rgba(34, 197, 94, .15); }
+.log-set-status.has-warnings::before { background: var(--warn); box-shadow: 0 0 0 3px rgba(245, 158, 11, .15); }
+.log-set-status.has-errors::before { background: var(--red); box-shadow: 0 0 0 3px rgba(239, 68, 68, .18); }
+.log-set-status.has-errors { color: var(--txt1); }
+.log-set-status.is-bad { color: var(--warn); }
+.log-set-acts { display: flex; gap: 6px; flex-shrink: 0; }
+.log-set-btn { padding: 6px 10px; background: var(--bg3); font-size: 10.5px; }
+.log-set-btn:disabled { opacity: .5; cursor: default; }
+.log-set-view { background: rgba(99, 102, 241, .20); border-color: rgba(129, 140, 248, .45); color: #fff; }
+.log-set-view:hover { background: rgba(99, 102, 241, .32); border-color: rgba(129, 140, 248, .65); }
+.log-set-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 2px 0; }
+.log-set-row-l { font-size: 11px; font-weight: 600; color: var(--txt2); }
+.log-set-keep { width: auto; flex: 0 1 190px; min-width: 0; }
+
+/* ---- The error log window ---- */
+.backdrop.logs-backdrop { z-index: 1100; }
+.modal.m-logs { max-width: 640px; height: 88vh; }
+.logs-note { margin-bottom: 10px; }
+.logs-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.logs-chips {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    border-radius: var(--r8);
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.logs-chip {
+    height: 24px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: var(--r6);
+    background: transparent;
+    color: var(--txt3);
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+}
+.logs-chip:hover { color: var(--txt1); }
+.logs-chip.active { background: rgba(99, 102, 241, .28); color: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .35); }
+.logs-search { flex: 1 1 160px; min-width: 0; width: auto; }
+.logs-list {
+    flex: 1 1 0;
+    min-height: 160px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg0);
+}
+.logs-row {
+    flex-shrink: 0;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--red);
+}
+.logs-row.is-warn { border-left-color: var(--warn); }
+.logs-row-top { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--txt3); min-width: 0; }
+.logs-lvl {
+    flex-shrink: 0;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: .4px;
+    text-transform: uppercase;
+    background: rgba(239, 68, 68, .15);
+    color: #fca5a5;
+}
+.logs-row.is-warn .logs-lvl { background: rgba(245, 158, 11, .15); color: #fcd34d; }
+.logs-src { font-family: var(--mono); font-size: 10px; color: var(--txt2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.logs-n { flex-shrink: 0; padding: 0 6px; border-radius: 999px; background: var(--bg3); color: var(--txt1); font-weight: 700; }
+.logs-time { margin-left: auto; flex-shrink: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.logs-msg { margin-top: 5px; font-size: 11px; line-height: 1.5; color: var(--txt1); white-space: pre-wrap; overflow-wrap: anywhere; }
+.logs-more { margin-top: 5px; }
+.logs-more summary { font-size: 10px; color: var(--blue2); cursor: pointer; user-select: none; }
+.logs-more pre {
+    margin-top: 5px;
+    padding: 8px;
+    max-height: 180px;
+    overflow: auto;
+    border-radius: 6px;
+    background: var(--bg0);
+    border: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 9.5px;
+    line-height: 1.5;
+    color: var(--txt2);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.logs-empty { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 34px 12px; text-align: center; }
+.logs-empty-ico {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 19px;
+    color: #fff;
+    background: linear-gradient(135deg, #16a34a, var(--green));
+    box-shadow: 0 6px 18px rgba(34, 197, 94, .25);
+}
+.logs-empty-t { font-size: 12.5px; font-weight: 700; color: var(--txt1); }
+.logs-empty-s { font-size: 11px; color: var(--txt3); max-width: 320px; }
+.logs-acts { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.logs-acts .btn { padding: 7px 12px; font-size: 11px; }
+.logs-clear:hover { color: #fca5a5; border-color: rgba(239, 68, 68, .45); }
+
+/* ---- Out of office: the language, the per-case language, the filter ---- */
+.ooo-lang-note {
+    padding: 7px 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(129, 140, 248, .35);
+    background: rgba(99, 102, 241, .08);
+    color: var(--txt2);
+    font-size: 10.5px;
+    line-height: 1.5;
+}
+.ooo-filter { position: relative; margin: 0 0 6px; }
+.ooo-filter-i { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--txt4); pointer-events: none; }
+.ooo-search { padding-left: 28px; }
+.ooo-case-foot { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ooo-case-foot .ooo-case-status { min-width: 0; }
+.ooo-case-lang {
+    margin-left: auto;
+    flex-shrink: 0;
+    height: 20px;
+    padding: 0 4px;
+    border-radius: 6px;
+    border: 1px solid var(--border2);
+    background: var(--bg1);
+    color: var(--txt2);
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    cursor: pointer;
+    outline: none;
+}
+.ooo-case-lang:hover { color: var(--txt1); border-color: rgba(129, 140, 248, .5); }
+.ooo-case-lang:focus-visible { border-color: var(--blue); }
+.ooo-case-lang option { background: var(--bg2); color: var(--txt1); }
+.ooo-case-lang:disabled { opacity: .5; cursor: default; }
+.ooo-nomatch { padding: 18px 8px; text-align: center; color: var(--txt3); font-size: 11px; }
+
+/* ---- Settings → Knowledge sync status: its own line, wrapping, at every width ---- */
+.kb-sync-status {
+    flex: 1 1 100%;
+    min-width: 0;
+    font-size: 10.5px;
+    line-height: 1.5;
+    color: var(--txt2);
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+/* ---- Roadmaps: the Ask / Board sub-tabs and the chat ---- */
+.rmap-chat-pane { margin-top: 2px; }
+.rmap-sugg { display: flex; flex-wrap: wrap; gap: 6px; }
+.rmap-sugg .stats-suggest-btn { align-self: auto; font-size: 11px; padding: 5px 10px; }
+.rmap-sugg .stats-suggest-btn:disabled { opacity: .45; cursor: default; }
+/* An EMPTY composer is one line, and its placeholder must be too. A one-row textarea wraps a long
+ * placeholder like any text: in a side panel the second line was clipped under the box's bottom
+ * edge and a scrollbar appeared beside the send button. Single line with an ellipsis, and no
+ * scrollbar, until something is typed. */
+.rhub-in:placeholder-shown { overflow: hidden; }
+.rhub-in::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ONE SYNC (2026-10-16) — the button on its own since 2026-10-19: the ▾ and its menu are gone,
+ * and a press asks in #mSyncAsk instead. See ocSyncAskOpen. */
+/* !important because the toolbar's own .btn rules size every button in that row. */
+#ocSyncSplit { display: flex !important; flex: 1 1 auto !important; min-width: 0; position: relative; gap: 0 !important; }
+#ocSyncSplit > #btnSyncCaseList { flex: 1 1 auto !important; min-width: 0 !important; width: auto !important; max-width: none !important; justify-content: center;
+    margin: 0 !important; }
+.oc-sync-rec { font-size: 9px; font-weight: 700; color: #7dd3a0; border: 1px solid rgba(125, 211, 160, .45); border-radius: 999px; padding: 0 6px; margin-left: 6px; }
+
+/* THE SYNC PROMPT (mockup A, 2026-10-19) — two large choices; picking one starts it. */
+.oc-ask .modal { max-width: 380px; padding: 16px; }
+.oc-ask-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.oc-ask-ttl { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; color: var(--txt1); }
+.oc-ask-opt { display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left; background: var(--bg2); border: 1px solid var(--border2);
+    border-radius: 10px; padding: 11px 12px; margin-bottom: 8px; color: var(--txt1); font: inherit; cursor: pointer; }
+.oc-ask-opt:hover { border-color: rgba(0, 161, 224, .6); }
+.oc-ask-opt.def, .oc-ask-opt:focus-visible { border-color: #00a1e0; box-shadow: 0 0 0 1px #00a1e0 inset; outline: none; }
+.oc-ask-opt:disabled { opacity: .5; cursor: default; border-color: var(--border2); box-shadow: none; }
+.oc-ask-ic { flex: 0 0 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center; background: rgba(0, 161, 224, .14); color: #38bdf8; }
+.oc-ask-opt b { font-size: 12.5px; font-weight: 700; }
+.oc-ask-opt small { display: block; color: var(--txt3); font-size: 10.5px; line-height: 1.45; margin-top: 3px; }
+.oc-ask-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
+.oc-ask-foot span { font-size: 10px; color: var(--txt4); }
+
+/* FEEDBACK (mockup 2026-10-19) — the header button left of ⋮, and its popup. */
+.fb-btn { font-size: 11px; padding: 5px 9px; color: var(--txt2); }
+.fb-btn svg { color: #818cf8; }
+.fb-btn:hover { color: var(--txt1); }
+.fb .modal { max-width: 380px; padding: 16px; }
+.fb-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.fb-ttl { font-size: 14px; font-weight: 700; color: var(--txt1); display: flex; gap: 8px; align-items: center; }
+.fb-sub { font-size: 11.5px; color: var(--txt2); margin: 0 0 12px; }
+.fb-rate { display: flex; gap: 8px; margin-bottom: 12px; }
+.fb-r { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 8px; border-radius: 10px;
+    background: var(--bg2); border: 1px solid var(--border2); color: var(--txt2); font: 600 11.5px var(--font); cursor: pointer; }
+.fb-r .e { font-size: 22px; line-height: 1; }
+.fb-r:hover { border-color: rgba(255, 255, 255, .2); }
+.fb-r:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.fb-r.up.on { border-color: #22c55e; box-shadow: 0 0 0 1px #22c55e inset; color: #bbf7d0; background: rgba(34, 197, 94, .08); }
+.fb-r.down.on { border-color: #f87171; box-shadow: 0 0 0 1px #f87171 inset; color: #fecaca; background: rgba(239, 68, 68, .08); }
+.fb-lbl { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--txt3); margin-bottom: 5px; }
+.fb-ta { width: 100%; box-sizing: border-box; min-height: 92px; resize: vertical; background: var(--bg0); border: 1px solid var(--border2);
+    border-radius: 8px; color: var(--txt1); font: 12px/1.5 var(--font); padding: 8px 10px; }
+.fb-ta:focus { outline: none; border-color: rgba(129, 140, 248, .6); }
+.fb-chk { display: flex; gap: 8px; align-items: flex-start; font-size: 11.5px; color: var(--txt2); margin: 10px 0 0; cursor: pointer; }
+.fb-chk[hidden] { display: none; }
+.fb-foot { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 12px; }
+.fb-send { background: var(--blue); color: #fff; border: none; border-radius: 8px; height: 30px; padding: 0 16px; font: 700 12px var(--font); cursor: pointer; flex-shrink: 0; }
+.fb-send:disabled { opacity: .45; cursor: default; }
+/* THE ONE-TAP THUMBS UP (9.4.2, mock B). */
+.fb-quick { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 6px 0 12px; padding: 10px 12px; border-radius: 10px;
+    background: linear-gradient(90deg, rgba(34, 197, 94, .10), rgba(34, 197, 94, .03)); border: 1px solid rgba(34, 197, 94, .35); }
+.fb-quick.sent { background: rgba(34, 197, 94, .12); }
+.fb-q { flex: 1; min-width: 150px; font-size: 12px; color: #d1fae5; line-height: 1.35; }
+.fb-q small { display: block; color: var(--txt3); font-size: 10.5px; }
+.fb-q[hidden], .fb-tu[hidden], .fb-tu-done[hidden], .fb-add[hidden], #fbMore[hidden], #fbPraise[hidden] { display: none; }
+.fb-tu { display: inline-flex; align-items: center; gap: 6px; background: #16a34a; color: #fff; border: none; border-radius: 999px; padding: 6px 13px;
+    font: 700 12px var(--font); white-space: nowrap; cursor: pointer; transition: background .15s ease, transform .1s ease; }
+.fb-tu .e { font-size: 15px; line-height: 1; }
+.fb-tu:hover { background: #15803d; }
+.fb-tu:active { transform: scale(.97); }
+.fb-tu:focus-visible, .fb-add:focus-visible, .fb-chip:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.fb-tu-done { flex: 1; display: flex; align-items: center; gap: 6px; color: #86efac; font-weight: 700; font-size: 12px; }
+.fb-add { background: none; border: none; padding: 0; font: 11px var(--font); color: var(--blue2); text-decoration: underline; cursor: pointer; white-space: nowrap; }
+.fb-or { display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--txt3); margin: 0 0 10px; text-transform: uppercase; letter-spacing: .06em; }
+.fb-or::before, .fb-or::after { content: ""; flex: 1; border-top: 1px solid var(--border2); }
+.fb-lbl i { font-style: normal; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.fb-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.fb-chip { font: 11px var(--font); border: 1px solid var(--border2); background: var(--bg2); color: var(--txt2); border-radius: 999px; padding: 4px 10px; cursor: pointer; }
+.fb-chip:hover { border-color: rgba(255, 255, 255, .25); color: var(--txt1); }
+.fb-chip.on { border-color: #22c55e; color: #bbf7d0; background: rgba(34, 197, 94, .1); }
+.fb-hint { flex: 1; font-size: 10.5px; color: var(--txt3); }
+.fb-send.g { background: #16a34a; }
+
+/* FIND THINGS IN THE FEED — Option A (2026-10-21): a search box and tap-to-filter chips. */
+.fn-filter { flex: none; display: flex; flex-direction: column; gap: 6px; }
+.fn-filter-q { display: flex; align-items: center; gap: 8px; background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 9px; padding: 6px 10px; cursor: text; }
+.fn-filter-q:focus-within { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(99, 102, 241, .18); }
+.fn-filter-q input { flex: 1; min-width: 0; background: none; border: none; outline: none; color: var(--txt1);
+    font: 12.5px var(--font); }
+.fn-filter-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.fn-fchip.on { background: rgba(99, 102, 241, .22); border-color: var(--blue); color: #fff; }
+.fn-fchip.imp.on { background: rgba(239, 68, 68, .18); border-color: rgba(239, 68, 68, .85); }
+.fn-filter-count { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11px; color: var(--txt2); }
+.fn-filter-count:empty { display: none; }
+.fn-filter-clear { background: none; border: none; color: var(--blue); font: 600 11px var(--font); cursor: pointer; padding: 0; white-space: nowrap; }
+mark.fn-hit { background: #fde68a; color: #1f2937; border-radius: 3px; padding: 0 1px; }
+.fn-story[hidden], .fn-toc .fn-chip[hidden] { display: none !important; }
+
+/* WHICH JIRA? (2026-10-21) — the Create JIRA picker. Built on the Sync prompt's cards (.oc-ask)
+ * with a numbered badge, the JIRA type/project chips and the "use it when / not for" lines. */
+.jp .modal { max-width: 420px; }
+.jp-sub { font-size: 11.5px; color: var(--txt2); margin: -4px 0 10px; line-height: 1.45; }
+.jp-sub:empty { display: none; }
+.jp .oc-ask-opt { flex-direction: row; }
+.jp .oc-ask-opt:hover { border-color: rgba(129, 140, 248, .65); }
+.jp .oc-ask-opt:focus-visible { border-color: var(--blue2); box-shadow: 0 0 0 1px var(--blue2) inset; }
+.jp-num { flex: 0 0 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    font: 700 12px var(--font); background: rgba(129, 140, 248, .16); color: #c7d2fe; }
+.jp-opt.feature .jp-num { background: rgba(34, 197, 94, .14); color: #86efac; }
+.jp-body { flex: 1; min-width: 0; }
+.jp-chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 5px 0 2px; }
+.jp-chip { font-size: 10px; font-weight: 600; color: var(--txt2); background: var(--bg3); border: 1px solid var(--border2); border-radius: 999px; padding: 1px 8px; }
+.jp-chip.proj { color: #c7d2fe; border-color: rgba(129, 140, 248, .45); }
+.jp-opt.feature .jp-chip.proj { color: #bbf7d0; border-color: rgba(34, 197, 94, .45); }
+.jp-chip.kept { color: #fde68a; border-color: rgba(245, 158, 11, .5); }
+.jp-when { display: block; font-size: 10.5px; line-height: 1.45; color: var(--txt3); margin-top: 4px; }
+.jp-when b { font-size: 10.5px; font-weight: 700; color: var(--txt2); }
+
+/* READ / UNREAD, SELECT, SELECT ALL in the RSS Feed (2026-10-21). */
+.fn-rib.selectable { cursor: pointer; justify-content: flex-start; }
+.fn-rib.selectable .fn-rib-r { margin-left: auto; }
+.fn-sel-box { flex: none; width: 14px; height: 14px; margin: 0; accent-color: #fff; cursor: pointer; }
+.fn-story.is-sel { box-shadow: 0 0 0 2px var(--blue2), 0 2px 10px rgba(0, 0, 0, .4); }
+.fn-selbar { flex: none; position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    padding: 7px 8px; background: var(--bg2); border: 1px solid rgba(129, 140, 248, .45); border-radius: 9px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, .35); }
+.fn-selbar button { height: 26px; padding: 0 10px; border-radius: 7px; font: 600 11px var(--font); cursor: pointer;
+    background: var(--bg3); color: var(--txt1); border: 1px solid var(--border2); }
+.fn-selbar button:hover:not(:disabled) { border-color: var(--blue2); }
+.fn-selbar button:disabled { opacity: .45; cursor: default; }
+.fn-selbar .fn-sel-done { background: var(--blue); border-color: var(--blue); color: #fff; }
+.fn-sel-n { flex: 1 1 auto; font-size: 11px; color: var(--txt2); min-width: 70px; }
+.fn-foot .fn-mark { color: #334155; background: #fff; border-color: #cbd5e1; }
+.fn-foot .fn-mark:hover { background: #e2e8f0; color: #0f172a; border-color: #94a3b8; }
+#feedSelect[aria-pressed="true"] { border-color: var(--blue2); color: #c7d2fe; }
+
+/* MY KPIs — the Stats tab as the maintainer's mockup (2026-10-21): navy cards, indigo selection,
+ * green on target / red below / slate no data, amber target line. Values from the mockup. */
+.kpi-dash { flex: 0 1 auto; min-height: 0; max-height: 64%; overflow-y: auto; margin: 0 14px 8px; display: flex; flex-direction: column;
+    background: #0F1626; border: 1px solid #222D45; border-radius: 10px; color: #E5E9F2; font-family: 'IBM Plex Sans', var(--font); }
+.kpi-dash[hidden] { display: none; }
+.kpi-dash.is-closed { flex: none; overflow: hidden; }
+.kpi-head { display: flex; align-items: baseline; gap: 8px; width: 100%; padding: 10px 12px; background: #131C30; border: 0; border-bottom: 1px solid #222D45;
+    color: inherit; font: inherit; text-align: left; cursor: pointer; position: sticky; top: 0; z-index: 1; }
+.kpi-dash.is-closed .kpi-head { border-bottom: 0; }
+.kpi-h-t { font-size: 14px; font-weight: 600; }
+.kpi-h-s { flex: 1; font-size: 10.5px; color: #8A96AD; text-align: right; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kpi-h-c { font-size: 11px; color: #8A96AD; width: 12px; text-align: center; }
+.kpi-body { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
+.kpi-nps { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 7px 10px; background: #0C1220; border-bottom: 1px solid #F59E0B;
+    border-radius: 6px 6px 0 0; font-size: 11px; color: #8A96AD; }
+.kpi-nps-l { font-weight: 700; color: #E5E9F2; }
+.kpi-amber { color: #FBBF24; }
+.kpi-nps-r { margin-left: auto; }
+.kpi-seg { display: flex; gap: 6px; background: #131C30; border: 1px solid #222D45; border-radius: 10px; padding: 4px; }
+.kpi-seg-b { flex: 1; font-size: 12px; font-weight: 600; font-family: inherit; color: #8A96AD; background: transparent; border: 0; border-radius: 7px; min-height: 30px; cursor: pointer; }
+.kpi-seg-b.on { color: #fff; background: #3B3F8F; }
+.kpi-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.kpi-chip { font-size: 11px; font-weight: 600; font-family: inherit; color: #A9B4C8; background: #161F36; border: 1px solid #2A3654; border-radius: 14px; padding: 0 10px;
+    min-height: 26px; cursor: pointer; }
+.kpi-chip.on { color: #fff; background: #3B3F8F; border-color: #7C7CF8; }
+.kpi-sum { display: flex; align-items: center; gap: 12px; background: #161F36; border: 1px solid #2A3654; border-radius: 10px; padding: 10px 12px; }
+.kpi-sum-n { font-size: 26px; font-weight: 700; color: #E5E9F2; white-space: nowrap; }
+.kpi-sum-n span { font-size: 14px; color: #8A96AD; }
+.kpi-sum-t { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.kpi-sum-a { font-size: 13px; font-weight: 600; }
+.kpi-sum-b { font-size: 11px; color: #8A96AD; }
+.kpi-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.kpi-card { text-align: left; background: #161F36; border: 1px solid #2A3654; border-radius: 10px; padding: 9px 11px; display: flex; flex-direction: column;
+    gap: 3px; color: #E5E9F2; font-family: inherit; cursor: pointer; min-width: 0; }
+.kpi-card:hover { border-color: #3B4A70; }
+.kpi-card.sel { border-color: #7C7CF8; box-shadow: 0 0 0 1px #7C7CF8 inset; }
+.kpi-card:focus-visible { outline: 2px solid #7C7CF8; outline-offset: 1px; }
+.kpi-card-n { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 11px; color: #A9B4C8; }
+.kpi-dot { flex: none; width: 8px; height: 8px; border-radius: 4px; background: #475569; }
+.kpi-dot.good { background: #34D399; } .kpi-dot.bad { background: #F87171; } .kpi-dot.free { background: #7C7CF8; }
+.kpi-card-v { font-size: 19px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi-card-s { font-size: 10.5px; color: #8A96AD; }
+.kpi-card-s.good { color: #34D399; } .kpi-card-s.bad { color: #F87171; } .kpi-card-s.free { color: #A9B4C8; }
+.kpi-chart { background: #161F36; border: 1px solid #2A3654; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.kpi-chart-h { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.kpi-chart-t { font-size: 13px; font-weight: 600; }
+.kpi-chart-tg { font-size: 11px; font-family: inherit; color: #FBBF24; background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap; }
+.kpi-chart-tg:hover { text-decoration: underline; }
+.kpi-plot { position: relative; height: 122px; display: flex; align-items: flex-end; gap: 4px; padding-top: 10px; }
+.kpi-tline { position: absolute; left: 0; right: 0; border-top: 1px dashed #FBBF24; opacity: .8; pointer-events: none; }
+.kpi-col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 3px; height: 116px; }
+.kpi-col.dim, .kpi-xm.dim { opacity: .45; }
+.kpi-bv { font-size: 9px; color: #A9B4C8; white-space: nowrap; }
+.kpi-bar { width: 100%; max-width: 34px; border-radius: 3px 3px 0 0; background: #2A3654; }
+.kpi-bar.good { background: #34D399; } .kpi-bar.bad { background: #F87171; } .kpi-bar.free { background: #7C7CF8; }
+.kpi-xl { display: flex; gap: 4px; }
+.kpi-xm { flex: 1; min-width: 0; text-align: center; font-size: 9.5px; color: #8A96AD; }
+.kpi-foot { font-size: 10.5px; color: #8A96AD; line-height: 1.5; }
+.kpi-empty { font-size: 12px; color: #A9B4C8; line-height: 1.5; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.kpi-btn { font-size: 12px; font-weight: 600; font-family: inherit; color: #fff; background: #4F52C9; border: 0; border-radius: 8px; padding: 0 14px; min-height: 32px; cursor: pointer; }
+.jp-chip.match { color: #bbf7d0; border-color: rgba(34, 197, 94, .5); background: rgba(34, 197, 94, .1); }
+.jp-prods { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 2px; }
+.jp-prod { font-size: 10.5px; font-weight: 700; color: var(--txt2); background: var(--bg1); border: 1px solid var(--border2); border-radius: 7px; padding: 3px 9px; cursor: pointer; }
+.jp-prod:hover, .jp-prod:focus-visible { border-color: rgba(34, 197, 94, .7); color: #fff; outline: none; }
+.jp-prod.on { border-color: rgba(34, 197, 94, .6); color: #bbf7d0; background: rgba(34, 197, 94, .1); }
+.jp .modal { max-height: 92vh; }
+
+/* THE JIRA ON THE CASE (After A, 2026-10-21): status pill, "synced" line, Draft → Triage callout. */
+.jira-pill { flex: none; font-size: 9.5px; font-weight: 800; letter-spacing: .06em; border-radius: 999px; padding: 2px 7px; white-space: nowrap; align-self: center; }
+.jira-pill[hidden] { display: none; }
+.jira-pill.draft { background: rgba(245, 158, 11, .16); color: #fcd34d; border: 1px solid rgba(245, 158, 11, .5); }
+.jira-pill.live { background: rgba(56, 189, 248, .14); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, .45); }
+.jira-pill.wait { background: rgba(251, 146, 60, .14); color: #fdba74; border: 1px solid rgba(251, 146, 60, .45); }
+.jira-pill.done { background: rgba(34, 197, 94, .14); color: #86efac; border: 1px solid rgba(34, 197, 94, .45); }
+.jira-pill.bad { background: rgba(239, 68, 68, .12); color: #fca5a5; border: 1px solid rgba(239, 68, 68, .45); }
+.jira-sync-meta { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 10.5px; color: var(--txt3); min-width: 0; }
+.jira-sync-meta[hidden] { display: none; }
+.jira-sync-meta > span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jira-sync-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+.jira-sync-dot.busy { background: var(--blue2); animation: pulse-dot 1.2s infinite; }
+.jira-sync-dot.bad { background: var(--red); }
+.jira-sync-dot.blocked { background: var(--red); box-shadow: 0 0 0 2px rgba(239, 68, 68, .25); }
+.jira-st-blocked { color: var(--red); font-weight: 700; }
+.jira-sync-again { flex: none; background: none; border: 0; padding: 0; color: var(--blue2); font: 600 10.5px var(--font); cursor: pointer; }
+.jira-sync-again:hover { text-decoration: underline; }
+.jira-sync-again[hidden] { display: none; }
+.jira-draft { margin-top: 8px; border: 1px solid rgba(245, 158, 11, .45); background: rgba(245, 158, 11, .08); border-radius: 9px; padding: 9px 10px;
+    font-size: 11.5px; line-height: 1.45; color: #fde7c0; }
+.jira-draft[hidden] { display: none; }
+.jira-draft b { color: #fcd34d; }
+.jira-draft ol { margin: 6px 0 0; padding-left: 18px; }
+.jira-draft li { margin: 2px 0; }
+.jira-draft-acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.jira-draft-acts button { font: 600 11px var(--font); border-radius: 7px; padding: 5px 9px; cursor: pointer; background: var(--bg2); border: 1px solid var(--border2); color: var(--txt1); }
+.jira-draft-acts .jira-draft-go { background: var(--blue); border-color: var(--blue); color: #fff; }
+
+/* A NEW RELEASE IS READY IN THE SHARED FOLDER (9.4.2) — see UPDATES in sidepanel.js. Built like the
+ * feed banner, in the panel's blue. */
+.update-banner { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 12px;
+    background: rgba(99, 102, 241, .12); border-bottom: 1px solid rgba(129, 140, 248, .40); font-size: 11px; color: #c7d2fe; }
+.update-banner[hidden] { display: none; }
+.update-banner-tag { flex-shrink: 0; font-size: 9.5px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase; color: #a5b4fc; }
+.update-banner-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.4; font-weight: 600; }
+.update-banner-go { flex-shrink: 0; padding: 3px 10px; border: 1px solid rgba(129, 140, 248, .6); border-radius: 6px;
+    background: rgba(99, 102, 241, .28); color: #fff; font-family: inherit; font-size: 10.5px; font-weight: 700; cursor: pointer; }
+.update-banner-go:hover { background: rgba(99, 102, 241, .45); }
+.update-banner-go:disabled { opacity: .6; cursor: default; }
+.update-banner-x { flex-shrink: 0; width: 22px; height: 22px; border: none; border-radius: 6px; background: none; color: #c7d2fe;
+    font-size: 14px; line-height: 1; cursor: pointer; }
+.update-banner-x:hover { background: rgba(255, 255, 255, .08); color: #fff; }
+
+/* =============================================================================
+ * JIRA BY TOKEN (9.4.3 / Global 1.1.3) — Resources search, AI Settings → JIRA connection, Check JIRA
+ * ========================================================================== */
+.rhub-view .rs-search { margin: 10px 12px 8px; flex: none; }
+.rs-box { display: flex; align-items: center; gap: 8px; background: var(--bg2); border: 1px solid var(--border2); border-radius: 10px; padding: 6px 6px 6px 10px; margin: 0; }
+.rs-box:focus-within { border-color: rgba(129, 140, 248, .6); box-shadow: 0 0 0 3px rgba(99, 102, 241, .14); }
+.rs-box > svg { flex: none; color: var(--blue2); }
+.rs-q { flex: 1; min-width: 0; background: none; border: 0; outline: none; color: var(--txt1); font: 13px var(--font); padding: 4px 0; }
+.rs-q::placeholder { color: var(--txt4); }
+.rs-q::-webkit-search-cancel-button { display: none; }
+.rs-x { flex: none; background: none; border: 0; color: var(--txt3); font-size: 13px; cursor: pointer; padding: 2px 4px; }
+.rs-x:hover { color: var(--txt1); }
+.rs-x[hidden] { display: none; }
+.rs-go { flex: none; font: 700 11px var(--font); color: #fff; background: var(--blue); border: 0; border-radius: 7px; padding: 6px 11px; cursor: pointer; }
+.rs-go:hover { filter: brightness(1.1); }
+.rs-scopes { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+.rs-chip { font: 600 11px var(--font); color: var(--txt2); background: var(--bg2); border: 1px solid var(--border2); border-radius: 999px; padding: 4px 10px; display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; cursor: pointer; }
+.rs-chip:hover { color: var(--txt1); }
+.rs-chip.on { color: #fff; background: rgba(99, 102, 241, .3); border-color: rgba(129, 140, 248, .75); }
+.rs-chip .c { font-size: 10px; color: var(--txt2); background: rgba(255, 255, 255, .08); border-radius: 999px; padding: 0 6px; }
+.rs-chip .c[hidden] { display: none; }
+.rs-chip.rs-case { color: var(--blue2); border-style: dashed; background: none; }
+.rs-filters { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.rs-filters[hidden] { display: none; }
+.rs-sel { font: 600 10.5px var(--font); color: var(--txt3); background: var(--bg1); border: 1px solid var(--border2); border-radius: 7px; padding: 2px 4px 2px 8px; display: inline-flex; align-items: center; gap: 2px; }
+.rs-sel select { background: none; border: 0; color: var(--txt1); font: 700 10.5px var(--font); outline: none; cursor: pointer; padding: 2px 0; }
+.rs-sel select option { background: var(--bg1); }
+.rs-meta { display: flex; justify-content: space-between; gap: 8px; font-size: 10.5px; color: var(--txt3); margin: 10px 12px 6px; flex: none; }
+.rs-meta[hidden], .rs-res[hidden] { display: none; }
+.rs-meta .ok { color: #86efac; } .rs-meta .bad { color: #fca5a5; }
+.rs-res { margin: 0 12px 14px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; min-height: 0; flex: 1; }
+.rs-grp { background: var(--bg1); border: 1px solid var(--border2); border-radius: 12px; overflow: hidden; flex: none; }
+.rs-gh { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 11.5px; font-weight: 700; color: var(--txt1); }
+.rs-gh .n { font-size: 10px; color: var(--txt2); background: rgba(255, 255, 255, .07); border-radius: 999px; padding: 0 7px; }
+.rs-gh .src { margin-left: auto; font-weight: 500; font-size: 10px; color: var(--txt3); text-align: right; }
+.rs-row { padding: 9px 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 3px; }
+.rs-row:last-child { border-bottom: 0; }
+.rs-row.rs-click { cursor: pointer; }
+.rs-row.rs-click:hover { background: rgba(255, 255, 255, .02); }
+.rs-row.open { background: rgba(99, 102, 241, .07); box-shadow: inset 3px 0 0 var(--blue2); cursor: default; }
+.rs-l1 { display: flex; align-items: center; gap: 7px; min-width: 0; flex-wrap: wrap; }
+.rs-key { font: 700 11px var(--mono); color: var(--blue2); }
+.rs-keybtn { background: none; border: 0; padding: 0; cursor: pointer; }
+.rs-keybtn:hover { text-decoration: underline; }
+.rs-pill { font-size: 9px; font-weight: 800; letter-spacing: .05em; border-radius: 999px; padding: 1px 7px; white-space: nowrap; text-transform: uppercase; }
+.rs-pill.red { background: rgba(239, 68, 68, .14); color: #fca5a5; border: 1px solid rgba(239, 68, 68, .5); }
+.rs-pill.amber { background: rgba(245, 158, 11, .14); color: #fcd34d; border: 1px solid rgba(245, 158, 11, .5); }
+.rs-pill.blue { background: rgba(56, 189, 248, .12); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, .45); }
+.rs-pill.green { background: rgba(34, 197, 94, .12); color: #86efac; border: 1px solid rgba(34, 197, 94, .45); }
+.rs-pill.grey { background: rgba(255, 255, 255, .06); color: var(--txt2); border: 1px solid var(--border2); }
+.rs-t { font-size: 12px; color: var(--txt1); font-weight: 600; line-height: 1.35; }
+.rs-s { font-size: 10.5px; color: var(--txt3); }
+.rs-warn { font-size: 9.5px; font-weight: 700; color: #fcd34d; }
+.rs-snip { font-size: 11px; color: var(--txt2); line-height: 1.5; word-break: break-word; }
+.rs-snip mark, .cj-code mark { background: rgba(245, 158, 11, .22); color: #fde68a; border-radius: 3px; padding: 0 2px; }
+.rs-acts { display: flex; gap: 12px; margin-top: 4px; align-items: center; flex-wrap: wrap; }
+.rs-a { background: none; border: 0; padding: 0; font: 700 10.5px var(--font); color: var(--blue2); cursor: pointer; }
+.rs-a:hover { text-decoration: underline; }
+.rs-btn { font: 700 10.5px var(--font); color: #fff; background: var(--blue); border: 1px solid var(--blue); border-radius: 7px; padding: 5px 10px; cursor: pointer; }
+.rs-btn:hover { filter: brightness(1.1); }
+.rs-btn.ghost { background: none; color: var(--txt2); border-color: var(--border2); }
+.rs-btn.ghost:hover { color: var(--txt1); }
+.rs-more { display: block; width: 100%; text-align: left; border: 0; padding: 7px 12px; font: 700 10.5px var(--font); color: var(--blue2); background: rgba(99, 102, 241, .06); cursor: pointer; }
+.rs-more:hover { background: rgba(99, 102, 241, .12); }
+.rs-detail { margin: 6px 0 0; border-top: 1px dashed var(--border2); padding-top: 7px; display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; font-size: 10.5px; }
+.rs-detail dt { color: var(--txt3); } .rs-detail dd { margin: 0; color: var(--txt1); word-break: break-word; }
+.rs-wait, .rs-none { padding: 10px 12px; font-size: 11px; color: var(--txt3); }
+.rs-foot { font-size: 10.5px; color: var(--txt3); text-align: center; margin: 2px 0 4px; flex: none; }
+.rs-strong { font-size: 10.5px; }
+.rs-connect { padding: 12px; display: flex; gap: 10px; align-items: flex-start; }
+.rs-connect .i { font-size: 18px; }
+.rs-connect .b { flex: 1; font-size: 11px; color: var(--txt2); line-height: 1.5; }
+.rs-connect b { color: var(--txt1); }
+.rs-connect .rs-acts { margin-top: 7px; }
+
+.jt-set { margin: 0 0 14px; border: 1px solid rgba(129, 140, 248, .45); border-radius: 10px; background: var(--bg1); padding: 12px; transition: box-shadow .3s; }
+.jt-set.jt-flash { box-shadow: 0 0 0 3px rgba(129, 140, 248, .45); }
+.jt-h { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 700; color: var(--txt1); }
+.jt-badge { margin-left: auto; font-size: 10px; font-weight: 700; color: #86efac; background: rgba(34, 197, 94, .12); border: 1px solid rgba(34, 197, 94, .45); border-radius: 999px; padding: 1px 8px; }
+.jt-badge.off { color: var(--txt2); background: rgba(255, 255, 255, .05); border-color: var(--border2); }
+.jt-badge[hidden] { display: none; }
+.jt-p { font-size: 10.5px; color: var(--txt2); line-height: 1.55; margin: 6px 0 10px; }
+.jt-lab { display: flex; align-items: center; font-size: 10px; font-weight: 700; color: var(--txt3); text-transform: uppercase; letter-spacing: .06em; }
+.jt-link { margin-left: auto; background: none; border: 0; padding: 0; color: var(--blue2); font: 700 10px var(--font); text-transform: none; letter-spacing: 0; cursor: pointer; }
+.jt-src { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.jt-opt { border: 1px solid var(--border2); border-radius: 9px; padding: 8px 10px; background: var(--bg2); font-size: 11px; color: var(--txt2); line-height: 1.5; }
+.jt-opt.on { border-color: rgba(34, 197, 94, .5); background: rgba(34, 197, 94, .06); }
+.jt-r { display: flex; align-items: center; gap: 7px; color: var(--txt1); font-weight: 700; font-size: 11.5px; }
+.jt-dot { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--txt3); box-sizing: border-box; flex: none; }
+.jt-opt.on .jt-dot { border-color: #22c55e; background: radial-gradient(circle, #22c55e 45%, transparent 50%); }
+.jt-tag { margin-left: auto; font-size: 9.5px; font-weight: 800; color: #86efac; text-transform: uppercase; letter-spacing: .05em; }
+.jt-opt:not(.on) .jt-tag { color: var(--txt3); }
+.jt-d code { font: 10.5px var(--mono); color: var(--txt1); background: rgba(255, 255, 255, .06); border-radius: 4px; padding: 0 4px; }
+.jt-d:empty { display: none; }
+.jt-good { color: #86efac; } .jt-good b { color: var(--txt1); }
+.jt-bad { color: #fca5a5; }
+.jt-field { display: flex; gap: 6px; margin: 6px 0 4px; align-items: center; }
+.jt-in { flex: 1; min-width: 0; height: 32px; box-sizing: border-box; }
+.jt-btn { flex: none; white-space: nowrap; font: 700 10.5px var(--font); color: #fff; background: var(--blue); border: 1px solid var(--blue); border-radius: 7px; padding: 7px 10px; cursor: pointer; }
+.jt-btn.ghost { background: none; color: var(--txt2); border-color: var(--border2); }
+.jt-btn[hidden] { display: none; }
+.jt-btn:disabled { opacity: .6; cursor: default; }
+.jt-uses { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.jt-use { font-size: 10.5px; color: var(--txt2); background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+.jt-use b { display: block; color: var(--txt1); font-size: 11px; }
+.jt-fine { font-size: 10px; color: var(--txt3); margin-top: 9px; line-height: 1.5; }
+.jt-fine a { color: var(--blue2); font-weight: 700; text-decoration: none; }
+
+.cj { display: flex; flex-direction: column; gap: 9px; }
+.cj h4 { margin: 0; font-size: 13px; color: var(--txt1); }
+.cj-verdict { border: 1px solid var(--border2); border-radius: 9px; padding: 9px 10px; font-size: 11.5px; color: var(--txt1); line-height: 1.5; }
+.cj-verdict.red { border-color: rgba(239, 68, 68, .5); background: rgba(239, 68, 68, .08); }
+.cj-verdict.red b { color: #fca5a5; }
+.cj-verdict.blue { border-color: rgba(56, 189, 248, .45); background: rgba(56, 189, 248, .07); }
+.cj-verdict.blue b.cj-k { color: #7dd3fc; }
+.cj-verdict.amber { border-color: rgba(245, 158, 11, .5); background: rgba(245, 158, 11, .07); }
+.cj-verdict.grey { background: rgba(255, 255, 255, .03); }
+.cj-time { font-size: 10.5px; color: var(--txt3); }
+.cj-sec { font-size: 10px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; color: var(--txt3); margin-top: 2px; }
+.cj-m { border: 1px solid var(--border2); border-radius: 9px; padding: 8px 10px; background: var(--bg1); display: flex; flex-direction: column; gap: 4px; }
+.cj-str { margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 700; }
+.cj-str.strong { color: #86efac; --c: #22c55e; } .cj-str.possible { color: #fcd34d; --c: #f59e0b; }
+.cj-str i { display: inline-block; width: 34px; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, .08); overflow: hidden; }
+.cj-str i::after { content: ''; display: block; height: 100%; background: var(--c); width: var(--w); }
+.cj-why { display: flex; gap: 5px; flex-wrap: wrap; }
+.cj-why span { font-size: 9.5px; color: var(--txt2); background: rgba(255, 255, 255, .06); border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px; }
+.cj-logh { font-size: 11px; color: var(--txt1); font-weight: 600; }
+.cj-code { font: 10.5px/1.5 var(--mono); color: var(--txt2); background: var(--bg0); border: 1px solid var(--border); border-radius: 7px; padding: 7px 8px; white-space: pre-wrap; word-break: break-word; }
+.cj-new { font-size: 9px; font-weight: 800; color: #c4b5fd; background: rgba(139, 92, 246, .15); border: 1px solid rgba(139, 92, 246, .45); border-radius: 999px; padding: 0 6px; letter-spacing: .05em; }
+.cj-acts { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 2px; }
+
+/* 9.4.5 / Global 1.1.5 — Check JIRA (likely / this case), the Resources chat's results, Create in JIRA (Beta) */
+.cj-str.likely { color: #fdba74; --c: #fb923c; }
+.cj-m.own { border-color: rgba(129, 140, 248, .55); background: rgba(99, 102, 241, .07); }
+.cj-why span.hit { color: #fde68a; border-color: rgba(245, 158, 11, .45); background: rgba(245, 158, 11, .1); }
+.cj-more { align-self: flex-start; }
+.cj-m[hidden] { display: none; }
+.hub-found { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.hub-found .rs-row[hidden] { display: none; }
+.jc-modal { max-width: 560px; width: calc(100% - 24px); max-height: calc(100vh - 40px); display: flex; flex-direction: column; }
+.jc-h { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.jc-x { background: none; border: none; color: var(--txt2); font-size: 20px; cursor: pointer; }
+.jc-body { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
+.jc-note, .jc-desc { font-size: 11px; color: var(--txt2); line-height: 1.5; }
+.jc-desc { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+.jc-row { display: flex; flex-direction: column; gap: 3px; }
+.jc-row.bad .jc-in { border-color: rgba(239, 68, 68, .7); }
+.jc-lab { font-size: 10.5px; font-weight: 700; color: var(--txt2); }
+.jc-lab i { color: #fca5a5; font-style: normal; }
+.jc-in { width: 100%; box-sizing: border-box; }
+textarea.jc-in { min-height: 60px; }
+.jc-hint { font-size: 10px; color: var(--txt3); }
+.jc-fe { font-size: 10.5px; color: #fca5a5; }
+.jc-unsup { font-size: 10.5px; color: #fcd34d; }
+.jc-after { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; border-top: 1px dashed var(--border2); padding-top: 8px; }
+.jc-cb { font-size: 11px; color: var(--txt1); display: flex; align-items: center; gap: 6px; }
+.jc-err { margin-top: 8px; font-size: 11px; color: #fca5a5; background: rgba(239, 68, 68, .08); border: 1px solid rgba(239, 68, 68, .45); border-radius: 8px; padding: 7px 9px; }
+.jc-err[hidden] { display: none; }
+.jc-ok { font-size: 12px; color: var(--txt1); line-height: 1.55; background: rgba(34, 197, 94, .08); border: 1px solid rgba(34, 197, 94, .45); border-radius: 9px; padding: 10px; }
+.jc-wait { font-size: 11.5px; color: var(--txt3); padding: 10px 0; }
+.jc-acts { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
+.jc-go { background: var(--blue) !important; color: #fff !important; border: none !important; }
+.jc-go:disabled { opacity: .6; }
+
+.cj-ai { font-size: 10.5px; color: #c4b5fd; display: flex; align-items: center; gap: 6px; }
+.cj-ai.off { color: var(--txt3); }
+.cj-spin { width: 10px; height: 10px; border: 2px solid rgba(196, 181, 253, .35); border-top-color: #c4b5fd; border-radius: 50%; animation: cjspin .8s linear infinite; }
+@keyframes cjspin { to { transform: rotate(360deg); } }
+.cj-air { font-size: 10.5px; color: var(--txt2); line-height: 1.45; }
+.cj-air.same b { color: #86efac; } .cj-air.related b { color: #fdba74; } .cj-air.different b { color: var(--txt3); }
+
+/* JIRA quick cards (9.4.6 / Global 1.1.6) — the release-notes cards' look, a blue-violet accent, one-line subtitles */
+.rhub-card-jira .rhub-card-ico { background: rgba(56, 189, 248, .12); }
+.rhub-card-jira .rhub-card-go { color: #7dd3fc; }
+.rhub-card-jira .rhub-card-s { -webkit-line-clamp: 1; }
+
+.jc-shared { color: #fcd34d; }
+
+/* 9.4.8 / Global 1.1.8 — the Resources Hub's quick buttons as one compact strip ("taking too much space"):
+   the icon and the name only; what each one does is its tooltip. */
+.rhub-view .rhub-cards { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 14px 8px; }
+.rhub-view .rhub-card { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px 5px 6px; border-radius: 999px; min-height: 0; transform: none !important; }
+.rhub-view .rhub-card-ico { width: 20px; height: 20px; font-size: 12px; border-radius: 50%; flex: none; }
+.rhub-view .rhub-card-body { gap: 0; }
+.rhub-view .rhub-card-t { font-size: 11px; font-weight: 600; white-space: nowrap; line-height: 1.2; }
+.rhub-view .rhub-card-s, .rhub-view .rhub-card-go { display: none; }
+.rhub-view .rhub-card-jira { border-color: rgba(56, 189, 248, .3); }
+#usageSvcKey[hidden] { display: none !important; }
+.jc-more { border: 1px dashed var(--border2); border-radius: 8px; padding: 6px 8px; }
+.jc-more > summary { cursor: pointer; font-size: 11px; font-weight: 700; color: var(--blue2); }
+.jc-more[open] > summary { margin-bottom: 6px; }
+.jc-more .jc-row + .jc-row { margin-top: 8px; }
+
+.rhub-view .rhub-cards { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; padding-bottom: 2px; }
+.rhub-view .rhub-card { flex: none; }
+
+/* 9.4.9 — Create in JIRA tick-box lists; the JIRA connection card down to "My own token" */
+.jc-multi { display: flex; flex-direction: column; gap: 5px; }
+.jc-filter { height: 28px; font-size: 11px; }
+.jc-opts { max-height: 168px; overflow-y: auto; border: 1px solid var(--border2); border-radius: 8px; background: var(--bg0); padding: 4px; display: flex; flex-direction: column; }
+.jc-opt-c { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; font-size: 11.5px; color: var(--txt1); cursor: pointer; }
+.jc-opt-c:hover { background: rgba(99, 102, 241, .1); }
+.jc-opt-c[hidden] { display: none; }
+.jc-opt-c input { accent-color: var(--blue); width: 14px; height: 14px; margin: 0; flex: none; }
+.jc-picked { font-size: 10.5px; color: #86efac; line-height: 1.4; }
+.jc-picked.none { color: var(--txt3); }
+#jiraTokSet .jt-h { margin-bottom: 8px; }
+#jiraTokSet .jt-src { margin-top: 0; }
+#jiraTokSet #jiraTokOwn .jt-dot { display: none; }
+
+/* 9.4.9 — Resources Hub ⚡ QUICK OPTIONS: the cards live in a menu, not a strip across the chat */
+.rhub-view { position: relative; }
+.rhub-view #rhubCards { display: none !important; }
+.rhub-qo-btn { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px !important; border: 1px solid rgba(129, 140, 248, .5) !important; background: linear-gradient(135deg, rgba(99, 102, 241, .25), rgba(14, 165, 233, .15)) !important; color: var(--txt1) !important; font-weight: 800; letter-spacing: .04em; }
+.rhub-qo-btn:hover { border-color: rgba(129, 140, 248, .85) !important; }
+.rhub-qo-btn .car { opacity: .7; font-size: 9px; transition: transform .15s; }
+.rhub-qo-btn[aria-expanded="true"] .car { transform: rotate(180deg); }
+.rhub-qo-pop { position: absolute; right: 14px; width: min(320px, calc(100% - 28px)); z-index: 60; border-radius: 14px; padding: 8px; background: var(--bg1, #151a2e); border: 1px solid rgba(129, 140, 248, .35); box-shadow: 0 18px 40px rgba(0, 0, 0, .45), inset 0 0 0 1px rgba(255, 255, 255, .03); max-height: 70vh; overflow-y: auto; }
+.rhub-qo-pop[hidden] { display: none; }
+.rqo-lab { padding: 6px 8px 4px; font-size: 9.5px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; color: var(--txt3); }
+.rqo-sep { border-top: 1px solid var(--border2); margin: 6px 4px; }
+.rqo-item { display: flex; width: 100%; align-items: center; gap: 10px; padding: 7px 8px; border: 0; border-radius: 9px; background: none; color: var(--txt1); text-align: left; cursor: pointer; font-family: inherit; }
+.rqo-item:hover:not(:disabled), .rqo-item:focus-visible { background: rgba(99, 102, 241, .14); outline: none; }
+.rqo-item:disabled { opacity: .5; cursor: default; }
+.rqo-ico { width: 30px; height: 30px; display: inline-grid; place-items: center; border-radius: 8px; font-size: 15px; flex: none; }
+.rqo-pulse .rqo-ico { background: linear-gradient(135deg, rgba(99, 102, 241, .28), rgba(139, 92, 246, .18)); box-shadow: inset 0 0 0 1px rgba(129, 140, 248, .35); }
+.rqo-jira .rqo-ico { background: linear-gradient(135deg, rgba(14, 165, 233, .28), rgba(56, 189, 248, .14)); box-shadow: inset 0 0 0 1px rgba(56, 189, 248, .35); }
+.rqo-tx { display: flex; flex-direction: column; min-width: 0; }
+.rqo-t { font-size: 11.5px; font-weight: 700; line-height: 1.25; }
+.rqo-s { font-size: 10.5px; color: var(--txt3); line-height: 1.3; }
+.rqo-s { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

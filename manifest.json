@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "QA Tool",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Case quality assurance for the SOTI Support team — reads cases from Salesforce and scores how they were handled.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtzXvO7l0Y0H66HPyogQ/16ujwW2buMHSOHXriuo8nvVThIOeXUHscHwoFtUcT6eTIFFQJqtzwHqKM3muIzoyi2GCIPYI3AZ7JV+gHwDqMQ1G32ai9wpLzvlDIJu0DYECZe9sJcAT9F2LJ3zHD64un7WhDg+u2EWkBCrCBQumtFYooiDIDtoLLN5JUtDIHpa+SOtGgJXdn7HhcH1i39DFepJgArlr2R2hZOlq8rg5i+tnjFQN9+NCKgC8YesAT2hxHDszzBqWzWtfg+TEn/uEGHP/mXBmlGkMo+iFNSpGEfwb7+ww46i3uGYImGkv/lMeq7fzzf2eN90R73ZZdZCZrQIDAQAB",
   "permissions": [
@@ -15,17 +15,17 @@
   ],
   "host_permissions": [
     "https://*.salesforce.com/*",
-    "https://*.force.com/*",
-    "https://api.github.com/*"
+    "https://*.force.com/*"
   ],
   "optional_host_permissions": [
-    "https://m365.cloud.microsoft/*"
+    "https://m365.cloud.microsoft/*",
+    "https://copilot.cloud.microsoft/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
   "content_security_policy": {
-    "extension_pages": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; media-src 'self' data:; connect-src 'self' https://*.salesforce.com https://*.force.com https://api.github.com; object-src 'self'; worker-src 'self'; frame-src 'none'; base-uri 'self'; form-action 'none'"
+    "extension_pages": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; media-src 'self' data:; connect-src 'self' https://*.salesforce.com https://*.force.com; object-src 'self'; worker-src 'self'; frame-src 'none'; base-uri 'self'; form-action 'none'"
   },
   "icons": {
     "16": "icons/icon16.png",

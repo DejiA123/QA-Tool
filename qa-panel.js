@@ -34,6 +34,9 @@
 
     const $ = (id) => document.getElementById(id);
     const E = window.QaEngine;
+    // The Display size in force — see display-size.js. Screen measurements are divided by it
+    // wherever they are written back as a length.
+    const uiZoom = () => (window.QaDisplay && window.QaDisplay.zoom()) || 1;
 
     /* ---------------------------------------------------------------------
      * STATE, AND WHERE IT IS KEPT
@@ -54,12 +57,27 @@
          * a memory, the other is a choice, and a sync from somewhere else must not quietly
          * rewrite the queues somebody chose to keep. */
         lists: 'qa_lists',
+        listsOffered: 'qa_default_lists_offered',
         month: 'qa_sheet_month',
         // The per-case chats, and the material they stand on. Separate keys because they
         // have different lifetimes: a chat is the reviewer's own work and is only ever
         // deleted deliberately, while a context is a cache of a scrape and is pruned.
         chats: 'qa_chats',
         context: 'qa_context',
+        /* THE FULL TRANSCRIPT OF ONE CASE, IN A KEY OF ITS OWN.
+         *
+         * Not a field on qa_context, and the reason is arithmetic rather than taste. That one
+         * key holds every cached case, and chrome.storage rewrites a key WHOLE on every set()
+         * — so putting a megabyte of transcript on each of eighty entries would mean reading
+         * and writing eighty megabytes to cache one case. Per case, it is one write of one
+         * case. qa_context stays the small index it has always been, and the transcript the
+         * chat actually stands on lives here, loaded only when a chat is about to send. */
+        ctxDoc: (key) => 'qa_ctxdoc_' + key,
+        // Which of those documents exist, newest first. A list rather than a scan: finding
+        // them by reading every key in storage would mean pulling every review and every
+        // cached case into memory once per case read, which on a thirty-case run is tens of
+        // megabytes of deserialising to delete one string.
+        ctxDocs: 'qa_ctxdoc_keys',
         /* WHAT A ROW SHOWS, AND HOW WIDE EACH COLUMN IS — the reviewer's own layout.
          * Three keys rather than one: the chosen columns, the columns that EXISTED when that
          * choice was made (which is how a later build tells a column somebody switched off
@@ -84,6 +102,9 @@
     let LISTS = [];                    // [{ id, name, url, at }] — the saved Salesforce list views
     let SHEET_MONTH = '';
     let SELECTED = new Set();
+    /* SELECTING — the analyser's Select mode. Off, a row opens its case in Salesforce; on,
+     * every row grows a tick-box and a click ticks it. The QA run acts on what is ticked. */
+    let SELECTING = false;
     let VIEW = 'cases';
     let FILTER = 'all';
     // Which entitlement tier is showing. Deliberately not persisted, like the search box: a
@@ -92,6 +113,8 @@
     // "Which of these has a defect open against it" — see the JIRA chip in renderTierChips.
     // Not persisted, for the same reason TIER is not.
     let ONLY_JIRA = false;
+    // "★ Focus" — the cases that need action now. Computed, never curated; see needsAction.
+    let ONLY_FOCUS = false;
 
     /* THE CHAT, AND WHAT IT STANDS ON.
      *
@@ -109,13 +132,25 @@
     let CHAT_BUSY = false;
     let CHAT_ABORT = null;
 
-    // How much of a case transcript is kept for the chat to stand on. Enough for a long
-    // case; small enough that a hundred reviewed cases is tens of megabytes rather than
-    // hundreds. Whatever is dropped is declared inside the transcript itself.
+    // How much of a case transcript is kept INSIDE THE INDEX. Small on purpose: this copy
+    // exists so a card can be drawn and a chat still has something to stand on when the full
+    // document has been pruned, and it is rewritten along with every other cached case on
+    // every save. The chat's real material is the document below. Whatever is dropped is
+    // declared inside the transcript itself.
     const CONTEXT_MAX_CHARS = 60000;
-    // How many cases keep a stored transcript. The oldest fall off; their chats survive and
+    // How many cases keep a stored index entry. The oldest fall off; their chats survive and
     // say so, and the case can be re-read from the chat screen in one press.
     const CONTEXT_KEEP = 80;
+    /* AND HOW MUCH OF THE CASE THE CHAT ITSELF READS.
+     *
+     * A chat is a QA review continued by other means — "justify that score", "what did the
+     * customer actually ask on the 3rd" — and both of those questions are answered by the
+     * post that the 60,000-character index copy is most likely to have dropped. The chat
+     * attaches its material exactly as the write-up does, so the chat box is not the limit;
+     * disk is. Half a megabyte a case, thirty cases: a case beyond this is one nobody is
+     * still chatting about, and the cut declares itself in the transcript either way. */
+    const CHAT_DOC_MAX_CHARS = 500000;
+    const CHAT_DOC_KEEP = 30;
     // How many turns of a conversation travel with each new question. The material is the
     // expensive part of the prompt and it goes every time regardless, so this only bounds
     // the history — and a chat that has run past twenty turns has stopped being about one
@@ -126,7 +161,7 @@
     // a reload would be a lie the panel had no way to correct.
     const ROW_STATE = new Map();
 
-    const RUN = { active: false, stop: false, total: 0, done: 0, failed: 0, kind: 'qa', note: '' };
+    const RUN = { active: false, stop: false, total: 0, done: 0, failed: 0, kind: 'qa', note: '', saidHow: false, accessBlocked: false, coaching: false };
 
     /* ---------------------------------------------------------------------
      * SMALL SHARED PIECES
@@ -146,11 +181,10 @@
         if (toastTimer) clearTimeout(toastTimer);
         toastTimer = setTimeout(() => { el.className = 'toast'; }, ms);
     }
-    /* SHARED WITH update.js, which is a separate file and has no way into this closure.
-     * Exposed rather than duplicated: two toast implementations means two places to fix when
-     * the timer or the class names change, and the second one is always the one that gets
-     * missed. update.js falls back to console.log if this is missing, so load order between
-     * the two files does not matter. */
+    /* SHARED WITH backup.js and display-size.js, which are separate files and have no way
+     * into this closure. Exposed rather than duplicated: two toast implementations means two
+     * places to fix when the timer or the class names change. Both fall back to console.log
+     * if this is missing, so load order between the files does not matter. */
     window.qaToast = toast;
 
     function isExt() {
@@ -295,13 +329,40 @@
      * else: the tool drives a Copilot tab in a window of its own, so no case
      * data goes anywhere the browser was not already signed in to.
      * ------------------------------------------------------------------- */
-    async function askAi(prompt, label) {
+    /* TWO TURNS, NOT ONE — AND THAT IS THE WHOLE OF WHY A CASE NOW GOES UP AS A FILE.
+     *
+     * `prompt` is either a plain string (a one-off question; the connection test at the
+     * bottom of Settings is the only one left) or the `{ system, request }` pair every
+     * prompt builder in qa-engine.js returns. The pair is sent as a SYSTEM turn and a USER
+     * turn, because that is the only shape ai-provider.js can act on: it splits the system
+     * turn at the first bracketed ALL-CAPS heading and uploads everything from there as
+     * "<case number>-case-material.txt", leaving the rules and the question in the chat box.
+     *
+     * Flattened into a single user turn — which is what this did until now — there is no
+     * system turn to split, so nothing was ever attached: every audit went into the composer
+     * as text, and a case with a long email chain on it was sampled, cut into numbered
+     * messages or condensed to fit a limit it did not need to be fitted to. The provider
+     * still decides whether a file is warranted — a short case belongs inline, where it
+     * costs nothing — this only gives it the chance to decide. See the two-halves note above
+     * the prompt builders in qa-engine.js.
+     */
+    async function askAi(prompt, label, out) {
         if (!window.SotiAI) {
             throw new Error('ai-provider.js did not load, so there is nothing to send this to. Check it sits next to qa-panel.js and reload the extension at chrome://extensions.');
         }
         if (label) window.SotiAI.setConversationLabel(label);
+        const messages = (prompt && typeof prompt === 'object')
+            ? [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.request }]
+            : [{ role: 'user', content: String(prompt || '') }];
+        /* `out` rather than the module global alone. A chat sent while a run is going would
+         * otherwise have the two calls overwrite each other's record, and the review would
+         * carry the chat's delivery or the other way about — a provenance note that is wrong
+         * is worse than none, because it is the thing a reviewer would check instead of
+         * looking. The global stays for the callers that have nowhere to put one. */
+        LAST_DELIVERY = planDelivery(messages);
+        if (out) out.delivery = LAST_DELIVERY;
         const res = await window.SotiAI.chat({
-            messages: [{ role: 'user', content: prompt }],
+            messages,
             stream: false,
             // Low, not zero. A QA write-up is prose and needs to read like it; the facts
             // it is allowed to use are pinned by the prompt rather than by the temperature.
@@ -309,13 +370,348 @@
         }, {});
         if (!res || !res.ok) {
             const why = res ? await res.text() : 'no answer';
-            throw new Error(String(why).slice(0, 400));
+            const err = new Error(String(why).slice(0, 600));
+            /* 403 IS "CHROME WILL NOT LET THE RELAY INTO THE COPILOT TAB" — a missing host
+             * permission, which no retry can fix and one click can. Marked, so every caller
+             * stops asking at once and puts the Connect Copilot dialog in front of the
+             * reviewer instead of spending five attempts on each of thirty cases. */
+            if (res && res.status === 403) {
+                err.access = true;
+                // Not a permission at all: Microsoft sent the tab to its sign-in page.
+                err.signin = /ended up on|Sign in to Microsoft 365/i.test(err.message);
+            }
+            throw err;
         }
         const data = await res.json();
+        LAST_DELIVERY = confirmDelivery(out ? out.delivery : LAST_DELIVERY);
+        if (out) out.delivery = LAST_DELIVERY;
         const text = (data && data.message && data.message.content) || '';
         if (!text.trim()) throw new Error('The relay came back with an empty answer.');
         return text;
     }
+
+    /* ---------------------------------------------------------------------
+     * HOW THE CASE REACHED COPILOT — recorded, not assumed
+     * ---------------------------------------------------------------------
+     * A write-up built on the whole case and a write-up built on a transcript
+     * that was cut into eight messages and trimmed by six hundred thousand
+     * characters ARRIVE LOOKING IDENTICAL. Same headers, same confident prose,
+     * same score. The only difference is whether it is true — and nothing on the
+     * card said which one had happened.
+     *
+     * So every ask records it. Two halves, because they answer two different
+     * questions and only one of them can be known in advance:
+     *
+     *   planDelivery()    — what ai-provider.js WILL do with this prompt,
+     *                       computed by calling ai-provider.js's own builder
+     *                       rather than by guessing at its thresholds here.
+     *   confirmDelivery() — what the relay actually DID, read back off the stage
+     *                       trail. This is the half that catches the case that
+     *                       matters most: the upload control was missing or the
+     *                       site refused the file, the relay fell back to typing
+     *                       the case as text, and the answer came back fine.
+     *
+     * The result goes on the review record and into the run log, so "the whole
+     * case went as a file, nothing trimmed" is something a reviewer can read
+     * rather than something they have to take on trust.
+     * ------------------------------------------------------------------- */
+    let LAST_DELIVERY = null;
+
+    function planDelivery(messages) {
+        try {
+            if (!window.SotiAI || !window.SotiAI.attachesCaseData || !window.SotiAI.attachesCaseData()) {
+                /* No upload path at all — a provider that does not attach, or attachData
+                 * switched off. Still worth measuring: "went as chat text" says nothing about
+                 * how much text, and how much is the whole question on a long case. */
+                const sys = (messages[0] && messages[0].role === 'system') ? messages[0].content : '';
+                const seen = E.previewSplit({ system: sys });
+                return { mode: 'text', chars: seen.materialChars, messageChars: sys.length };
+            }
+            // ai-provider.js's own builder, asked the same question the send path asks it.
+            // No fetches, no side effects — it is pure string work over the prompt.
+            const a = window.SotiAI.bridgeAttachment(messages, {});
+            /* NULL MEANS THE CASE WAS TOO SMALL TO BE WORTH A FILE, which is the correct
+             * outcome for a short case and not the same thing as the upload path being
+             * unavailable. Reporting both as "went as chat text" would put a warning shape
+             * on a healthy run — so the message layout is measured and named for what it is. */
+            if (!a) {
+                const t = window.SotiAI.bridgeParts(messages, {});
+                return { mode: 'inline', chars: 0, messageChars: t.chars, parts: t.parts.length, trimmed: t.trimmed || 0 };
+            }
+            return {
+                mode: a.caseAttached ? 'file' : 'inline',
+                file: a.caseAttached && a.attachments[0] ? a.attachments[0].name : '',
+                chars: a.chars || 0,
+                messageChars: a.messageChars || 0,
+                parts: a.parts.length,
+                trimmed: a.trimmed || 0,
+                attachTrimmed: a.attachTrimmed || 0
+            };
+        } catch (e) { return null; }
+    }
+
+    function confirmDelivery(plan) {
+        const d = plan ? Object.assign({}, plan) : null;
+        try {
+            const trail = window.SotiAI.lastBridgeDiag ? window.SotiAI.lastBridgeDiag() : [];
+            /* THE LAST ATTACH LINE, NOT THE FIRST. One request can drive the relay twice —
+             * the composer measures itself, the adapter re-splits and sends again — and the
+             * trail is cumulative. An attempt that fell back followed by one that attached is
+             * an attachment, and reading the first entry would report the opposite. */
+            const lastOf = (re) => { for (let i = trail.length - 1; i >= 0; i--) if (re.test(trail[i])) return trail[i]; return ''; };
+            const fell = lastOf(/^attach-fallback:/);
+            const done = lastOf(/^attach:/);
+            // The case file's real name — its time stamp is set when it is sent, seconds after
+            // the plan above was made. The case material is always the first file.
+            const sentAs = lastOf(/^attach-name:/).replace(/^attach-name:\s*/, '').split(', ')[0];
+            if (d && sentAs && d.mode === 'file') d.file = sentAs;
+            if (fell && done) {
+                // Both happened. Whichever the relay did LAST is what the answer stands on.
+                const win = trail.lastIndexOf(fell) > trail.lastIndexOf(done) ? 'fell' : 'done';
+                if (win === 'done') { if (d) d.via = done.replace(/^attach:\s*/, ''); return d; }
+            }
+            if (!d) return d;
+            if (fell) { d.mode = 'text'; d.fellBack = fell.replace(/^attach-fallback:\s*/, ''); }
+            else if (done) d.via = done.replace(/^attach:\s*/, '');
+        } catch (e) { /* the plan is still worth keeping */ }
+        return d;
+    }
+
+    /* One line, in a reviewer's words rather than a developer's. */
+    function deliveryLine(d) {
+        if (!d) return '';
+        const n = (x) => Number(x || 0).toLocaleString();
+        /* "a 8,125-character question" is the kind of small wrongness that makes a tool read
+         * as machine-written. The article follows how the number is SAID, so what decides it
+         * is the LEADING GROUP of three: 8,125 is "eight thousand" and takes "an", while
+         * 1,125 is "one thousand" and does not. */
+        const a = (x) => {
+            const t = String(Math.max(0, Math.round(Number(x) || 0)));
+            const g = Number(t.slice(0, ((t.length - 1) % 3) + 1));
+            return (g === 8 || g === 11 || g === 18 || (g >= 80 && g <= 89) || (g >= 800 && g <= 899)) ? 'an' : 'a';
+        };
+        if (d.mode === 'file') {
+            return `the case went to Copilot as ${d.file} — ${n(d.chars)} characters`
+                + (d.attachTrimmed ? `, of which ${n(d.attachTrimmed)} were trimmed from the end` : ', complete')
+                + `, with ${a(d.messageChars)} ${n(d.messageChars)}-character question beside it`
+                + (d.trimmed ? ` (the question itself lost ${n(d.trimmed)} characters)` : '');
+        }
+        if (d.mode === 'inline') {
+            return `the case was small enough to send in the message itself (${n(d.messageChars)} characters`
+                + (d.parts > 1 ? `, ${d.parts} parts` : '') + ')'
+                + (d.trimmed ? `, trimmed by ${n(d.trimmed)} characters` : '');
+        }
+        return d.fellBack
+            ? `the upload was refused, so the case went as chat text instead — ${d.fellBack}`
+            : `the case went as chat text${d.chars ? ` (${n(d.chars)} characters of material)` : ''}`;
+    }
+
+    /* WORTH INTERRUPTING A REVIEWER FOR? Only when evidence was lost, or when the case did
+     * not travel the way it was meant to. A clean file upload is the expected outcome and
+     * saying so on every one of thirty cases is noise. */
+    function deliveryWorrying(d) {
+        if (!d) return false;
+        if (d.fellBack) return true;
+        if (d.attachTrimmed || d.trimmed) return true;
+        return false;
+    }
+
+    /* ---------------------------------------------------------------------
+     * CONNECT COPILOT — the analyser's dialog, for the same reason it has one
+     * ---------------------------------------------------------------------
+     * Every review is written through the reviewer's own Microsoft 365 Copilot tab,
+     * and until Chrome lets the extension read that tab nothing works. Microsoft
+     * now forwards m365.cloud.microsoft/chat to copilot.cloud.microsoft, so an
+     * install that was granted the first host only is locked out of the second —
+     * which is the "Signing in redirected the tab to https://copilot.cloud.microsoft"
+     * failure, five times per case, on every case of a run.
+     *
+     * Chrome only shows its permission prompt in answer to a click, so this dialog
+     * IS that click: one button, Chrome's prompt follows it, and the relay test runs
+     * by itself the moment access is granted. It opens when the panel starts without
+     * the access, when a run or a coaching build is started without it, and when the
+     * relay reports a refusal mid-run. A run that was waiting on it starts once the
+     * test passes.
+     * ------------------------------------------------------------------- */
+    let CPS_THEN = null;
+
+    async function copilotAccessMissing() {
+        try {
+            if (!window.SotiAI || typeof window.SotiAI.bridgeAccessMissing !== 'function') return [];
+            return await window.SotiAI.bridgeAccessMissing();
+        } catch (e) { return []; }
+    }
+
+    function copilotSetupOpen() {
+        const back = $('mCopilotSetup');
+        return !!(back && back.style.display === 'flex');
+    }
+
+    /* `force` opens it even when the panel is not just starting (a run asked for it);
+     * `then` is what to do once Copilot has answered the test. */
+    async function offerCopilotSetup(opts = {}) {
+        try {
+            if (!isExt() || !window.SotiAI) return false;
+            if (opts.then) CPS_THEN = opts.then;
+            if (copilotSetupOpen()) return true;
+            const missing = await copilotAccessMissing();
+            if (!missing.length && !opts.force) return false;
+            // Not on top of a question the reviewer is in the middle of answering.
+            if (!opts.force && document.querySelector('.qa-modal-back')) return false;
+            const back = $('mCopilotSetup');
+            if (!back) return false;
+            paintCopilotSetup(missing.length ? 'ask' : opts.signin ? 'signin' : 'granted');
+            back.style.display = 'flex';
+            setTimeout(() => { try { $('cpsGrant').focus(); } catch (e) {} }, 30);
+            return true;
+        } catch (e) { return false; }
+    }
+
+    function closeCopilotSetup() {
+        const back = $('mCopilotSetup');
+        if (back) back.style.display = 'none';
+        paintCopilotSetupProgress('ask', '');
+    }
+
+    /* One dialog, six states: asking, already granted (the relay itself refused), testing,
+     * connected, refused by Chrome, and a failed test that says which step. */
+    function paintCopilotSetup(state, detail = '') {
+        const msg = $('cpsMsg'), status = $('cpsStatus'), grant = $('cpsGrant'), later = $('cpsLater');
+        if (!msg || !status || !grant || !later) return;
+        status.className = 'cps-status' + (state === 'ok' ? ' is-ok' : (state === 'fail' || state === 'refused') ? ' is-fail' : state === 'testing' ? ' is-busy' : '');
+        status.hidden = state === 'ask' || state === 'granted' || state === 'signin';
+        status.textContent = state === 'refused'
+            ? 'Chrome did not grant access to Copilot. Press the button again and choose Allow — or grant it later under ⋮ → Settings → The AI.'
+            : detail;
+        grant.hidden = state === 'testing' || state === 'ok';
+        grant.disabled = false;
+        later.textContent = state === 'ok' ? 'Done' : 'Not now';
+        later.disabled = state === 'testing';
+        if (state === 'ask' || state === 'refused') {
+            msg.textContent = 'The QA Tool writes its reviews through your Microsoft 365 Copilot, in the browser you are already signed in to. '
+                + 'Chrome needs your permission for it to read the Copilot tab — Microsoft now moves the chat from m365.cloud.microsoft '
+                + 'to copilot.cloud.microsoft, so both are asked for together. Press the button and Chrome will ask you; '
+                + 'once it is allowed, the connection is tested straight away.';
+            grant.textContent = 'Grant access to Copilot';
+        } else if (state === 'signin') {
+            msg.textContent = 'Copilot sent the QA Tool to Microsoft\'s sign-in page, so you are not signed in to Microsoft 365 in this browser. '
+                + 'Open Copilot, sign in with your work account, then come back and test the connection.';
+            grant.textContent = 'Open Copilot to sign in';
+        } else if (state === 'granted') {
+            msg.textContent = 'Chrome already allows the QA Tool to read Copilot, but the relay could not get in. '
+                + 'Test the connection to see which step fails — most often you are not signed in to Microsoft 365 in this browser.';
+            grant.textContent = 'Test the connection';
+        } else {
+            msg.textContent = 'Chrome now allows the QA Tool to read your Copilot tab. Testing the connection opens Copilot in a small '
+                + 'window of its own — that window is the one the QA Tool uses from now on.';
+            if (state === 'fail') grant.textContent = 'Test again';
+        }
+        paintCopilotSetupProgress(state, state === 'refused' ? '' : detail);
+    }
+
+    /* THE PERCENTAGE UNDER THE STATUS LINE — the analyser's, band for band. A test takes up
+     * to half a minute (Copilot has to open and answer), and a line that does not move for
+     * that long reads as stuck. Each stage owns a band; inside it the bar creeps towards the
+     * top and never claims a stage it has not reached. */
+    const CPS_PROGRESS_BANDS = [
+        [/Sending a test/i, 45, 96],
+        [/Opening Copilot/i, 12, 45],
+        [/Access granted|Starting/i, 3, 12]
+    ];
+    function paintCopilotSetupProgress(state, detail) {
+        const box = $('cpsProgress'), fill = $('cpsProgressFill'), pct = $('cpsProgressPct');
+        if (!box || !fill || !pct) return;
+        const p = paintCopilotSetupProgress;
+        const show = (v) => {
+            p.shown = v;
+            fill.style.width = v.toFixed(1) + '%';
+            pct.textContent = Math.floor(v) + '%';
+        };
+        const stop = () => { if (p.timer) clearTimeout(p.timer); p.timer = null; };
+        if (state === 'ok') { stop(); box.hidden = false; box.classList.add('is-done'); show(100); return; }
+        if (state !== 'testing') { stop(); box.hidden = true; box.classList.remove('is-done'); show(0); return; }
+        const band = CPS_PROGRESS_BANDS.find(([re]) => re.test(detail || '')) || [null, 3, 12];
+        box.hidden = false;
+        box.classList.remove('is-done');
+        p.cap = band[2];
+        if (!(p.shown >= band[1])) show(band[1]);
+        if (p.timer) return;
+        const tick = () => {
+            p.timer = null;
+            if (!copilotSetupOpen() || box.hidden || box.classList.contains('is-done')) return;
+            const gap = (p.cap || 0) - (p.shown || 0);
+            if (gap > 0.05) show(p.shown + Math.max(0.05, gap * 0.04));
+            p.timer = setTimeout(tick, 250);
+        };
+        p.timer = setTimeout(tick, 250);
+    }
+
+    /* ONE TEST, EVERY WAY IN — the dialog, Settings' Grant button and Settings' Test button.
+     * Two stages on purpose: the relay fails three ways that look identical from outside (no
+     * permission, no injection, injected but no message box), and the ping tells them apart
+     * before a real prompt is spent. Resolves { ok, host, said } or { ok: false, error };
+     * never throws. Two presses at once share the first run. */
+    let RELAY_TEST = null;
+    function runRelayTest(onStep = () => {}) {
+        if (RELAY_TEST) return RELAY_TEST;
+        RELAY_TEST = (async () => {
+            try {
+                if (!window.SotiAI) throw new Error('ai-provider.js did not load — check it is in the extension folder and reload the extension.');
+                onStep('Opening Copilot…');
+                const ping = await window.SotiAI.pingBridge();
+                onStep(`Copilot is open (${ping.host}) — Sending a test…`);
+                const said = await askAi('Reply with exactly: QA TOOL OK', 'QA Tool test');
+                return { ok: true, host: ping.host, said: said.trim() };
+            } catch (e) {
+                const trail = (window.SotiAI && window.SotiAI.lastBridgeDiag && window.SotiAI.lastBridgeDiag()) || [];
+                console.error('[QA Tool relay test]', e, trail);
+                return { ok: false, error: (e && e.message) || String(e) };
+            }
+        })();
+        RELAY_TEST.finally(() => { RELAY_TEST = null; refreshAiStatus(); });
+        return RELAY_TEST;
+    }
+
+    async function testFromCopilotSetup() {
+        paintCopilotSetup('testing', 'Starting…');
+        const r = await runRelayTest((step) => paintCopilotSetup('testing', step));
+        if (r.ok) {
+            paintCopilotSetup('ok', `✓ Copilot is connected — ${r.host} replied “${r.said.slice(0, 40)}”.`
+                + (CPS_THEN ? ' Starting your run…' : ' You are ready to go.'));
+            const then = CPS_THEN;
+            CPS_THEN = null;
+            if (then) setTimeout(() => { closeCopilotSetup(); then(); }, 900);
+        } else {
+            paintCopilotSetup('fail', `The connection could not be verified: ${r.error} `
+                + 'Make sure you are signed in to Microsoft 365 Copilot in this browser, then press Test again.');
+        }
+    }
+
+    async function grantFromCopilotSetup() {
+        const grant = $('cpsGrant');
+        if (!window.SotiAI) return;
+        // After a failed test, or when access was already there, only the test needs running.
+        if (grant && /^Test/.test(grant.textContent)) return testFromCopilotSetup();
+        // Signed out: a normal, visible tab is where Microsoft's sign-in can do its job.
+        if (grant && /sign in/i.test(grant.textContent)) {
+            try { chrome.tabs.create({ url: 'https://m365.cloud.microsoft/chat/', active: true }); } catch (e) { /* the message says where */ }
+            grant.textContent = 'Test again';
+            return;
+        }
+        if (grant) grant.disabled = true;
+        // The permission request FIRST, before anything else is awaited: this click is the
+        // only thing Chrome accepts it from.
+        let ok = false;
+        try { ok = await window.SotiAI.ensurePermissions(); } catch (e) { ok = false; }
+        refreshAiStatus();
+        if (!ok) { paintCopilotSetup('refused'); return; }
+        return testFromCopilotSetup();
+    }
+
+    /* The provider raises this whenever Chrome refuses it a host in the relay's own group —
+     * mid-run, mid-chat, or from Settings' own test. The dialog puts the button in front of
+     * the reviewer instead of leaving the fix described in an error they cannot click. */
+    window.addEventListener('soti-ai-needs-permission', () => { offerCopilotSetup({ force: true }); });
 
     /* ---------------------------------------------------------------------
      * BOOT
@@ -331,6 +727,7 @@
         if (Array.isArray(got[K.roster]) && got[K.roster].length) ROSTER = got[K.roster];
         if (got[K.lastList]) LAST_LIST = got[K.lastList];
         if (Array.isArray(got[K.lists])) LISTS = got[K.lists].filter(l => l && l.url);
+        await offerDefaultLists();
         SHEET_MONTH = got[K.month] || defaultMonth();
         if (got[K.chats] && typeof got[K.chats] === 'object') CHATS = got[K.chats];
         if (got[K.context] && typeof got[K.context] === 'object') CONTEXT = got[K.context];
@@ -339,13 +736,204 @@
         loadColumnPrefs(got);
         applyColWidths();
 
-        if (window.SotiAI) { try { await window.SotiAI.load(); } catch (e) { /* defaults */ } }
+        // The GitHub update check is gone; so is what it remembered.
+        if (isExt()) { try { chrome.storage.local.remove('qa_update_state'); } catch (e) { /* nothing to forget */ } }
+
+        if (window.SotiAI) {
+            try { await window.SotiAI.load(); } catch (e) { /* defaults */ }
+            /* THE CASE FILE, AND NOTHING ALONGSIDE IT.
+             *
+             * ai-provider.js is the analyser's file, whole, and left to itself it uploads
+             * knowledge/*.md next to the case material. That is right in the analyser, which
+             * ships those files and answers technical questions out of them. This extension
+             * ships no knowledge/ folder, so the seven fetches 404 once per session and there
+             * is nothing to attach even when they do not — and an audit asks how a record was
+             * handled, which SOTI's port matrix has no bearing on. Set at run time only: the
+             * panel never calls SotiAI.save(), so this does not write itself into the
+             * provider settings the analyser shares. */
+            try { window.SotiAI.config.bridge.attachKnowledge = false; } catch (e) { /* the fetches merely fail */ }
+
+            /* AND THE UPLOAD FLOOR COMES OFF, WHICH IS WHY CASES WERE STILL BEING TYPED.
+             *
+             * ai-provider.js will not attach material smaller than attachMinChars — 8,000
+             * characters by default — on the sound reasoning that a small payload is not
+             * worth a round trip and a file in the engineer's OneDrive.
+             *
+             * That number was set for the ANALYSER, whose payload is a log bundle measured in
+             * megabytes, and it is the wrong shape of number for a case audit. A support case
+             * is PROSE. Measured against real shapes: three messages is 1,900 characters, ten
+             * is 3,300, twenty is 5,200 — and a busy case with THIRTY messages on it still
+             * comes to about 7,200. Every one of those is under the floor, so every one of
+             * them went into the chat box as text and no attachment was ever offered. The
+             * only cases that cleared 8,000 were the ones with a long quoted email chain in
+             * them, which is why this looked intermittent rather than broken.
+             *
+             * So for this tool the case ALWAYS goes as a file. The cost is a few seconds and
+             * one small .txt per case; what it buys is a message that stays the same tiny
+             * size whatever the case is, one place for the model to read evidence from, and
+             * no case ever competing with its own instructions for room. Set at run time, like
+             * attachKnowledge above — the panel never calls SotiAI.save(), so this does not
+             * write itself into the provider settings the analyser shares. */
+            try { window.SotiAI.config.bridge.attachMinChars = 1; } catch (e) { /* the floor stays */ }
+        }
 
         applyVersion();
         wire();
+        wireTerms();
         fillSettings();
         renderQaColumns();
         renderAll();
+        paintIntegrity();
+        paintTermsLine();
+        // The terms first, then — once the panel is on screen, and only when Chrome has not
+        // given it Copilot yet — the Copilot connection.
+        if (isExt() && !(await termsAcceptance())) openTermsDialog(false);
+        else setTimeout(() => { offerCopilotSetup(); }, 700);
+    }
+
+    /* ---------------------------------------------------------------------
+     * TERMS OF USE — the SOTI AI Analyser's: shown before anything else the first time the
+     * panel is opened (and again whenever TERMS_VERSION changes), accepted with "I agree",
+     * recorded on the device with the date, and readable at any time in Settings. The
+     * backdrop covers the whole panel, so nothing works until they are accepted.
+     * ------------------------------------------------------------------- */
+    // 2026-10-23.2: the terms now name the integrity check — everyone sees them again.
+    const TERMS_VERSION = '2026-10-23.2';
+    const TERMS_KEY = 'qa_terms_accepted';
+
+    async function termsAcceptance() {
+        try {
+            const got = await chrome.storage.local.get(TERMS_KEY);
+            const t = got && got[TERMS_KEY];
+            return t && t.version === TERMS_VERSION ? t : null;
+        } catch (e) { return null; }
+    }
+
+    function openTermsDialog(readOnly) {
+        const back = $('mTerms');
+        if (!back) return;
+        $('termsAgree').hidden = !!readOnly;
+        $('termsClose').hidden = !readOnly;
+        back.style.display = 'flex';
+        setTimeout(() => { try { (readOnly ? $('termsClose') : $('termsAgree')).focus(); } catch (e) { /* not on screen */ } }, 30);
+    }
+
+    async function paintTermsLine() {
+        const el = $('termsAcceptedLine');
+        if (!el) return;
+        const t = await termsAcceptance();
+        el.textContent = t ? `Terms of use accepted ${new Date(t.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}.` : 'Terms of use not yet accepted.';
+    }
+
+    /* ---------------------------------------------------------------------
+     * THE INTEGRITY CHECK — the SOTI AI Analyser's, with the analyser's key. Every official
+     * copy carries integrity.json: a SHA-256 of each code file and an ECDSA P-256 signature
+     * over that list, made with a private key only the owner holds (see
+     * .qa-build-tools/sign-integrity.mjs, which is not shipped). At start-up this copy hashes
+     * its own files and checks the signature with INTEGRITY_PUBLIC_KEY. A file changed by
+     * hand or by an AI tool, a missing signature, or a forged one, and a red strip across
+     * every screen says this is an unofficial copy — and Settings names the changed files.
+     * Without the private key a changed copy cannot be made to pass.
+     * ------------------------------------------------------------------- */
+    const INTEGRITY_PUBLIC_KEY = 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEgHZuCCqcKFGFujPwkocaDwObUx/bPnd17DCkJOIKIV5g0YAEnYCXLy7D+VJw9ta7OOpCMBuxNb1noBcbcvQLzQ==';
+    const INTEGRITY_OWNER = 'Ayodeji Augustine';
+
+    // manifest.json is fingerprinted by its content: keys sorted, no spacing (sign-integrity.mjs does the same).
+    function integrityCanonJson(text) {
+        const c = (v) => Array.isArray(v) ? v.map(c) : (v && typeof v === 'object') ? Object.keys(v).sort().reduce((o, k) => { o[k] = c(v[k]); return o; }, {}) : v;
+        return JSON.stringify(c(JSON.parse(text)));
+    }
+
+    // The exact bytes the owner signed — sign-integrity.mjs builds the same string.
+    function integrityPayload(rec) {
+        const files = rec.files || {};
+        return JSON.stringify([1, rec.by, rec.build, Object.keys(files).sort().map(k => [k, files[k]])]);
+    }
+
+    /* { status: 'verified' | 'modified' | 'unsigned' | 'forged' | 'unchecked', changed: [file…], build } */
+    async function verifyIntegrity() {
+        const unchecked = { status: 'unchecked', changed: [] };
+        if (!isExt() || typeof chrome.runtime.getURL !== 'function') return unchecked;
+        const subtle = (typeof crypto !== 'undefined' && crypto.subtle) || null;
+        if (!subtle) return unchecked;
+        const b64 = (s) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+        const hex = (buf) => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+        let rec = null;
+        try {
+            const res = await fetch(chrome.runtime.getURL('integrity.json'), { cache: 'no-store' });
+            if (res.ok) rec = await res.json();
+        } catch (e) { rec = null; }
+        if (!rec || !rec.files || !rec.sig) return { status: 'unsigned', changed: [] };
+        try {
+            const key = await subtle.importKey('spki', b64(INTEGRITY_PUBLIC_KEY), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+            const good = rec.by === INTEGRITY_OWNER && await subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, b64(rec.sig),
+                new TextEncoder().encode(integrityPayload(rec)));
+            if (!good) return { status: 'forged', changed: [], build: rec.build };
+        } catch (e) { return { status: 'forged', changed: [], build: rec.build }; }
+        const changed = [];
+        for (const [file, want] of Object.entries(rec.files)) {
+            try {
+                const res = await fetch(chrome.runtime.getURL(file), { cache: 'no-store' });
+                if (!res.ok) { changed.push(file); continue; }
+                let text = (await res.text()).replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
+                // manifest.json by its content — a browser installing a .crx writes it out in its own layout.
+                if (file === 'manifest.json') text = integrityCanonJson(text);
+                if (hex(await subtle.digest('SHA-256', new TextEncoder().encode(text))) !== want) changed.push(file);
+            } catch (e) { changed.push(file); }
+        }
+        // A code file added to the folder that the signature does not cover is a change too.
+        for (const file of ['QA_Tool.html', 'manifest.json', 'qa-panel.js', 'qa-engine.js', 'ai-provider.js', 'copilot-bridge.js',
+                            'background.js', 'content.js', 'case-reader.js', 'reader-wake.js', 'display-size.js', 'backup.js',
+                            'styles.css', 'qa-styles.css']) {
+            if (!(file in rec.files)) changed.push(file);
+        }
+        return { status: changed.length ? 'modified' : 'verified', changed, build: rec.build };
+    }
+
+    async function paintIntegrity() {
+        const r = await verifyIntegrity();
+        paintIntegrity.result = r;
+        const line = $('integrityStatus'), bar = $('integrityBanner');
+        const changedList = r.changed.slice(0, 4).join(', ') + (r.changed.length > 4 ? ` and ${r.changed.length - 4} more` : '');
+        const bad = r.status === 'modified' || r.status === 'unsigned' || r.status === 'forged';
+        if (line) {
+            line.className = 'about-integrity' + (r.status === 'verified' ? ' is-ok' : bad ? ' is-bad' : '');
+            line.textContent = r.status === 'verified' ? `✓ Verified original — signed by ${INTEGRITY_OWNER} (build ${r.build}).`
+                : r.status === 'modified' ? `⚠ This copy has been changed from the one ${INTEGRITY_OWNER} published: ${changedList}.`
+                : r.status === 'unsigned' ? `⚠ This copy carries no signature from ${INTEGRITY_OWNER}.`
+                : r.status === 'forged' ? `⚠ This copy's signature is not ${INTEGRITY_OWNER}'s.`
+                : 'This copy could not be checked here.';
+        }
+        if (bar) {
+            bar.hidden = !bad;
+            bar.textContent = !bad ? ''
+                : `⚠ Unofficial copy — this QA Tool is not the version published by ${INTEGRITY_OWNER}`
+                  + (r.status === 'modified' ? ` (changed: ${changedList})`
+                     : r.status === 'unsigned' ? ' (integrity.json, its signature, is missing from this folder)'
+                     : r.status === 'forged' ? ' (its signature does not check out)' : '')
+                  + '. It is not supported and may not work as intended.';
+        }
+        if (bad) console.warn(`[QA Tool] integrity: ${r.status}`, r.changed);
+        return r;
+    }
+
+    function wireTerms() {
+        if ($('termsAgree')) $('termsAgree').onclick = async () => {
+            try { await chrome.storage.local.set({ [TERMS_KEY]: { version: TERMS_VERSION, at: new Date().toISOString() } }); } catch (e) { /* asked again next start */ }
+            $('mTerms').style.display = 'none';
+            paintTermsLine();
+            // Accepted: now the Copilot connection, if Chrome has not given it yet.
+            setTimeout(() => { offerCopilotSetup(); }, 300);
+        };
+        if ($('termsClose')) $('termsClose').onclick = () => { $('mTerms').style.display = 'none'; };
+        if ($('termsRead')) $('termsRead').onclick = (e) => { e.preventDefault(); openTermsDialog(true); };
+        // The first-start dialog does not close on Esc: "I agree" is the only way past it.
+        if ($('mTerms')) $('mTerms').addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (!$('termsClose').hidden) $('termsClose').click();
+        });
     }
 
     function defaultMonth() {
@@ -384,14 +972,17 @@
         if (name === 'coaching') renderCoaching();
         if (name === 'reviews') renderReviews();
         if (name === 'chat') renderChat();
-        /* RE-READ ON EVERY VISIT, not once at boot.
-         *
-         * update.js loads its remembered check asynchronously and runs its own check six
-         * seconds after start-up, both of which finish long after fillSettings() has run —
-         * so a status painted at boot says "never checked" for the rest of the session on a
-         * panel that checked a minute ago. Settings is opened rarely enough that repainting
-         * two lines on each visit costs nothing. */
-        if (name === 'settings') fillUpdateStatus();
+        // Re-read on every visit: Chrome's grant can change behind the panel's back.
+        if (name === 'settings') refreshAiStatus();
+        // Menus and the column chooser belong to the Cases tab and do not follow you off it.
+        if (name !== 'cases') {
+            closeMenu();
+            closeToolbarMenus();
+            const cols = $('ocColsPanel');
+            if (cols) cols.style.display = 'none';
+            const cog = $('ocColumns');
+            if (cog) cog.classList.remove('active');
+        }
     }
 
     function renderAll() {
@@ -406,6 +997,18 @@
     function renderCounts() {
         const c = $('tabCasesCount');
         if (c) c.textContent = CASES.cases.length ? String(CASES.cases.length) : '';
+        /* THE CASES PILL, as the analyser draws it: the count in a well of its own, and a red
+         * dot while anything in the queue is waiting on SOTI. */
+        const tab = $('tabCases');
+        if (tab) {
+            const onUs = CASES.cases.filter(x => statusIsOnSoti(x.status)).length;
+            tab.classList.toggle('has-count', CASES.cases.length > 0);
+            tab.title = CASES.cases.length
+                ? `${CASES.cases.length} case${CASES.cases.length === 1 ? '' : 's'}${onUs ? `, ${onUs} on SOTI (waiting on SOTI response, or new and not picked up)` : ''}`
+                : 'Cases — the queue you QA from';
+            const dot = $('tabCasesDot');
+            if (dot) dot.hidden = !onUs;
+        }
         const r = $('tabReviewsCount');
         if (r) {
             const bad = REVIEWS.filter(incomplete).length;
@@ -585,7 +1188,7 @@
             case 'score':    return (a, b) => {
                 const s = (c) => {
                     const r = qaReviewFor(c);
-                    return r && r.score && r.score.value !== null ? r.score.value : null;
+                    return r && !incomplete(r) && r.score && r.score.value !== null ? r.score.value : null;
                 };
                 return nullLast(s(a), s(b), (x, y) => x - y);
             };
@@ -685,7 +1288,7 @@
      * may not be rendered yet. `min` is the same floor the CSS sets and is enforced here as
      * well, so a drag cannot produce a width the layout then refuses. */
     const COL_SIZES = {
-        casenum:     { def: 62, min: 48 },
+        casenum:     { def: 70, min: 48 },   // a bold "C01720260" is 68px — see .oc-num in qa-styles.css
         subject:     { def: 0,  min: 26 },   // 0 = "whatever is left over" (flex-grow 1)
         activity:    { def: 16, min: 12 },
         severity:    { def: 46, min: 24 },
@@ -832,11 +1435,6 @@
         // on the view.
         applyColWidths();
 
-        const check = document.createElement('span');
-        check.className = 'qa-colhead-check';
-        check.setAttribute('aria-hidden', 'true');
-        head.appendChild(check);
-
         const num = document.createElement('span');
         num.className = 'oc-colhead-num';
         num.textContent = 'Case';
@@ -919,7 +1517,7 @@
             const step = e.key === 'ArrowRight' ? 4 : e.key === 'ArrowLeft' ? -4 : 0;
             if (step) {
                 e.preventDefault();
-                setColumnWidth(key, (COL_WIDTHS[key] || Math.round(cell.getBoundingClientRect().width)) + step);
+                setColumnWidth(key, (COL_WIDTHS[key] || Math.round(cell.getBoundingClientRect().width / uiZoom())) + step);
                 saveWidths();
                 return;
             }
@@ -963,7 +1561,9 @@
         document.body.classList.add('oc-resizing');
         try { grip.setPointerCapture(e.pointerId); } catch (err) { /* older engines */ }
 
-        const move = (ev) => setColumnWidth(key, startW + (ev.clientX - startX));
+        // Screen pixels in, page pixels out: at a Display size other than 100% the edge would
+        // otherwise run ahead of (or behind) the pointer. See display-size.js.
+        const move = (ev) => setColumnWidth(key, (startW + (ev.clientX - startX)) / uiZoom());
         const up = () => {
             grip.classList.remove('is-dragging');
             document.body.classList.remove('oc-resizing');
@@ -1046,6 +1646,10 @@
         const withJira = visibleCases({ ignoreTier: true, ignoreJira: true })
             .filter(rec => jiraKeyFrom(rec.jira)).length;
         if (!withJira) ONLY_JIRA = false;
+        // The same reasoning for Focus: counted with its own filter off, and let go when the
+        // answer is none so the queue is never stranded behind a chip that is not drawn.
+        const withFocus = visibleCases({ ignoreTier: true, ignoreFocus: true }).filter(needsAction).length;
+        if (!withFocus) ONLY_FOCUS = false;
 
         const pool = visibleCases({ ignoreTier: true });
         const counts = new Map();
@@ -1091,8 +1695,7 @@
          * The tier counts above deliberately do NOT ignore this filter, where its own count
          * does: each chip answers that question about ITSELF, and while JIRA is on,
          * "Enterprise 14" over a list of five would be the chips contradicting the queue. */
-        if (!withJira) return;
-
+        if (withJira) {
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'oc-chip oc-chip-jira' + (ONLY_JIRA ? ' active' : '');
@@ -1115,6 +1718,23 @@
             renderCases();
         };
         wrap.appendChild(b);
+        }
+
+        /* ★ FOCUS — the analyser's "which of these is on us right now", from what the list
+         * already says: the status is Waiting on SOTI or New, or Salesforce's activity dot is
+         * red. (The analyser also counts "no email sent in five days", which needs the feed —
+         * a list sync does not read it, so it is not guessed at here.) */
+        if (withFocus) {
+            const f = document.createElement('button');
+            f.type = 'button';
+            f.className = 'oc-chip oc-chip-focus' + (ONLY_FOCUS ? ' active' : '');
+            f.textContent = `★ Focus ${withFocus}`;
+            f.title = ONLY_FOCUS
+                ? 'Showing only the cases that need action. Click to show them all again.'
+                : `Focus: show only the ${withFocus} case${withFocus === 1 ? '' : 's'} that need action — the status is Waiting on SOTI or New, or the Salesforce activity dot is red.`;
+            f.onclick = () => { ONLY_FOCUS = !ONLY_FOCUS; renderCases(); };
+            wrap.appendChild(f);
+        }
     }
 
     /* ONE COLUMN'S CELL ON ONE ROW.
@@ -1203,19 +1823,23 @@
              * review is a refusal is the panel saying "done" about work that is not. */
             case 'qa': {
                 const rev = qaReviewFor(rec);
-                if (rev && rev.score && rev.score.value !== null) {
+                /* INCOMPLETE FIRST. A write-up that failed still carries the score worked out
+                 * from the measured facts (see deriveScore), and drawn first that number sat
+                 * beside a case whose review never came back — the panel saying "88" about
+                 * work that is not done. The '!' is what such a case is. */
+                if (rev && incomplete(rev)) {
+                    cell('!', 'qa-score qa-score-bad',
+                         `Read ${E.fmtDateTime(rev.at)}, but the write-up did not come back. Open Reviews to see why and re-run it.`);
+                } else if (rev && rev.score && rev.score.value !== null) {
                     cell(String(rev.score.value),
                          'qa-score band-' + scoreBand(rev.score) + (rev.score.derived ? ' qa-score-derived' : ''),
                          rev.score.derived
                             ? `QA score ${rev.score.value}/100 — ${rev.score.band}, worked out from the measured facts because the write-up gave none. Reviewed ${E.fmtDateTime(rev.at)}.`
                             : `QA score ${rev.score.value}/100 — ${rev.score.band}. Reviewed ${E.fmtDateTime(rev.at)}.`);
-                } else if (rev && incomplete(rev)) {
-                    cell('!', 'qa-score qa-score-bad',
-                         `Read ${E.fmtDateTime(rev.at)}, but the write-up did not come back. Open Reviews to see why and re-run it.`);
                 } else if (rev) {
                     cell('✓', 'qa-score', `Reviewed ${E.fmtDateTime(rev.at)}.`);
                 } else {
-                    cell('—', '', 'Not reviewed yet — tick it and press QA selected.');
+                    cell('—', '', 'Not reviewed yet — select it and press QA.');
                 }
                 break;
             }
@@ -1302,55 +1926,77 @@
         return E.milestoneFor(rec && rec.ageDays, RULES);
     }
 
+    /* THE FILTER BOX, read the analyser's way. Commas separate alternatives, and every word of
+     * one alternative must appear somewhere on the row, in any order — "linde enrol" finds the
+     * Linde enrolment case. A term that names somebody who owns cases in this queue is matched
+     * against the OWNER only, as whole words, so "Tom" finds Tom's cases and not every subject
+     * with "customer" in it. That is the by-owner workflow now: the dropdown that sat above the
+     * list is gone with the analyser's, which found the box did the same job a row lower. */
+    function searchTerms(q) {
+        return String(q || '').toLowerCase().split(/[,;]+/).map(t => t.trim()).filter(Boolean);
+    }
+    function ownerWords(rec) {
+        return [rec.owner, rec.lastModifiedBy].filter(Boolean).join(' ').toLowerCase()
+            .split(/[\s.,()]+/).filter(Boolean);
+    }
+    function nameHit(words, term) {
+        const want = term.split(/\s+/).filter(Boolean);
+        return want.length > 0 && want.every(w => words.includes(w));
+    }
+    function matchesSearch(rec, terms, ownerTerms) {
+        if (!terms.length) return true;
+        const hay = [rec.caseNum, rec.subject, rec.account, rec.contact, rec.jira, rec.entitlement,
+                     rec.status, rec.owner, rec.lastModifiedBy].filter(Boolean).join(' ').toLowerCase();
+        return terms.some(t => ownerTerms.has(t)
+            ? nameHit(ownerWords(rec), t)
+            : t.split(/\s+/).filter(Boolean).every(w => hay.includes(w)));
+    }
+
+    // ★ Focus — see renderTierChips.
+    function needsAction(rec) {
+        return !!rec && (statusIsOnSoti(rec.status) || activityIcon(rec) === 'red');
+    }
+
     /* WHICH CASES ARE ON SCREEN.
      *
-     * `opts.ignoreTier` is for the tier chips themselves: their counts have to answer "how
-     * many would this chip show", which is a question about every OTHER filter and not about
-     * the tier you are already standing in. Everything else reads it with no options at all. */
+     * The `ignore…` options are for the chips themselves: each chip's count answers "how many
+     * would this chip show", which is a question about every OTHER filter and not about the
+     * one it is. Everything else reads this with no options at all. */
     function visibleCases(opts) {
         const ignoreTier = !!(opts && opts.ignoreTier);
         const ignoreJira = !!(opts && opts.ignoreJira);
-        const q = ($('ocSearch').value || '').trim().toLowerCase();
-        const owner = ($('ocOwner').value || '').trim().toLowerCase();
+        const ignoreFocus = !!(opts && opts.ignoreFocus);
+        const terms = searchTerms($('ocSearch').value);
         const sort = $('ocSort').value || 'age-desc';
+        const all = CASES.cases;
+        const ownerTerms = new Set(terms.filter(t => all.some(c => nameHit(ownerWords(c), t))));
 
-        let list = CASES.cases.slice();
-
-        if (owner) {
-            list = list.filter(c => {
-                const who = String(c.owner || c.lastModifiedBy || '').toLowerCase();
-                return who === owner;
-            });
-        }
-        if (q) {
-            list = list.filter(c => [c.caseNum, c.subject, c.account, c.owner, c.lastModifiedBy, c.status, c.jira]
-                .some(v => String(v || '').toLowerCase().includes(q)));
-        }
+        let list = all.filter(c => matchesSearch(c, terms, ownerTerms));
         if (!ignoreTier && TIER !== 'all') {
             list = list.filter(c => entitlementTier(c.entitlement).key === TIER);
         }
         if (!ignoreJira && ONLY_JIRA) {
             list = list.filter(c => jiraKeyFrom(c.jira));
         }
+        if (!ignoreFocus && ONLY_FOCUS) {
+            list = list.filter(needsAction);
+        }
         if (FILTER !== 'all') {
             list = list.filter(c => {
                 const ms = milestoneOf(c);
                 if (FILTER === 'milestone') return ms !== null;
-                if (FILTER === 'unreviewed') return !qaReviewFor(c);
-                if (FILTER === 'reviewed') return !!qaReviewFor(c);
+                // A write-up that never came back is not QA'd — it is the case to run again.
+                const done = qaReviewFor(c);
+                if (FILTER === 'unreviewed') return !done || incomplete(done);
+                if (FILTER === 'reviewed') return !!done && !incomplete(done);
                 return String(ms) === FILTER;
             });
         }
 
-        /* NO SORT AT ALL under "List order" — not a sort that happens to be a no-op. Array
-         * .sort is stable in every engine this runs on, so sorting by a comparator that
-         * returns 0 would give the same answer; skipping it says what is meant, which is that
-         * Salesforce's own order is the answer and nothing here should touch it.
-         *
-         * A missing age, severity or status sorts LAST whichever direction is chosen, rather
-         * than being counted as zero. A case whose row carried no severity is not the least
-         * severe case in the queue — it is one this tool cannot answer for, and putting it at
-         * the top of "high first" would be the list inventing a fact. See unknownLast. */
+        /* NO SORT AT ALL under "List order" — Salesforce's own order is the answer. A missing
+         * age, severity or status sorts LAST whichever direction is chosen, rather than being
+         * counted as zero: a case whose row carried no severity is not the least severe case
+         * in the queue, it is one this tool cannot answer for. See unknownLast. */
         const cmp = sortComparator(sort);
         if (cmp) list.sort(cmp);
         return list;
@@ -1359,114 +2005,118 @@
     function renderCases() {
         const list = $('ocList');
         if (!list) return;
-        list.textContent = '';
+        const total = CASES.cases.length;
 
-        // Repainted with the queue, not only when one is added: the chip for the view that is
-        // currently on screen is marked, and which view that is changes with every sync.
+        // Repainted with the queue, not only when one is added: the chip for the view on
+        // screen is marked, the tier chips and the heading strip are built from what the sync
+        // returned, and the Sync button's title carries the count and the age.
         renderLists();
-        // The tier chips and the heading strip are both built from what the sync returned, so
-        // they are repainted with it: a queue that has just gained its first Premium case must
-        // gain the chip for it, and a column switched on must gain its heading.
         renderTierChips();
         renderQaColumnHeader();
+        paintSyncLabel();
+
+        /* NOTHING SYNCED: the hint says what to do, and the filters and the list bar — which
+         * act on a list — stay out of the way until there is one. */
+        const hint = $('ocHint');
+        if (hint) hint.style.display = total ? 'none' : '';
+        for (const id of ['ocFilters', 'ocFilters2']) {
+            const el = $(id);
+            if (el) el.style.display = total ? '' : 'none';
+        }
+        if (!total && SELECTING) { SELECTING = false; SELECTED.clear(); }
+        const view = $('viewCases');
+        if (view) view.classList.toggle('oc-selecting', SELECTING);
 
         const shown = visibleCases();
-        /* THE COUNT AND WHEN IT WAS READ, and nothing before them.
-         *
-         * The synced list view's own name used to open this line, on the reasoning that
-         * "My Open Cases" says more than a bare number. Two things were wrong with that.
-         *
-         * The name arrives through the CASE FIELD cleaner, which splits on Salesforce's action
-         * words — and "Open" is one of them. So "My Open Cases" was cut at its first word and
-         * the queue was headed by "My", sitting there looking deliberate rather than looking
-         * truncated.
-         *
-         * And there is nothing for it to say even when it is right. The tab is already called
-         * Cases, and which list these came from is named on its own chip in the saved-views
-         * strip a few lines below. A name here is a word standing where a number should be.
-         *
-         * CASES.listName is still scraped and still stored — it is the record of where the
-         * queue came from, and the sync uses it. Nothing reads it onto the screen. */
-        const meta = $('ocMeta');
-        if (meta) {
-            const when = CASES.scrapedAt ? `, read ${E.fmtDateTime(CASES.scrapedAt)}` : '';
-            meta.textContent = CASES.cases.length
-                ? `${shown.length} of ${CASES.cases.length} case${CASES.cases.length === 1 ? '' : 's'}${when}`
-                : '';
-        }
-        fillOwnerSelect();
+        renderListBar(shown);
+        list.textContent = '';
+        if (!total) { renderCounts(); return; }
 
-        if (!CASES.cases.length) {
-            const hint = document.createElement('div');
-            hint.className = 'qa-empty';
-            hint.innerHTML = 'Nothing to review yet.<br><br>Open a Salesforce case <b>list view</b> — Cases &rarr; whichever queue you QA from — and press <b>Sync case list</b>. '
-                + 'After the first sync this tool remembers the list and can go back to it on its own.'
-                + '<br><br>Or press <b>🗂️ Add list view</b> and paste the address of that view: it is kept as a button here, '
-                + 'and pressing it opens the queue in Salesforce and syncs from it in one go.';
-            list.appendChild(hint);
-            renderSelection();
-            renderCounts();
-            return;
-        }
         if (!shown.length) {
-            /* NAME EVERY FILTER THAT IS ON, not just the first. There are four of them now,
-             * and "no cases" while a tier filter is quietly also on is a message that sends
-             * the reviewer looking in the wrong place. */
+            /* NAME EVERY FILTER THAT IS ON, not just the first — "no cases" while a tier filter
+             * is quietly also on sends the reviewer looking in the wrong place. */
             const active = [];
             const q = ($('ocSearch').value || '').trim();
-            const owner = $('ocOwner') ? ($('ocOwner').selectedOptions[0] || {}).textContent : '';
-            if (q) active.push(`matching “${q}”`);
-            if ($('ocOwner') && $('ocOwner').value) active.push(`owned by ${String(owner).replace(/\s*\(\d+\)$/, '')}`);
+            const terms = searchTerms(q);
+            if (q) active.push(terms.length > 1 ? `matching any of “${terms.join('”, “')}”` : `matching “${q}”`);
             if (TIER !== 'all') active.push('in that tier');
             if (ONLY_JIRA) active.push('with a JIRA');
+            if (ONLY_FOCUS) active.push('needing action');
             if (FILTER !== 'all') active.push('under that chip');
-            const hint = document.createElement('div');
-            hint.className = 'qa-empty';
-            hint.textContent = active.length
-                ? `No cases ${active.join(', ')}.`
-                : 'No case matches this filter.';
-            list.appendChild(hint);
-            renderSelection();
+            const none = document.createElement('div');
+            none.className = 'oc-open';
+            none.textContent = active.length ? `No cases ${active.join(', ')}.` : 'No cases to show.';
+            list.appendChild(none);
+            renderCounts();
             return;
         }
 
         /* GROUPED BY ENTITLEMENT TIER, in the order the tiers are worked — but only when no
-         * single tier is picked. Once one is, every row in the list is that tier and a heading
-         * over all of them says nothing.
-         *
-         * Tier first, the reviewer's chosen sort second. Array.sort is stable, so the order
-         * inside a tier is exactly what visibleCases already put them in. */
+         * single tier is picked. Tier first, the chosen sort second: Array.sort is stable, so
+         * the order inside a tier is exactly what visibleCases put them in. */
         const grouping = TIER === 'all';
         const ordered = grouping ? [...shown].sort((a, b) => tierRank(a) - tierRank(b)) : shown;
 
-        const frag = document.createDocumentFragment();
+        /* DRAWN IN SLICES, as the analyser draws its queue: every row is a dozen elements with
+         * their handlers, so a list of a thousand cases is drawn a slice at a time as the
+         * bottom of it comes into view. Filtering, sorting, Select all and the counts work on
+         * the data, never on what happens to be drawn. */
+        let drawn = 0;
         let lastTier = null;
-        for (const rec of ordered) {
-            if (grouping) {
-                const tier = entitlementTier(rec.entitlement);
-                if (tier.key !== lastTier) {
-                    lastTier = tier.key;
-                    const h = document.createElement('div');
-                    h.className = 'oc-group tier-' + tier.key;
-                    h.textContent = tier.label;
-                    frag.appendChild(h);
+        let watcher = null;
+        const drawMore = () => {
+            const frag = document.createDocumentFragment();
+            const upto = Math.min(ordered.length, drawn + RENDER_CHUNK);
+            for (const rec of ordered.slice(drawn, upto)) {
+                if (grouping) {
+                    const tier = entitlementTier(rec.entitlement);
+                    if (tier.key !== lastTier) {
+                        lastTier = tier.key;
+                        const h = document.createElement('div');
+                        h.className = 'oc-group tier-' + tier.key;
+                        h.textContent = tier.label;
+                        frag.appendChild(h);
+                    }
                 }
+                frag.appendChild(caseRow(rec));
             }
-            frag.appendChild(caseRow(rec));
-        }
-        list.appendChild(frag);
+            drawn = upto;
+            const more = list.querySelector('.oc-more');
+            if (more) more.remove();
+            list.appendChild(frag);
+            if (watcher) { watcher.disconnect(); watcher = null; }
+            if (drawn < ordered.length) {
+                const tail = document.createElement('div');
+                tail.className = 'oc-more';
+                tail.style.cssText = 'padding:8px;text-align:center;font-size:10.5px;color:var(--txt3)';
+                tail.textContent = `Showing ${drawn.toLocaleString()} of ${ordered.length.toLocaleString()} — scroll for more`;
+                list.appendChild(tail);
+                if (typeof IntersectionObserver === 'function') {
+                    watcher = new IntersectionObserver((ents) => { if (ents.some(x => x.isIntersecting)) drawMore(); }, { rootMargin: '600px' });
+                    watcher.observe(tail);
+                } else tail.onclick = drawMore;
+            }
+        };
+        drawMore();
         alignColumnHeader();
-        renderSelection();
         renderCounts();
     }
 
+    const RENDER_CHUNK = 150;
+
+    /* ONE ROW PER CASE — the analyser's row, with this tool's chat button on it.
+     *
+     * The tier is a coloured stripe down the left edge, so the grouping is still readable once
+     * its heading has scrolled away; `needs-soti` washes the row red, because "this one is
+     * waiting on us" is the thing most worth seeing without opening anything.
+     *
+     * Off, a click on the row opens the case in Salesforce. Selecting, it ticks the row — a
+     * click meant to choose a case must never cost a Salesforce tab — and the controls at the
+     * end step aside (see .oc-selecting in qa-styles.css). The class is toggled in place
+     * rather than the list re-rendered, so a run of clicks down the queue repaints nothing. */
     function caseRow(rec) {
         const key = keyOf(rec);
         const row = document.createElement('div');
-        /* THE TIER IS A COLOURED STRIPE DOWN THE ROW'S LEFT EDGE, so the grouping is still
-         * readable once you have scrolled past its heading. `needs-soti` washes the row red:
-         * the status is not otherwise on the line unless its column is switched on, and "this
-         * one is waiting on us" is the thing most worth seeing without opening anything. */
         row.className = 'oc-row tier-' + entitlementTier(rec.entitlement).key
             + (statusIsOnSoti(rec.status) ? ' needs-soti' : '');
         row.dataset.key = key;
@@ -1474,71 +2124,49 @@
         const state = ROW_STATE.get(key);
         if (state) row.classList.add('qa-' + state);
 
-        /* THE TICK BOX, FIRST ON THE ROW.
-         *
-         * In its own padded box and outside .oc-row-main, which is the half that opens the
-         * case in Salesforce. A click a few pixels wide of a checkbox that then navigates
-         * away is the most annoying miss an interface has, and putting the box inside the
-         * clickable region would produce exactly that. */
-        const checkWrap = document.createElement('label');
-        checkWrap.className = 'qa-row-check';
-        const check = document.createElement('input');
-        check.type = 'checkbox';
-        check.className = 'qa-check';
-        check.checked = SELECTED.has(key);
-        // Set HERE as well as in renderSelection, because a row repainted mid-run (see
-        // updateRow) builds a brand-new checkbox that renderSelection's sweep has already
-        // been past — so without this the one row that is actually being read is the one
-        // row whose tick can still be changed underneath the run.
-        check.disabled = RUN.active;
-        check.title = 'Include this case in the next QA run';
-        check.onclick = (e) => e.stopPropagation();
-        check.onchange = () => {
-            if (check.checked) SELECTED.add(key); else SELECTED.delete(key);
-            renderSelection();
-        };
-        checkWrap.appendChild(check);
-        row.appendChild(checkWrap);
-
         const main = document.createElement('div');
         main.className = 'oc-row-main';
-        main.title = 'Open this case in Salesforce';
-        main.onclick = () => openInSalesforce(rec);
+        const opens = urlOf(rec) ? `Open ${rec.caseNum || 'this case'} in Salesforce` : 'This case has no Salesforce link yet';
+        main.title = rec.subject ? `${rec.subject}\n\n${opens}` : opens;
+
+        if (SELECTING) {
+            const box = document.createElement('span');
+            box.className = 'oc-sel-box';
+            box.textContent = '✓';
+            box.setAttribute('aria-hidden', 'true');
+            row.appendChild(box);
+            const on = SELECTED.has(key);
+            row.classList.toggle('is-selected', on);
+            row.setAttribute('role', 'checkbox');
+            row.setAttribute('aria-checked', on ? 'true' : 'false');
+            row.tabIndex = 0;
+            const flip = () => {
+                // The run took its list when it started; ticks made now would read as part of it.
+                if (RUN.active) { toast('A run is going — the selection is held until it finishes.', 'w'); return; }
+                const now = !SELECTED.has(key);
+                if (now) SELECTED.add(key); else SELECTED.delete(key);
+                row.classList.toggle('is-selected', now);
+                row.setAttribute('aria-checked', now ? 'true' : 'false');
+                renderListBar();
+            };
+            row.onclick = flip;
+            row.onkeydown = (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); } };
+        } else {
+            main.onclick = () => openInSalesforce(rec);
+        }
 
         const num = document.createElement('span');
         num.className = 'oc-num';
         num.textContent = rec.caseNum || '(no number)';
         main.appendChild(num);
 
-        /* WHAT ELSE GOES ON THE LINE IS THE REVIEWER'S CHOICE.
-         *
-         * It used to be fixed at the milestone, the owner, the age and the score. That is
-         * still the default, and it is now only the default: the chooser behind the cog (see
-         * renderQaColumns) decides what this loop draws, and the strip above names each one.
-         * The order is QA_COLUMNS' order, never the order the boxes were ticked, so the rows
-         * line up with the headings.
-         *
-         * THE CELLS ARE DIRECT CHILDREN of .oc-row-main, not wrapped in a box of their own.
-         * A wrapper is itself a flex item sized from its own content, and the heading strip's
-         * wrapper sits beside two spacers while the row's does not — so the two would resolve
-         * to different widths and every heading would land a few pixels off the column it
-         * names. Flattened, each line is one flex line with the same items, the same rules and
-         * the same width available. */
-        /* THE SUBJECT'S SLOT IS ALWAYS FILLED, AND ALWAYS HERE.
-         *
-         * It is the cell that absorbs whatever width the fixed columns do not use, so with
-         * the subject switched off something still has to hold that slack or the fixed
-         * columns spread themselves across the row and stop being a grid. The part that
-         * matters is WHERE: the heading strip keeps its subject cell in this position whether
-         * the column is on or off, so a row that appended its spacer at the far end instead
-         * would put the slack on the other side of every cell — and each heading would then
-         * sit a subject's width away from the column it names. Same slot on both lines, or
-         * they do not line up. */
+        /* THE SUBJECT'S SLOT IS ALWAYS FILLED, AND ALWAYS HERE — it is the cell that absorbs
+         * whatever width the fixed columns do not use, and the heading strip keeps its subject
+         * cell in this same position, so the two lines stay a grid whether it is on or off. */
         const subject = document.createElement('span');
         if (columnOn('subject')) {
             subject.className = 'oc-subject';
             subject.textContent = rec.subject || '(no subject)';
-            subject.title = rec.subject || '';
         } else {
             subject.className = 'oc-subject oc-subject-empty';
             subject.setAttribute('aria-hidden', 'true');
@@ -1556,14 +2184,10 @@
             st.textContent = state === 'working' ? 'reading…' : state === 'queued' ? 'queued' : 'failed';
             main.appendChild(st);
         }
-
         row.appendChild(main);
 
-        /* THE WAY INTO THIS CASE'S CHAT. Outside .oc-row-main, like the tick box, because
-         * the row itself opens Salesforce — and "I meant to ask a question and it navigated
-         * away" is the same mis-click the tick box is kept out of that region to avoid.
-         * A speech bubble rather than the word "Chat": the row is already carrying six
-         * things and a seventh word would push the subject off it. */
+        /* THE WAY INTO THIS CASE'S CHAT — this tool's one addition to the analyser's row.
+         * Outside .oc-row-main, because the row itself opens Salesforce. */
         const chat = document.createElement('button');
         chat.className = 'qa-row-chat';
         chat.type = 'button';
@@ -1572,6 +2196,7 @@
         chat.title = n
             ? `Chat about this case (${n} question${n === 1 ? '' : 's'} asked so far)`
             : 'Chat about this case';
+        chat.setAttribute('aria-label', chat.title);
         chat.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
             + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
             + '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>';
@@ -1579,63 +2204,329 @@
         chat.onclick = (e) => { e.stopPropagation(); openChat(key); };
         row.appendChild(chat);
 
+        // WHAT THE CASE IS ABOUT, one click away and closed by default.
+        const body = document.createElement('div');
+        body.className = 'oc-desc';
+        body.style.display = 'none';
+
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'oc-desc-toggle';
+        toggle.textContent = '▸';
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.setAttribute('aria-label', `Show what ${rec.caseNum || 'this case'} is about`);
+        toggle.title = 'Issue summary, and its QA review';
+        toggle.onclick = (e) => {
+            // Without this the click bubbles to the row and opens the case in Salesforce.
+            e.stopPropagation();
+            const open = body.style.display === 'none';
+            if (open) fillCaseDescription(body, rec);
+            body.style.display = open ? '' : 'none';
+            toggle.textContent = open ? '▾' : '▸';
+            toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        };
+        row.appendChild(toggle);
+
+        /* TAKE A CASE OFF THE QUEUE. Local only, and it asks first: the × is a few pixels from
+         * the chevron, inside a list people scroll with a trackpad. */
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'oc-row-del';
+        del.textContent = '×';
+        del.title = `Remove ${rec.caseNum || 'this case'} from this list — it asks first. Local only; nothing changes in Salesforce.`;
+        del.setAttribute('aria-label', `Remove ${rec.caseNum || 'this case'} from the list`);
+        del.onclick = (e) => { e.stopPropagation(); removeCases([rec]); };
+        row.appendChild(del);
+
+        row.appendChild(body);
+
+        // Right-click: open it, QA it, chat about it, copy it, remove it.
+        row.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); openCaseRowMenu(e, rec); });
         return row;
     }
 
-    function fillOwnerSelect() {
-        const sel = $('ocOwner');
-        if (!sel) return;
-        const chosen = sel.value;
-        const names = new Map();
-        for (const c of CASES.cases) {
-            const who = String(c.owner || c.lastModifiedBy || '').trim();
-            if (!who) continue;
-            names.set(who.toLowerCase(), who);
+    /* THE EXPANDER. What the case is about, as the list view has it, and where its QA stands.
+     * Built with textContent throughout — every string here was scraped off a Salesforce page,
+     * and a case subject can contain anything at all. Filled on every open, so a review written
+     * since the row was drawn is there the next time it is opened. */
+    function fillCaseDescription(body, rec) {
+        body.textContent = '';
+        const label = document.createElement('div');
+        label.className = 'oc-desc-label';
+        label.textContent = 'Issue Summary';
+        body.appendChild(label);
+
+        const prose = String(rec.analysis || rec.description || '').trim();
+        const text = document.createElement('div');
+        if (prose) {
+            text.className = 'oc-desc-text';
+            text.style.whiteSpace = 'pre-wrap';
+            text.textContent = prose.length > 1500 ? prose.slice(0, 1500) + '…' : prose;
+        } else {
+            text.className = 'oc-desc-none';
+            text.textContent = rec.subject && rec.subject !== '(not read yet)'
+                ? `${rec.subject}. The list view carries no summary for this case — it is read in full when it is QA'd.`
+                : 'Not read yet — the case is read in full the first time it is QA\'d.';
         }
-        const sorted = [...names.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-        sel.textContent = '';
-        const all = document.createElement('option');
-        all.value = '';
-        all.textContent = `All case owners (${sorted.length})`;
-        sel.appendChild(all);
-        for (const [low, name] of sorted) {
-            const count = CASES.cases.filter(c => String(c.owner || c.lastModifiedBy || '').toLowerCase() === low).length;
-            const o = document.createElement('option');
-            o.value = low;
-            o.textContent = `${name} (${count})`;
-            sel.appendChild(o);
+        body.appendChild(text);
+
+        const tags = document.createElement('div');
+        tags.className = 'oc-desc-tags';
+        const tag = (value, cls, title) => {
+            if (!value) return;
+            const t = document.createElement('span');
+            t.className = 'oc-tag' + (cls ? ' ' + cls : '');
+            t.textContent = value;
+            t.title = title || value;
+            tags.appendChild(t);
+        };
+        const tier = entitlementTier(rec.entitlement);
+        tag(rec.entitlement, 'ent-' + tier.key);
+        tag(rec.status, statusIsOnSoti(rec.status) ? 'needs-soti' : '');
+        tag(rec.priority ? `Severity: ${rec.priority}` : '', severityTagClass(rec.priority));
+        tag(rec.account);
+        tag(rec.contact);
+        tag(rec.owner ? `Owner: ${rec.owner}` : rec.lastModifiedBy ? `Last modified by: ${rec.lastModifiedBy}` : '');
+        const ms = milestoneOf(rec);
+        if (ms) tag(`Due its ${ms}-day review`, 'qa-ms qa-ms-' + ms);
+        if (tags.childNodes.length) body.appendChild(tags);
+
+        /* WHERE ITS QA STANDS, and the next thing to do about it — so the expander answers
+         * "has this been reviewed, and how did it go" without a trip to the Reviews tab. */
+        const rev = qaReviewFor(rec);
+        const qaLabel = document.createElement('div');
+        qaLabel.className = 'oc-desc-label';
+        qaLabel.style.marginTop = '9px';
+        qaLabel.textContent = 'QA';
+        body.appendChild(qaLabel);
+        const qaLine = document.createElement('div');
+        qaLine.className = rev && !incomplete(rev) ? 'oc-desc-text' : 'oc-desc-none';
+        if (rev && !incomplete(rev)) {
+            const sc = rev.score && rev.score.value !== null ? `${rev.score.value}/100 — ${rev.score.band}` : 'no score';
+            qaLine.textContent = `Reviewed ${E.fmtDateTime(rev.at)}: ${sc}${rev.score && rev.score.derived ? ' (worked out from the measured facts)' : ''}.`;
+        } else if (rev) {
+            qaLine.textContent = `Read ${E.fmtDateTime(rev.at)}, but the write-up did not come back — open the review to see why, or QA it again.`;
+        } else {
+            qaLine.textContent = 'Not QA\'d yet.';
         }
-        if (chosen && names.has(chosen)) sel.value = chosen;
+        body.appendChild(qaLine);
+
+        const acts = document.createElement('div');
+        acts.className = 'oc-sync-row';
+        const btn = (text, title, run) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'oc-sync-btn';
+            b.textContent = text;
+            b.title = title;
+            b.onclick = (e) => { e.stopPropagation(); run(); };
+            acts.appendChild(b);
+        };
+        btn(rev ? '▶ QA again' : '▶ QA this case', 'Read this case and write its QA review now', () => startRun('qa', [rec]));
+        if (rev) btn('Open review', 'Show this case\'s review on the Reviews tab', () => showReview(rev));
+        btn('💬 Chat', 'Ask about this case', () => openChat(keyOf(rec)));
+        body.appendChild(acts);
     }
 
-    /* THE COUNT ON THE BUTTON, not beside it. Pressing "QA selected" should never be a
-     * guess about what it is going to act on — especially when a filter is narrowing the
-     * list, because a tick made under one filter stays ticked under the next. */
-    function renderSelection() {
-        const shown = visibleCases();
-        const shownKeys = shown.map(keyOf);
+    /* A REVIEW, ON SCREEN — the Reviews tab, filtered to that case, with its card open. */
+    function showReview(rev) {
+        if (!rev) return;
+        switchView('reviews');
+        const search = $('revSearch');
+        if (search) { search.value = rev.caseNum || ''; renderReviews(); }
+        setTimeout(() => {
+            const card = [...document.querySelectorAll('#revList .qa-rev')].find(c => c.dataset.id === rev.id) || document.querySelector('#revList .qa-rev');
+            const head = card && card.querySelector('.qa-rev-head');
+            if (head && card.querySelector('.qa-rev-body') && card.querySelector('.qa-rev-body').style.display === 'none') head.click();
+            if (card) card.scrollIntoView({ block: 'start' });
+        }, 30);
+    }
+
+    /* RIGHT-CLICK ON A CASE — the analyser's menu, with this tool's two actions in it. */
+    function openCaseRowMenu(e, rec) {
+        const url = urlOf(rec);
+        const copy = async (text, what) => {
+            try { await navigator.clipboard.writeText(text); toast(`${what} copied`, 's', 1800); }
+            catch (err) { toast('Could not copy to the clipboard', 'e'); }
+        };
+        const items = [{ head: rec.caseNum || 'Case' }];
+        if (url) items.push({ label: 'Open in Salesforce', title: url, run: () => openInSalesforce(rec) });
+        items.push({ label: qaReviewFor(rec) ? 'QA this case again' : 'QA this case', run: () => startRun('qa', [rec]) });
+        items.push({ label: 'Chat about this case', run: () => openChat(keyOf(rec)) });
+        const rev = qaReviewFor(rec);
+        if (rev) items.push({ label: 'Open its review', run: () => showReview(rev) });
+        items.push({ sep: true });
+        if (rec.caseNum) items.push({ label: 'Copy case number', run: () => copy(rec.caseNum, 'Case number') });
+        if (url) items.push({ label: 'Copy link', run: () => copy(url, 'Link') });
+        items.push({ sep: true });
+        items.push({ label: 'Remove from this list', danger: true, run: () => removeCases([rec]) });
+        openMenu({ x: e.clientX, y: e.clientY }, items);
+    }
+
+    /* A SMALL MENU AT THE POINTER — the analyser's, used for a row and for a Current View chip.
+     * Placed at the pointer and kept on screen; the pointer is in SCREEN pixels and the menu's
+     * position is in the page's own, so it is divided by the Display size. */
+    function closeMenu() {
+        const m = $('qaMenu');
+        if (m) m.remove();
+    }
+    function openMenu(at, items) {
+        closeMenu();
+        closeToolbarMenus();
+        const menu = document.createElement('div');
+        menu.id = 'qaMenu';
+        menu.className = 'oc-menu oc-view-menu';
+        menu.setAttribute('role', 'menu');
+        for (const it of items) {
+            if (it.head) {
+                const h = document.createElement('div');
+                h.className = 'oc-view-menu-head';
+                h.textContent = it.head;
+                menu.appendChild(h);
+                continue;
+            }
+            if (it.sep) {
+                const sep = document.createElement('div');
+                sep.className = 'oc-view-menu-sep';
+                menu.appendChild(sep);
+                continue;
+            }
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'oc-view-menu-item' + (it.danger ? ' is-danger' : '');
+            b.setAttribute('role', 'menuitem');
+            const t = document.createElement('span');
+            t.className = 'oc-view-menu-t';
+            t.textContent = it.label;
+            b.appendChild(t);
+            if (it.title) b.title = it.title;
+            b.onclick = (ev) => { ev.stopPropagation(); closeMenu(); it.run(); };
+            menu.appendChild(b);
+        }
+        menu.addEventListener('click', (ev) => ev.stopPropagation());
+        menu.addEventListener('keydown', (ev) => {
+            const btns = [...menu.querySelectorAll('.oc-view-menu-item')];
+            const i = btns.indexOf(document.activeElement);
+            if (ev.key === 'Escape') { ev.preventDefault(); closeMenu(); }
+            else if (ev.key === 'ArrowDown' && btns.length) { ev.preventDefault(); btns[(i + 1) % btns.length].focus(); }
+            else if (ev.key === 'ArrowUp' && btns.length) { ev.preventDefault(); btns[(i - 1 + btns.length) % btns.length].focus(); }
+        });
+        document.body.appendChild(menu);
+        const W = window.innerWidth || document.documentElement.clientWidth || 420;
+        const H = window.innerHeight || document.documentElement.clientHeight || 800;
+        const r = menu.getBoundingClientRect();
+        let x = at.alignRight ? at.x - r.width : at.x;
+        let y = at.y;
+        if (x + r.width > W - 8) x = W - 8 - r.width;
+        if (x < 8) x = 8;
+        if (y + r.height > H - 8) y = Math.max(8, H - 8 - r.height);
+        menu.style.left = Math.round(x / uiZoom()) + 'px';
+        menu.style.top = Math.round(y / uiZoom()) + 'px';
+        const first = menu.querySelector('.oc-view-menu-item');
+        if (first) try { first.focus({ preventScroll: true }); } catch (err) { /* not focusable yet */ }
+    }
+
+    // The Add Case menu and the cog's menu — both hang off the toolbar and close together.
+    function closeToolbarMenus() {
+        for (const id of ['ocAddMenu', 'ocCogMenu']) {
+            const m = $(id);
+            if (m) m.style.display = 'none';
+        }
+    }
+
+    /* TAKE CASES OFF THE QUEUE — one from its ×, or the ticked ones from the bin. Asked first,
+     * and the question says what happens next: a case still on the Salesforce list view comes
+     * back with the next sync, one added by hand does not. Reviews already written are kept. */
+    async function removeCases(recs) {
+        const list = (recs || []).filter(Boolean);
+        if (!list.length) return;
+        if (RUN.active && list.some(r => ROW_STATE.has(keyOf(r)))) {
+            toast('That case is part of the run going now — wait for it to finish.', 'w');
+            return;
+        }
+        const one = list.length === 1;
+        const manual = list.filter(r => r.manual).length;
+        const fate = one
+            ? (list[0].manual
+                ? 'It was added by hand, so it is in no Salesforce list view — a sync will NOT bring it back.'
+                : 'Sync From Salesforce brings it back while it is still on the list view.')
+            : (manual
+                ? `${manual} of them ${manual === 1 ? 'was' : 'were'} added by hand and will not come back with a sync; the rest come back while they are still on the list view.`
+                : 'Sync From Salesforce brings them back while they are still on the list view.');
+        const ok = await confirmAsk(
+            one ? `Remove ${list[0].caseNum || 'this case'} from this list?` : `Remove ${list.length} cases from this list?`,
+            `${fate} Nothing changes in Salesforce, and reviews already written are kept.`,
+            'Remove');
+        if (!ok) return;
+        const gone = new Set(list.map(keyOf));
+        CASES.cases = CASES.cases.filter(c => !gone.has(keyOf(c)));
+        for (const k of gone) SELECTED.delete(k);
+        if (SELECTING && !SELECTED.size && !one) SELECTING = false;
+        await store({ [K.cases]: CASES });
+        renderCases();
+        toast(one ? `${list[0].caseNum || 'Case'} removed from the list.` : `${list.length} cases removed from the list.`, 'i', 5000);
+    }
+
+
+    /* THE BAR ABOVE THE CASES — its two states, as the analyser's has them. Normal: Select, the
+     * QA run, the cog. Selecting: the count, Select all, the bin and Cancel in place of Select,
+     * and the whole view marked so every row grows its tick-box.
+     *
+     * THE COUNT IS ON THE QA BUTTON, not only beside it — pressing it should never be a guess
+     * about what it will act on, least of all when a filter is narrowing the list, because a
+     * tick made under one filter stays ticked under the next (and the count says so). */
+    function renderListBar(shown) {
+        const bar = $('ocActions');
+        if (!bar) return;
+        const total = CASES.cases.length;
+        bar.style.display = total ? '' : 'none';
+        const view = $('viewCases');
+        if (view) view.classList.toggle('oc-selecting', SELECTING);
+        const vis = shown || visibleCases();
+        const visKeys = new Set(vis.map(keyOf));
         const n = SELECTED.size;
-        const countEl = $('ocSelCount');
-        if (countEl) {
-            const hiddenSelected = [...SELECTED].filter(k => !shownKeys.includes(k)).length;
-            countEl.textContent = n
-                ? `${n} selected${hiddenSelected ? ` (${hiddenSelected} not shown by this filter)` : ''}`
-                : '0 selected';
+        const show = (id, on) => { const el = $(id); if (el) el.hidden = !on; };
+        show('ocSelect', !SELECTING);
+        show('ocSelectAll', SELECTING);
+        show('ocSelCount', SELECTING);
+        show('ocSelDelete', SELECTING);
+        show('ocSelCancel', SELECTING);
+
+        const count = $('ocSelCount');
+        if (count) {
+            const hidden = [...SELECTED].filter(k => !visKeys.has(k)).length;
+            count.textContent = `${n} selected`;
+            count.title = hidden ? `${hidden} of them ${hidden === 1 ? 'is' : 'are'} not shown by the filter now on` : '';
         }
-        const all = $('ocSelectAll');
-        if (all) {
-            const on = shownKeys.filter(k => SELECTED.has(k)).length;
-            all.checked = shownKeys.length > 0 && on === shownKeys.length;
-            all.indeterminate = on > 0 && on < shownKeys.length;
+        const selAll = $('ocSelectAll');
+        if (selAll) selAll.disabled = RUN.active || (vis.length > 0 && vis.every(r => SELECTED.has(keyOf(r))));
+        const del = $('ocSelDelete');
+        if (del) {
+            del.disabled = !n || RUN.active;
+            del.title = n
+                ? `Remove the ${n} ticked case${n === 1 ? '' : 's'} from this list. Local only; nothing changes in Salesforce, and reviews already written are kept.`
+                : 'Nothing ticked — click a case to tick it';
+            del.setAttribute('aria-label', n ? `Remove ${n} ticked case${n === 1 ? '' : 's'}` : 'Nothing ticked');
         }
-        const busy = RUN.active;
-        const btnQa = $('btnRunQa');
-        const btn369 = $('btnRun306090');
-        if (btnQa) { btnQa.disabled = !n || busy; btnQa.textContent = n ? `QA ${n} case${n === 1 ? '' : 's'}` : 'QA selected'; }
-        if (btn369) btn369.disabled = !n || busy;
-        for (const el of document.querySelectorAll('.oc-row .qa-check')) {
-            el.disabled = busy;
+
+        const qa = $('btnRunQa');
+        const qaLabel = $('btnRunQaLabel');
+        if (qa) {
+            qa.disabled = RUN.active;
+            qa.classList.toggle('is-ready', n > 0);
+            qa.title = RUN.active ? 'A run is going — wait for it or press Stop.'
+                : n ? `Write a QA review of the ${n} ticked case${n === 1 ? '' : 's'}`
+                : 'Press to choose cases — tick them, then press QA again';
         }
+        if (qaLabel) qaLabel.textContent = n ? `QA ${n} case${n === 1 ? '' : 's'}` : 'QA selected';
+        const b369 = $('btnRun306090');
+        if (b369) b369.disabled = RUN.active;
+    }
+
+    function setSelecting(on) {
+        SELECTING = !!on;
+        if (!SELECTING) SELECTED.clear();
+        renderCases();
     }
 
     function selectedRecords() {
@@ -1672,8 +2563,52 @@
     function isListUrl(raw) {
         const url = sfUrl(raw);
         if (!url) return false;
+        if (reportIdOf(url)) return true;
         try { return /\/lightning\/o\/[^/]+\/(list|home)\b/i.test(new URL(url).pathname); }
         catch (e) { return false; }
+    }
+
+    /* A REPORT IS A CASE LIST TOO (the analyser's rule): /lightning/r/Report/00O…/view, the
+     * viewer opened on its own, or a Classic /00O… report. content.js reads its rows out of the
+     * report's frame. The report's id when the address is one, '' otherwise. */
+    function reportIdOf(raw) {
+        const url = sfUrl(raw);
+        if (!url) return '';
+        try {
+            const u = new URL(url);
+            const m = u.pathname.match(/\/lightning\/r\/(?:Report\/)?(00O[a-zA-Z0-9]{12}(?:[a-zA-Z0-9]{3})?)(?:\/|$)/)
+                || u.pathname.match(/^\/(00O[a-zA-Z0-9]{12}(?:[a-zA-Z0-9]{3})?)(?:\/|$)/);
+            if (m) return m[1];
+            const id = /\/reports\/lightningReportApp\.app/i.test(u.pathname) ? (u.searchParams.get('reportId') || '') : '';
+            return /^00O[a-zA-Z0-9]{12}(?:[a-zA-Z0-9]{3})?$/.test(id) ? id : '';
+        } catch (e) { return ''; }
+    }
+
+    /* AGENT CASES, THERE FROM THE START — the analyser's default list. Put in Current View the
+     * first time this build runs, like a list the reviewer saved themselves: same chip, same
+     * sync, same right-click. OFFERED ONCE: its id is written down when it is put in, so a
+     * reviewer who forgets it has forgotten it, and one who already saved the same report under
+     * another name keeps theirs and is not given a second chip. */
+    const DEFAULT_LISTS = [
+        { id: 'ql-agent-cases', name: 'Agent Cases',
+          url: 'https://soti.lightning.force.com/lightning/r/Report/00OOF000003bijV2AQ/view?queryScope=userFolders' }
+    ];
+    async function offerDefaultLists() {
+        if (!isExt()) return;
+        try {
+            const got = await load([K.listsOffered]);
+            const offered = Array.isArray(got[K.listsOffered]) ? got[K.listsOffered] : [];
+            let changed = false;
+            for (const d of DEFAULT_LISTS) {
+                if (offered.includes(d.id)) continue;
+                offered.push(d.id);
+                if (!LISTS.some(l => l.id === d.id || sameList(l.url, d.url))) {
+                    LISTS.unshift({ id: d.id, name: d.name, url: d.url, at: Date.now() });
+                }
+                changed = true;
+            }
+            if (changed) await store({ [K.lists]: LISTS, [K.listsOffered]: offered });
+        } catch (e) { /* offered next start */ }
     }
 
     // Two list-view addresses are THE SAME LIST when they agree on path and filter.
@@ -1683,7 +2618,11 @@
         if (!a || !b) return false;
         try {
             const x = new URL(a), y = new URL(b);
-            if (x.hostname !== y.hostname || x.pathname !== y.pathname) return false;
+            if (x.hostname !== y.hostname) return false;
+            // A report is the same report whatever view of it the address names.
+            const rx = reportIdOf(a), ry = reportIdOf(b);
+            if (rx || ry) return rx.slice(0, 15) === ry.slice(0, 15);
+            if (x.pathname !== y.pathname) return false;
             return (x.searchParams.get('filterName') || '') === (y.searchParams.get('filterName') || '');
         } catch (e) { return false; }
     }
@@ -1693,6 +2632,7 @@
             const u = new URL(url);
             const f = u.searchParams.get('filterName');
             if (f) return f.replace(/[_-]+/g, ' ').trim();
+            if (reportIdOf(url)) return 'Salesforce report';
             const o = (u.pathname.match(/\/lightning\/o\/([^/]+)\//) || [])[1];
             if (o) return o + ' list';
         } catch (e) { /* fall through */ }
@@ -1733,14 +2673,17 @@
         }
         const anyList = all.find(t => isListUrl(t.url));
         if (anyList) { focusTab(anyList); return { tab: anyList }; }
-        if (!LAST_LIST && activeOk && sfUrl(active.url)) return { tab: active };
-        if (LAST_LIST) {
+        // Never synced yet: the first saved list — Agent Cases unless the reviewer forgot it —
+        // is opened, as the analyser's Sync does.
+        const target = LAST_LIST || (LISTS.length ? { url: LISTS[0].url, name: LISTS[0].name } : null);
+        if (!target && activeOk && sfUrl(active.url)) return { tab: active };
+        if (target) {
             const opened = await new Promise((res) => {
-                try { window.QaReader.createTab({ url: LAST_LIST.url, active: true }, (t) => res(t || null)); }
+                try { window.QaReader.createTab({ url: target.url, active: true }, (t) => res(t || null)); }
                 catch (e) { res(null); }
             });
-            if (opened && opened.id != null) return { openedTabId: opened.id };
-            return { why: `Could not open ${LAST_LIST.name} in a new tab.` };
+            if (opened && opened.id != null) return { openedTabId: opened.id, name: target.name };
+            return { why: `Could not open ${target.name} in a new tab.` };
         }
         return {
             why: 'Open a Salesforce case LIST view — Cases, then whichever queue you review from — and press this once. '
@@ -1772,13 +2715,31 @@
         return false;
     }
 
+    /* THE COUNT AND THE AGE OF THE LAST SYNC, on the Sync button's own title — the analyser
+     * moved them there from a strip of their own, and the label keeps to what it does. */
+    const SYNC_TITLE = 'Refresh the Salesforce list view and read every case from it. If it is open in another tab this '
+        + 'brings it to the front; if it is closed it opens the one you last synced from.';
+    function paintSyncLabel() {
+        const btn = $('btnSyncCaseList');
+        const label = $('ocSyncLabel');
+        if (!btn || !label || btn.disabled) return;
+        label.textContent = 'Sync From Salesforce';
+        const t = CASES.cases.length;
+        if (!t) { btn.title = SYNC_TITLE; return; }
+        const n = visibleCases().length;
+        const count = n === t ? String(t) : `${n} of ${t}`;
+        const when = CASES.scrapedAt ? ` · synced ${E.fmtDateTime(CASES.scrapedAt)}` : '';
+        const from = LAST_LIST && LAST_LIST.name ? ` from ${LAST_LIST.name}` : '';
+        btn.title = `${count} case${t === 1 ? '' : 's'}${when}${from}. Press to sync again.\n\n${SYNC_TITLE}`;
+    }
+
     async function syncCaseList() {
         const found = await resolveListTab();
         if (!found.tab && found.openedTabId == null) {
             toast(found.why || 'No Salesforce case list to read.', 'e', 12000);
             return;
         }
-        return runSync(found, (LAST_LIST && LAST_LIST.name) || 'The case list');
+        return runSync(found, found.name || (LAST_LIST && LAST_LIST.name) || 'The case list');
     }
 
     /* THE SYNC ITSELF, given a tab to read it from.
@@ -1802,8 +2763,9 @@
             let tab = found.tab;
             if (found.openedTabId != null) {
                 toast(`${name || 'The case list'} was not open — opening it and syncing once the grid has loaded…`, 'i', 9000);
-                const ok = await waitForGrid(found.openedTabId, Date.now() + 60000);
-                if (!ok) { toast('The list view did not finish loading. Press Sync again once it has.', 'w', 9000); return; }
+                // A report draws in a frame of its own and takes longer than a list view.
+                const ok = await waitForGrid(found.openedTabId, Date.now() + 90000);
+                if (!ok) { toast('The list did not finish loading. Press Sync again once it has.', 'w', 9000); return; }
                 try { tab = await chrome.tabs.get(found.openedTabId); } catch (e) { tab = null; }
             }
             if (!tab) {
@@ -1830,7 +2792,7 @@
             toast('Reading the case list — scrolling to load every case…', 'i', 6000);
             const data = await tell(tab.id, { action: 'GET_SALESFORCE_CASE_LIST' });
             if (!data || !Array.isArray(data.cases) || !data.cases.length) {
-                toast('No case rows found. Open a case LIST view (e.g. My Open Cases) and try again.', 'e', 10000);
+                toast('No case rows found. Open a case list view or report (e.g. Agent Cases) and try again.', 'e', 10000);
                 return;
             }
 
@@ -1841,7 +2803,7 @@
              * than one labelled "Case list". The reviewer's own name for the view wins when
              * it is genuinely the same view — that is what they chose to call it. */
             const saved = LISTS.find(l => sameList(l.url, tab.url));
-            LAST_LIST = { url: sfUrl(tab.url), name: (saved && saved.name) || listLabel(tab.url), at: Date.now() };
+            LAST_LIST = { url: sfUrl(tab.url), name: (saved && saved.name) || (reportIdOf(tab.url) && data.listName) || listLabel(tab.url), at: Date.now() };
             await store({ [K.cases]: CASES, [K.lastList]: LAST_LIST });
             renderCases();
 
@@ -1864,7 +2826,8 @@
             toast('Sync failed: ' + ((e && e.message) || e), 'e', 12000);
         } finally {
             if (btn) btn.disabled = false;
-            if (label) label.textContent = was || 'Sync case list';
+            if (label) label.textContent = was || 'Sync From Salesforce';
+            paintSyncLabel();
         }
     }
 
@@ -1892,58 +2855,90 @@
      * on a click, so it is checked when it is saved rather than trusted because a person
      * pasted it.
      * ------------------------------------------------------------------- */
+    /* CURRENT VIEW — the saved list views, drawn as the analyser draws its own: a heading, then a
+     * row of chips that scrolls sideways rather than wrapping. Press one to open that view in
+     * Salesforce and sync the queue from it; right-click it to rename or forget it. The one
+     * the queue was last synced from is marked, so a reviewer with four saved queues can see
+     * which they are looking at. */
     function renderLists() {
         const wrap = $('ocLists');
         if (!wrap) return;
+        const before = wrap.querySelector('.oc-links-row');
+        const keepScroll = before ? before.scrollLeft : 0;
         wrap.textContent = '';
-        // Empty is HIDDEN, not an empty band: with nothing saved, the strip would be a
-        // heading over nothing, sitting between the toolbar and the filters.
+        // Empty is HIDDEN, not an empty band between the toolbar and the filters.
         wrap.style.display = LISTS.length ? '' : 'none';
         if (!LISTS.length) return;
 
         const label = document.createElement('div');
         label.className = 'oc-links-label';
-        label.textContent = 'Saved list views';
+        label.textContent = 'Current View';
         wrap.appendChild(label);
 
-        // The chips get a row of their own so a long view name wraps among the chips rather
-        // than around the heading.
         const row = document.createElement('div');
         row.className = 'oc-links-row';
+        row.setAttribute('role', 'toolbar');
+        row.setAttribute('aria-label', 'Current View — your saved list views');
         wrap.appendChild(row);
 
         for (const link of LISTS) {
-            const chip = document.createElement('span');
-            chip.className = 'oc-link-chip';
-            // THE ONE THAT IS ON SCREEN, marked. A reviewer with four saved queues is
-            // otherwise reading the meta line to work out which of them they are looking at.
-            if (LAST_LIST && sameList(LAST_LIST.url, link.url)) chip.classList.add('active');
-
-            const go = document.createElement('button');
-            go.type = 'button';
-            go.className = 'oc-link-go';
-            go.textContent = link.name;
-            go.title = `Open ${link.url} in Salesforce and sync this queue from it`;
-            go.onclick = () => openList(link);
-            chip.appendChild(go);
-
-            const del = document.createElement('button');
-            del.type = 'button';
-            del.className = 'oc-link-del';
-            del.textContent = '×';
-            del.title = `Forget the "${link.name}" list view. The cases already synced from it stay in the queue.`;
-            del.setAttribute('aria-label', `Forget the ${link.name} list view`);
-            del.onclick = (e) => { e.stopPropagation(); deleteList(link.id); };
-            chip.appendChild(del);
-
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            const current = !!(LAST_LIST && sameList(LAST_LIST.url, link.url));
+            chip.className = 'oc-view-chip is-list' + (current ? ' is-current' : '');
+            chip.dataset.id = link.id;
+            const icon = document.createElement('span');
+            icon.className = 'oc-view-ic';
+            icon.innerHTML = LIST_ICON;
+            chip.appendChild(icon);
+            const name = document.createElement('span');
+            name.className = 'oc-view-name';
+            name.textContent = link.name;
+            chip.appendChild(name);
+            chip.title = `${link.name} — open it in Salesforce and sync this queue from it.\nRight-click to rename or forget it.`;
+            chip.onclick = () => openList(link);
+            chip.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const r = chip.getBoundingClientRect();
+                const at = (e.clientX || e.clientY) ? { x: e.clientX, y: e.clientY } : { x: r.left, y: r.bottom + 4 };
+                openMenu(at, [
+                    { head: link.name },
+                    { label: 'Open and sync', run: () => openList(link) },
+                    { label: 'Rename', run: () => renameList(link.id) },
+                    { sep: true },
+                    { label: 'Forget this list view', danger: true, run: () => deleteList(link.id) }
+                ]);
+            });
             row.appendChild(chip);
         }
+        row.scrollLeft = keepScroll;
+    }
+
+    // What KIND of chip it is, before its name is read — the analyser's list glyph.
+    const LIST_ICON = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="9" y1="6" x2="21" y2="6"></line><line x1="9" y1="12" x2="21" y2="12"></line><line x1="9" y1="18" x2="21" y2="18"></line><line x1="3.5" y1="6" x2="3.6" y2="6"></line><line x1="3.5" y1="12" x2="3.6" y2="12"></line><line x1="3.5" y1="18" x2="3.6" y2="18"></line></svg>';
+
+    async function renameList(id) {
+        const link = LISTS.find(l => l.id === id);
+        if (!link) return;
+        const name = await ask({
+            title: 'Rename this list view',
+            note: 'What it says on the chip. Nothing changes in Salesforce.',
+            value: link.name,
+            placeholder: link.name,
+            ok: 'Rename',
+            validate: (v) => v ? '' : 'Give it a name.'
+        });
+        if (!name) return;
+        link.name = name;
+        await store({ [K.lists]: LISTS });
+        renderLists();
     }
 
     async function addListByUrl() {
         const url = await ask({
             title: 'Add a Salesforce list view',
-            note: 'Paste the address of a case list view — Cases, then whichever queue you QA from. '
+            note: 'Paste the address of a case list view or a Salesforce report of cases — Agent Cases, or whichever queue you QA from. '
                 + 'It is kept as a button here, and pressing it opens that view in Salesforce and syncs this queue from it.',
             placeholder: 'https://your-org.lightning.force.com/lightning/o/Case/list?filterName=…',
             ok: 'Save list view',
@@ -1953,10 +2948,10 @@
                 /* A CASE LINK PASTED HERE IS A MISTAKE WORTH NAMING, because the two buttons
                  * sit side by side and the addresses look alike at a glance. Saying which
                  * button it belongs to costs a line and saves the reviewer working it out. */
-                if (/\/lightning\/r\//.test(v)) {
+                if (isCaseUrl(v)) {
                     return 'That is a link to one case, not a list view. Use "Add case" for that.';
                 }
-                if (!isListUrl(v)) return 'That is not a Salesforce list view address — it should contain /lightning/o/Case/list.';
+                if (!isListUrl(v)) return 'That is not a Salesforce list view or report address — it should contain /lightning/o/Case/list or /lightning/r/Report/.';
                 if (LISTS.some(l => sameList(l.url, v))) return 'That list view is already saved.';
                 return '';
             }
@@ -2036,18 +3031,29 @@
      * selection is pruned here to whatever is still in the queue, so "QA 6 cases" can never
      * mean a case that is no longer on screen. */
     function mergeCases(data) {
+        /* AND THE ROWS ADDED BY HAND. A case put in with its link is in no list view, so a sync
+         * that rebuilt the queue from the list alone would quietly drop it — the very case the
+         * reviewer went out of their way to add. It stays, unless the list now has it too. */
+        const fresh = data.cases.slice();
+        const has = new Set(fresh.map(keyOf));
+        const kept = (CASES.cases || []).filter(c => c.manual && !has.has(keyOf(c))
+            && !fresh.some(x => c.caseNum && x.caseNum === c.caseNum));
         CASES = {
             listName: data.listName || CASES.listName || '',
             origin: data.origin || CASES.origin || '',
             scrapedAt: data.scrapedAt || Date.now(),
-            cases: data.cases.slice()
+            cases: [...fresh, ...kept]
         };
         const live = new Set(CASES.cases.map(keyOf));
         for (const k of [...SELECTED]) if (!live.has(k)) SELECTED.delete(k);
     }
 
-    async function addByUrl() {
-        const url = await ask({
+    function isCaseUrl(v) {
+        return !!sfUrl(v) && (/\/lightning\/r\/(?:[^/]+\/)?500[A-Za-z0-9]{12,15}\//.test(v) || /[?&]id=500/i.test(v));
+    }
+
+    async function addByUrl(given) {
+        const url = typeof given === 'string' ? given : await ask({
             title: 'Add a case by its link',
             note: 'Paste the Salesforce address of one case. It is added to the list below and can then be ticked and reviewed like any other.',
             placeholder: 'https://your-org.lightning.force.com/lightning/r/Case/500…/view',
@@ -2055,27 +3061,42 @@
             validate: (v) => {
                 if (!v) return 'Paste the case link.';
                 if (!sfUrl(v)) return 'That is not an https Salesforce address.';
-                if (!/\/lightning\/r\/(?:[^/]+\/)?500[A-Za-z0-9]{12,15}\//.test(v) && !/[?&]id=500/i.test(v)) {
-                    return 'That link does not point at a case record.';
-                }
+                if (!isCaseUrl(v)) return 'That link does not point at a case record.';
                 return '';
             }
         });
         if (!url) return;
         const clean = sfUrl(url);
-        const recordId = (clean.match(/\/(500[A-Za-z0-9]{12,15})\//) || [])[1] || '';
+        const recordId = (clean.match(/\/(500[A-Za-z0-9]{12,15})(?:\/|$)/) || clean.match(/[?&]id=(500[A-Za-z0-9]{12,15})/i) || [])[1] || '';
         if (CASES.cases.some(c => c.url === clean || (recordId && c.recordId === recordId))) {
             toast('That case is already in the list.', 'w');
             return;
         }
         /* ADDED BLANK, and honestly so: a link carries a record id and nothing else, so the
          * row has no subject, no owner and no age until it is read. Everything on it fills in
-         * from the case itself the first time it is reviewed — see applyReadToRecord. */
-        CASES.cases.push({ recordId, url: clean, caseNum: '', subject: '(not read yet)', owner: '', ageDays: '', status: '' });
+         * from the case itself the first time it is reviewed — see applyReadToRecord. MANUAL,
+         * so a sync from a list view that does not hold it keeps it — see mergeCases. */
+        CASES.cases.push({ recordId, url: clean, caseNum: '', subject: '(not read yet)', owner: '', ageDays: '', status: '', manual: true });
         if (!CASES.origin) { try { CASES.origin = new URL(clean).origin; } catch (e) {} }
         await store({ [K.cases]: CASES });
         renderCases();
-        toast('Case added. Tick it and press QA to read it in.', 's');
+        toast('Case added. Select it and press QA to read it in.', 's');
+    }
+
+    /* FROM THE SALESFORCE TAB — the case in front of the reviewer, without copying its link.
+     * The tab asked for is the active one in the window they were last working in; the side
+     * panel is not a tab, so that is the Salesforce page beside it. */
+    async function addFromSalesforceTab() {
+        if (!isExt()) { toast('Adding from a tab needs the Chrome extension.', 'e'); return; }
+        const tabs = (await queryTabs({ active: true, lastFocusedWindow: true }))
+            .concat(await queryTabs({ active: true }))
+            .filter(t => t && t.url && !(window.QaReader && window.QaReader.ownsTab(t)));
+        const hit = tabs.find(t => isCaseUrl(t.url));
+        if (!hit) {
+            toast('The tab in front is not a Salesforce case. Open the case, or use Add Case URL and paste its link.', 'w', 9000);
+            return;
+        }
+        return addByUrl(hit.url);
     }
 
     /* WHAT THE READ TAUGHT US ABOUT THE ROW. A case added by URL has an empty row until it
@@ -2120,24 +3141,41 @@
      * ------------------------------------------------------------------- */
     async function startRun(kind, only) {
         if (RUN.active) { toast('A run is already going — wait for it or press Stop.', 'w'); return; }
+        // One thing at a time through the relay — and one thing at a time on the pill.
+        if (RUN.coaching) { toast('The coaching summary is being written — wait for it or press Stop.', 'w'); return; }
         const recs = only && only.length ? only.slice() : selectedRecords();
-        if (!recs.length) { toast('Tick some cases first.', 'w'); return; }
+        if (!recs.length) { toast('Select some cases first — press Select, then click them.', 'w'); return; }
         if (!window.SotiAI || !window.SotiAI.isConfigured()) {
-            toast('The AI relay is not set up yet — open Settings and press Grant site access.', 'e', 10000);
+            toast('The AI relay is not set up yet — open ⋮ → Settings and press Grant access to Copilot.', 'e', 10000);
             switchView('settings');
+            return;
+        }
+        /* COPILOT FIRST, CASES SECOND. Reading thirty cases and then finding the relay locked
+         * out is half an hour of work that ends in thirty "write-up FAILED" cards. Chrome's
+         * grant is checked before anything is opened, and when a host is missing the Connect
+         * Copilot dialog takes over — and starts this same run once Copilot has answered. */
+        if ((await copilotAccessMissing()).length) {
+            offerCopilotSetup({ force: true, then: () => startRun(kind, recs) });
             return;
         }
 
         RUN.active = true;
         RUN.stop = false;
+        RUN.accessBlocked = false;
         RUN.kind = kind;
         RUN.total = recs.length;
         RUN.done = 0;
         RUN.failed = 0;
+        // The first write-up of every run states how the case reached Copilot, even when
+        // nothing is wrong — see the note where it is written. After that the log only speaks
+        // up when something was lost.
+        RUN.saidHow = false;
 
         for (const r of recs) ROW_STATE.set(keyOf(r), 'queued');
+        // The run has its list; the ticks have done their job. Selecting ends with them.
+        SELECTING = false;
+        SELECTED.clear();
         renderCases();
-        renderSelection();
         showRunPill(true);
         logLine(`Run started — ${recs.length} case(s), ${kind === '306090' ? '30/60/90 analysis' : 'QA review'}.`);
         switchView('reviews');
@@ -2282,7 +3320,7 @@
             await store({ [K.cases]: CASES });
             renderAll();
             showRunPill(false);
-            const stopped = RUN.stop ? ' (stopped early)' : '';
+            const stopped = RUN.accessBlocked ? ' (stopped — Copilot could not be reached)' : RUN.stop ? ' (stopped early)' : '';
             logLine(`Run finished: ${RUN.done - RUN.failed} reviewed, ${RUN.failed} failed${stopped}.`, RUN.failed ? 'warn' : 'ok');
             toast(`Run finished — ${RUN.done - RUN.failed} reviewed${RUN.failed ? `, ${RUN.failed} failed` : ''}${stopped}`, RUN.failed ? 'w' : 's', 8000);
         }
@@ -2354,6 +3392,16 @@
         let parsed = null;
         let threw = '';           // the last transport failure, if the relay never answered
         let refusedOnce = false;
+        /* HOW THE ANSWER THAT WAS KEPT TRAVELLED — not how the last one did.
+         *
+         * The ladder sends less of the case on each retry and keeps whichever attempt said
+         * the most, so the answer stored is frequently NOT the answer from the final ask.
+         * Recording LAST_DELIVERY at the end would therefore describe a request whose answer
+         * was thrown away: a review written from the whole attached case could carry a note
+         * saying its transcript had been trimmed to seven thousand characters. Captured with
+         * the text it belongs to instead. */
+        let keptDelivery = null;
+        let askDelivery = null;   // the one the ask that just returned actually used
 
         try {
             aliases = E.buildAliases(rec, data, metrics, RULES);
@@ -2361,12 +3409,48 @@
             aliases = E.aliasRules([], false);
         }
 
+        /* WHAT "THE WHOLE CASE" MEANS, WHICH IS NOT THE SAME ON BOTH PATHS.
+         *
+         * `sizing` comes from the retry ladder below: each rung down sends less of the
+         * transcript in the hope a smaller request gets through. On the first two rungs it is
+         * null — "send the whole case" — and that used to fall through to buildTranscript's
+         * defaults, which clip every post at 2,500 characters and the transcript at 120,000.
+         * Those numbers are shaped by the relay's chat input. When the material goes up as a
+         * FILE there is no chat input in the way, so the same defaults were throwing evidence
+         * away for nothing and labelling what was left a SAMPLE — on precisely the long,
+         * email-heavy cases where the missing half is the case. Asked of the provider rather
+         * than assumed: only it knows whether the bridge is the active provider AND its
+         * upload is enabled. If it is not, the old budgets are still exactly right.
+         */
+        const wholeCase = () => {
+            try {
+                if (!window.SotiAI.attachesCaseData()) return undefined;
+                /* THE PROVIDER'S OWN CEILING, not a second copy of it kept here. attachMaxChars
+                 * is where ai-provider.js stops — a MEASURED figure rather than a hopeful one —
+                 * and reading it means a build that raises or lowers it moves this budget with
+                 * it instead of leaving the two to drift apart. See attachedSize in
+                 * qa-engine.js for what it does with the number. */
+                const b = window.SotiAI.config && window.SotiAI.config.bridge;
+                return E.attachedSize(b && b.attachMaxChars);
+            } catch (e) { return undefined; }
+        };
+
         const ask = async (retry, sizing, label) => {
-            const opts = { aliases, retry, transcript: sizing || undefined };
+            const opts = { aliases, retry, transcript: sizing || wholeCase() };
             const prompt = kind === '306090'
                 ? E.build306090Prompt(rec, data, metrics, RULES, opts)
                 : E.buildQaPrompt(rec, data, metrics, RULES, opts);
-            return aliases.show(await askAi(aliases.hide(prompt), label));
+            /* BOTH HALVES THROUGH THE ALIAS MAP. The request line carries a case number and
+             * nothing else today, but hide() is cheap and one real name in one turn is all it
+             * takes for the relay to decline the request — which is the failure this whole
+             * de-identification exists to prevent. */
+            const out = {};
+            const said = aliases.show(await askAi({
+                system: aliases.hide(prompt.system),
+                request: aliases.hide(prompt.request)
+            }, label, out));
+            askDelivery = out.delivery;
+            return said;
         };
 
         /* THE LADDER. A write-up must not simply fail.
@@ -2389,6 +3473,8 @@
          */
         const sizes = E.PROMPT_SIZES;
         let asks = 0;
+        let accessBlocked = false;
+        let signinBlocked = false;
         for (let n = 0; n < sizes.length; n++) {
             if (RUN.stop) break;
             if (n > 0) {
@@ -2407,6 +3493,7 @@
                 threw = '';
             } catch (e) {
                 threw = (e && e.message) || String(e);
+                if (e && e.access) { accessBlocked = true; signinBlocked = !!e.signin; break; }
                 logLine(`${caseNo}: the relay failed on attempt ${n + 1} of ${sizes.length} — ${firstLine(threw)}`, 'warn');
                 continue;
             }
@@ -2417,6 +3504,7 @@
             if (!parsed || judged.usable || judged.filled > parsed.filled) {
                 text = said;
                 parsed = judged;
+                keptDelivery = askDelivery;
             }
             if (judged.usable) break;
 
@@ -2435,7 +3523,32 @@
          * review want three different responses from the reviewer, and only the first of
          * them is worth simply running again. */
         if (!parsed || !parsed.usable) {
-            if (threw && (!parsed || !parsed.filled)) {
+            if (accessBlocked) {
+                /* NOT A FAILURE OF THIS CASE, and the rest of the queue would fail the same
+                 * way — so the run stops here, the case keeps its measurement, and the
+                 * reviewer is handed the one button that fixes it. "Re-run the incomplete
+                 * ones" picks this case up again once that is done. Two causes, two fixes:
+                 * a host Chrome has not granted, or a Copilot that sent the tab to sign in. */
+                error = signinBlocked
+                    ? 'Copilot could not be reached because Microsoft asked for a sign-in — you are not signed in to Microsoft 365 in this browser. '
+                      + 'Sign in at m365.cloud.microsoft in a normal tab, then re-run this case. What the relay said: ' + threw
+                    : 'Copilot could not be reached because Chrome has not given the QA Tool access to it. '
+                      + 'Press "Grant access to Copilot" in the dialog (or ⋮ → Settings → The AI), then re-run this case. '
+                      + 'What the relay said: ' + threw;
+                if (!RUN.accessBlocked) {
+                    RUN.accessBlocked = true;
+                    RUN.stop = true;
+                    logLine(signinBlocked
+                        ? 'Run stopped: Microsoft 365 wants you to sign in. Sign in to Copilot in a normal tab, then press "Re-run the incomplete ones".'
+                        : 'Run stopped: Chrome has not given the QA Tool access to Copilot. Grant it, then press "Re-run the incomplete ones".', 'fail');
+                    offerCopilotSetup({ force: true, signin: signinBlocked });
+                }
+            } else if (!asks && RUN.stop) {
+                // Read and measured, never sent: the run was stopped while it waited its turn.
+                error = RUN.accessBlocked
+                    ? 'Not written — the run stopped before this case reached Copilot, because Copilot could not be reached. Re-run it once that is fixed.'
+                    : 'Not written — the run was stopped before this case was sent to Copilot. Re-run it to write it up.';
+            } else if (threw && (!parsed || !parsed.filled)) {
                 error = `The AI relay could not be reached for this case. It was asked ${asks} times, `
                     + 'with less of the case each time, and the last attempt said: ' + threw;
             } else if (refusedOnce) {
@@ -2491,6 +3604,14 @@
         // wonder why the answer talks about Agent A.
         review.deidentified = aliases.on;
         review.refused = refusedOnce || !!(parsed && parsed.refused);
+        /* HOW MUCH OF THE CASE THIS WRITE-UP ACTUALLY READ, kept on the record itself.
+         *
+         * It belongs with the review rather than only in the run log, because the question it
+         * answers — "was this written from the whole case?" — is asked weeks later, by someone
+         * looking at a score they disagree with, long after the log has scrolled away. It is
+         * the LAST ask's delivery: the ladder sends less of the case on each retry, and what
+         * grounded the answer that was kept is the one worth recording. */
+        review.delivery = keptDelivery || askDelivery;
         await saveReview(review);
         const said = error ? 'write-up FAILED — ' + firstLine(error)
             : kind === '306090' ? '30/60/90 written'
@@ -2499,6 +3620,18 @@
                   + (review.score.derived ? ' — score worked out from the measured facts, the write-up gave none' : '')
             : 'reviewed';
         logLine(`${caseNo}: ${said}`, error ? 'fail' : 'ok');
+        /* ONCE PER RUN WHEN ALL IS WELL, AND EVERY TIME IT IS NOT.
+         *
+         * The first case says how it travelled whatever happened, because "is it actually
+         * attaching?" is the question somebody has after changing this, and an answer they
+         * have to open a review card to find is one they will not look for. Every case after
+         * that stays quiet unless something was lost — a reassurance printed thirty times is
+         * one nobody reads, and it would bury the single line that matters. */
+        if (!error && review.delivery && (deliveryWorrying(review.delivery) || !RUN.saidHow)) {
+            RUN.saidHow = true;
+            logLine(`${caseNo}: ${deliveryLine(review.delivery)}`,
+                deliveryWorrying(review.delivery) ? 'warn' : 'ok');
+        }
         return !error;
     }
 
@@ -2609,11 +3742,16 @@
         const pill = $('runPill');
         if (!pill) return;
         if (pillHide) { clearTimeout(pillHide); pillHide = null; }
+        // Stop only while there is something to stop — a finished pill offering it was a
+        // button that did nothing.
+        const stop = $('btnStopRun');
         if (on) {
             pill.style.display = '';
             pill.classList.remove('done', 'failed');
+            if (stop) stop.hidden = false;
             return;
         }
+        if (stop) stop.hidden = true;
         pill.classList.add(RUN.failed ? 'failed' : 'done');
         pillHide = setTimeout(() => {
             if (!RUN.active) pill.style.display = 'none';
@@ -2706,6 +3844,71 @@
         const keys = Object.keys(CONTEXT).sort((a, b) => (CONTEXT[b].at || 0) - (CONTEXT[a].at || 0));
         for (const gone of keys.slice(CONTEXT_KEEP)) delete CONTEXT[gone];
         await store({ [K.context]: CONTEXT });
+
+        /* THE FULL TRANSCRIPT, WRITTEN SEPARATELY AND PRUNED SEPARATELY.
+         *
+         * After the index, never before it and never in the same write: if this one fails —
+         * a quota, a storage error — the case is still cached and the chat still works off
+         * the index copy. The reverse order would leave a document with no entry pointing at
+         * it, which nothing would ever read or clean up. */
+        try {
+            await store({ [K.ctxDoc(key)]: { key, at: Date.now(), transcript: E.buildTranscript(data, { perPost: Infinity, maxChars: CHAT_DOC_MAX_CHARS }) } });
+            await rememberContextDoc(key);
+        } catch (e) {
+            // The index copy is still there and the chat still has material. Worth a console
+            // line, not worth failing a case read that otherwise succeeded.
+            console.warn('QA Tool: could not store the full transcript for', key, e);
+        }
+    }
+
+    /* THIS CASE TO THE FRONT, AND THE OLDEST OFF THE BACK.
+     *
+     * The list is written BEFORE the removal and includes only what is being kept, so a
+     * failure between the two leaves documents that nothing points at rather than pointers
+     * to documents that are gone — the first is dead disk the next save clears, the second
+     * is a chat that loads nothing and says nothing about why. */
+    async function rememberContextDoc(key) {
+        if (!isExt()) return;
+        let list = [];
+        try {
+            const got = await chrome.storage.local.get(K.ctxDocs);
+            if (Array.isArray(got[K.ctxDocs])) list = got[K.ctxDocs];
+        } catch (e) { /* start a new list */ }
+        const next = [key].concat(list.filter(k => k !== key));
+        const keep = next.slice(0, CHAT_DOC_KEEP);
+        const gone = next.slice(CHAT_DOC_KEEP);
+        await store({ [K.ctxDocs]: keep });
+        if (gone.length) {
+            try { await chrome.storage.local.remove(gone.map(K.ctxDoc)); } catch (e) { /* cleared on the next save */ }
+        }
+    }
+
+    /* EVERY KEY THIS TOOL OWNS, for "clear everything this tool has stored". The transcript
+     * documents are named per case, so they cannot be listed as constants the way the rest
+     * of the store can — and left out of the sweep they would be the one thing a "clear
+     * everything" did not clear. */
+    async function contextDocKeys() {
+        if (!isExt()) return [];
+        try {
+            const got = await chrome.storage.local.get(K.ctxDocs);
+            const list = Array.isArray(got[K.ctxDocs]) ? got[K.ctxDocs] : [];
+            return [K.ctxDocs].concat(list.map(K.ctxDoc));
+        } catch (e) { return []; }
+    }
+
+    /* THE CHAT'S MATERIAL, FETCHED THE MOMENT BEFORE IT IS NEEDED.
+     *
+     * Never held in memory with the index: it is up to half a megabyte a case and the panel
+     * caches eighty cases. Returns '' when there is no document — a case read by an earlier
+     * build, or one whose document has been pruned — and buildChatSystem then falls back to
+     * the index copy, which is what every chat used before this existed. */
+    async function loadContextDoc(key) {
+        if (!key || !isExt()) return '';
+        try {
+            const got = await chrome.storage.local.get(K.ctxDoc(key));
+            const doc = got && got[K.ctxDoc(key)];
+            return (doc && doc.transcript) || '';
+        } catch (e) { return ''; }
     }
 
     function chatFor(key) {
@@ -2740,10 +3943,20 @@
     // queue — newest first, so the picker opens on what was just worked.
     function chattableCases() {
         const seen = new Map();
+        /* THE FLAGS ADD UP; ONLY THE NAMES AND THE TIME COMPETE. This used to keep whichever
+         * source was NEWEST and drop the rest — and a case's material is saved just BEFORE its
+         * review is written, so every reviewed case lost its "read" flag to its own review and
+         * the picker said "not read" about the very cases it could open straight away. */
         const add = (key, obj, at) => {
             if (!key) return;
             const prev = seen.get(key);
-            if (!prev || (at || 0) > (prev.at || 0)) seen.set(key, Object.assign({ key, at: at || 0 }, obj));
+            const merged = Object.assign({}, prev || {}, obj);
+            if (prev && (prev.at || 0) > (at || 0)) {
+                for (const k of ['caseNum', 'subject', 'agent']) if (prev[k]) merged[k] = prev[k];
+            }
+            merged.key = key;
+            merged.at = Math.max((prev && prev.at) || 0, at || 0);
+            seen.set(key, merged);
         };
         for (const c of CASES.cases) {
             add(keyOf(c), { caseNum: c.caseNum, subject: c.subject, agent: c.owner || c.lastModifiedBy, inQueue: true }, 0);
@@ -2753,14 +3966,12 @@
             add(r.key, { caseNum: r.caseNum, subject: r.subject, agent: r.agent, reviewed: true }, r.at);
         }
         for (const c of Object.values(CONTEXT)) {
-            const hit = seen.get(c.key) || {};
-            add(c.key, Object.assign({}, hit, { caseNum: c.caseNum, subject: c.subject, agent: c.agent, grounded: true }), c.at);
+            add(c.key, { caseNum: c.caseNum, subject: c.subject, agent: c.agent, grounded: true }, c.at);
         }
         for (const c of Object.values(CHATS)) {
             if (!c.msgs || !c.msgs.length) continue;
-            const hit = seen.get(c.key) || {};
             const last = c.msgs[c.msgs.length - 1];
-            add(c.key, Object.assign({}, hit, { caseNum: c.caseNum, subject: c.subject, agent: c.agent, chatted: c.msgs.length }), last.at);
+            add(c.key, { caseNum: c.caseNum, subject: c.subject, agent: c.agent, chatted: c.msgs.length }, last.at);
         }
         return [...seen.values()].sort((a, b) => (b.at || 0) - (a.at || 0));
     }
@@ -3004,6 +4215,16 @@
             err.textContent = m.error;
             wrap.appendChild(err);
         }
+        /* THE ANSWER IS FINE AND THE EVIDENCE WAS NOT. Not an error — the reply below it is
+         * a real reply — but the reviewer is about to act on an answer that was grounded in
+         * less than the whole case, and only this line will ever tell them so. Written only
+         * when something was actually lost; a clean upload says nothing here. */
+        if (m.note) {
+            const note = document.createElement('div');
+            note.className = 'qa-msg-note';
+            note.textContent = m.note;
+            wrap.appendChild(note);
+        }
         if (m.role !== 'user' && m.content && !m.streaming) {
             const acts = document.createElement('div');
             acts.className = 'qa-msg-acts';
@@ -3094,8 +4315,14 @@
         const ctx = CONTEXT[CHAT_KEY];
         if (!ctx) { toast('Read the case first — there is nothing to ground an answer in.', 'w', 8000); return; }
         if (!window.SotiAI || !window.SotiAI.isConfigured()) {
-            toast('The AI relay is not set up yet — open Settings and press Grant site access.', 'e', 9000);
+            toast('The AI relay is not set up yet — open ⋮ → Settings and press Grant access to Copilot.', 'e', 9000);
             switchView('settings');
+            return;
+        }
+        // Copilot first — the question stays in the box until there is somewhere to send it.
+        if ((await copilotAccessMissing()).length) {
+            $('chatInput').value = text;
+            offerCopilotSetup({ force: true });
             return;
         }
 
@@ -3116,7 +4343,13 @@
          * failure this feature could have — it would keep answering, in the same voice, from
          * nothing. So the material is re-sent with every question and the model is never
          * relying on the relay's memory for it. */
-        const messages = [{ role: 'system', content: E.buildChatSystem(ctx, rev) }];
+        /* THE WHOLE CASE, NOT THE INDEX COPY OF IT.
+         *
+         * Loaded here rather than held with the index — see loadContextDoc. An empty result
+         * is not a failure: buildChatSystem falls back to the index copy, which is what a
+         * case read before this build has and what a chat used to run on. */
+        const fullTranscript = await loadContextDoc(CHAT_KEY);
+        const messages = [{ role: 'system', content: E.buildChatSystem(ctx, rev, { transcript: fullTranscript }) }];
         const history = chat.msgs.slice(0, -1).slice(-CHAT_HISTORY_TURNS * 2);
         for (const m of history) {
             if (!m.content) continue;
@@ -3142,12 +4375,15 @@
 
         CHAT_ABORT = (typeof AbortController !== 'undefined') ? new AbortController() : null;
         const label = chat.caseNum ? `QA chat — ${chat.caseNum}` : 'QA chat';
+        // This chat's own delivery record — see the note on askAi. A review being written in
+        // the background at the same moment must not end up wearing this chat's provenance.
+        const sent = {};
         const send = (msgs) => streamAi(
             msgs.map(m => ({ role: m.role, content: aliases.hide(m.content) })), label,
             // Re-identified as it streams, so a half-written "Agent A" becomes the real name
             // the moment the label completes rather than after the whole answer lands.
             (soFar) => { reply.content = aliases.show(soFar); paint(); },
-            CHAT_ABORT ? CHAT_ABORT.signal : undefined);
+            CHAT_ABORT ? CHAT_ABORT.signal : undefined, sent);
 
         try {
             reply.content = aliases.show(await send(messages));
@@ -3183,6 +4419,8 @@
             reply.streaming = false;
             CHAT_BUSY = false;
             CHAT_ABORT = null;
+            const how = confirmDelivery(sent.delivery);
+            if (!reply.error && deliveryWorrying(how)) reply.note = 'Note: ' + deliveryLine(how) + '.';
             // An answer that came back empty AND without an error has nothing to say and
             // nothing to explain — drop the bubble rather than leaving a blank one.
             if (!reply.content && !reply.error) chat.msgs.pop();
@@ -3195,17 +4433,29 @@
      * carrying a delta — so an answer appears as it is written rather than after a minute of
      * silence. On a runtime with no readable body it falls back to reading the lot at once,
      * which is the old behaviour and still correct. */
-    async function streamAi(messages, label, onDelta, signal) {
+    async function streamAi(messages, label, onDelta, signal, record) {
         if (!window.SotiAI) {
             throw new Error('ai-provider.js did not load, so there is nothing to send this to.');
         }
         if (label) window.SotiAI.setConversationLabel(label);
+        // The same record the write-up keeps. A chat grounded in a case that had to be typed
+        // into the box in eight parts is a different chat from one grounded in an attached
+        // file, and the reviewer is entitled to know which they are having.
+        LAST_DELIVERY = planDelivery(messages);
+        if (record) record.delivery = LAST_DELIVERY;
         const res = await window.SotiAI.chat({
             messages,
             stream: true,
             options: { temperature: 0.3 }
         }, signal ? { signal } : {});
-        if (!res || !res.ok) throw new Error(String(res ? await res.text() : 'no answer').slice(0, 400));
+        if (!res || !res.ok) {
+            const err = new Error(String(res ? await res.text() : 'no answer').slice(0, 600));
+            if (res && res.status === 403) {                     // see askAi
+                err.access = true;
+                err.signin = /ended up on|Sign in to Microsoft 365/i.test(err.message);
+            }
+            throw err;
+        }
 
         let out = '';
         const eat = (line) => {
@@ -3213,7 +4463,11 @@
             try { frame = JSON.parse(line); } catch (e) { return; }
             if (frame.error) throw new Error(String(frame.error));
             const bit = (frame.message && frame.message.content) || '';
-            if (bit) { out += bit; onDelta(out); }
+            /* A REPLACEMENT, NOT AN ADDITION. When Copilot re-renders an answer it has already
+             * drawn, the relay sends the whole answer so far with `replace` set — appended, it
+             * printed the opening of the answer twice. See streamAsNdjson in ai-provider.js. */
+            if (frame.replace) { out = bit; onDelta(out); }
+            else if (bit) { out += bit; onDelta(out); }
         };
 
         if (res.body && typeof res.body.getReader === 'function') {
@@ -3315,13 +4569,15 @@
             // repaint between the paint and the press cannot delete a stale set.
             del.dataset.ids = JSON.stringify(shown.map(r => r.id));
         }
+        const tools = $('revTools');
+        if (tools) tools.style.display = (retry && retry.style.display !== 'none') || (del && del.style.display !== 'none') ? '' : 'none';
 
         if (!shown.length) {
             const hint = document.createElement('div');
             hint.className = 'qa-empty';
             hint.innerHTML = REVIEWS.length
                 ? 'No review matches this filter.'
-                : 'No reviews yet.<br><br>Go to <b>Cases</b>, tick the ones you want reviewed, and press <b>QA selected</b>. '
+                : 'No reviews yet.<br><br>Go to <b>Cases</b>, press <b>Select</b>, tick the ones you want reviewed, and press <b>QA</b>. '
                   + 'Each case is opened in a background window, read to the end of its feed, and written up here.';
             list.appendChild(hint);
             return;
@@ -3332,7 +4588,8 @@
     function reviewCard(r) {
         const card = document.createElement('div');
         card.className = 'qa-rev';
-        if (r.error) card.classList.add('qa-rev-failed');
+        card.dataset.id = r.id;
+        if (incomplete(r)) card.classList.add('qa-rev-failed');
         else if (r.score) card.classList.add('band-' + scoreBand(r.score));
 
         const head = document.createElement('div');
@@ -3361,7 +4618,15 @@
         who.textContent = r.agent || '';
         head.appendChild(who);
 
-        if (r.score && r.score.value !== null) {
+        if (incomplete(r)) {
+            // Not a score: a review that did not come back has nothing to score — see the
+            // QA column on the Cases tab for the same rule.
+            const s = document.createElement('span');
+            s.className = 'qa-score qa-score-bad';
+            s.textContent = '!';
+            s.title = 'Incomplete — the write-up did not come back. Open the card to see why.';
+            head.appendChild(s);
+        } else if (r.score && r.score.value !== null) {
             const s = document.createElement('span');
             s.className = 'qa-score band-' + scoreBand(r.score);
             s.textContent = String(r.score.value);
@@ -3461,6 +4726,20 @@
             body.appendChild(f);
         }
 
+        /* WHAT THIS WRITE-UP WAS GROUNDED IN, at the bottom of the card where a footnote
+         * belongs. It is the answer to the question a reviewer asks when they disagree with a
+         * score — "did it even read the whole case?" — and it is the one question the card
+         * could not answer before. Only on reviews that carry the record: everything written
+         * by an earlier build has no `delivery` and gets no line rather than a misleading one. */
+        if (r.delivery) {
+            const f = document.createElement('div');
+            f.className = 'qa-field qa-rev-delivery';
+            const worry = !!(r.delivery.fellBack || r.delivery.attachTrimmed || r.delivery.trimmed);
+            f.innerHTML = `<div class="qa-field-k">${worry ? 'How the case was sent — read this' : 'How the case was sent'}</div>`
+                + `<div class="qa-field-v${worry ? ' qa-rev-delivery-warn' : ''}">${esc(deliveryLine(r.delivery))}</div>`;
+            body.appendChild(f);
+        }
+
         const acts = document.createElement('div');
         acts.className = 'qa-rev-acts';
         /* FIRST, and the primary. A review is read in order to disagree with it or to act on
@@ -3497,6 +4776,11 @@
         del.className = 'btn';
         del.textContent = 'Delete';
         del.onclick = async () => {
+            if (RUN.active) { toast('Wait for the run to finish — it is writing into this list.', 'w'); return; }
+            const ok = await confirmAsk(`Delete the review of ${r.caseNum || 'this case'}?`,
+                'It took a read of the case and a Copilot answer to write, and there is no undo. The case itself stays in the queue.',
+                'Delete');
+            if (!ok) return;
             REVIEWS = REVIEWS.filter(x => x.id !== r.id);
             await store({ [K.reviews]: REVIEWS });
             renderAll();
@@ -3757,10 +5041,11 @@
 
     async function buildCoaching() {
         if (RUN.active) { toast('Wait for the QA run to finish first.', 'w'); return; }
+        if (RUN.coaching) return;
         const agents = agentsWithReviews().filter(a => a.reviews.length);
         if (!agents.length) { toast('No reviewed cases to summarise yet.', 'w'); return; }
         if (!window.SotiAI || !window.SotiAI.isConfigured()) {
-            toast('The AI relay is not set up yet — open Settings and press Grant site access.', 'e', 9000);
+            toast('The AI relay is not set up yet — open ⋮ → Settings and press Grant access to Copilot.', 'e', 9000);
             return;
         }
         const btn = $('btnBuildCoaching');
@@ -3769,9 +5054,18 @@
         // belongs to whatever ran last. Cleared, or a clean coaching pass inherits the
         // failures of the QA run before it.
         RUN.failed = 0;
+        if ((await copilotAccessMissing()).length) {
+            offerCopilotSetup({ force: true });
+            if (btn) btn.disabled = false;
+            return;
+        }
+        RUN.stop = false;
+        RUN.coaching = true;
         showRunPill(true);
+        let written = 0, failed = 0, blocked = false;
         try {
             for (let i = 0; i < agents.length; i++) {
+                if (RUN.stop) break;
                 const a = agents[i];
                 setRunNote(`Coaching summary ${i + 1}/${agents.length} — ${a.name}…`);
                 // NOTE the conversation label below is a NUMBER, not the agent's name: the
@@ -3784,9 +5078,12 @@
                      * the Agent column is written from the roster two lines below, and never
                      * from the answer. See coachingAliases. */
                     const aliases = coachingAliases(a.name);
-                    const askCoach = async (retry) =>
-                        aliases.show(await askAi(aliases.hide(E.buildCoachingPrompt(a.name, a.reviews, { retry })),
+                    const askCoach = async (retry) => {
+                        const prompt = E.buildCoachingPrompt(a.name, a.reviews, { retry });
+                        return aliases.show(await askAi(
+                            { system: aliases.hide(prompt.system), request: aliases.hide(prompt.request) },
                             retry ? `Coaching — ${i + 1} (again)` : `Coaching — ${i + 1} of ${agents.length}`));
+                    };
 
                     /* THE SAME LADDER AS A WRITE-UP, for the same reason — see writeUp.
                      * A coaching row is asked for once per agent at the end of a run, which
@@ -3807,6 +5104,7 @@
                             threw = '';
                         } catch (e) {
                             threw = (e && e.message) || String(e);
+                            if (e && e.access) throw e;
                             logLine(`Coaching for ${a.name}: attempt ${n + 1} of 3 failed — ${firstLine(threw)}`, 'warn');
                             continue;
                         }
@@ -3827,13 +5125,35 @@
                     const at = COACHING.findIndex(c => c.agent.toLowerCase() === a.name.toLowerCase());
                     if (at >= 0) COACHING[at] = row; else COACHING.push(row);
                     await store({ [K.coaching]: COACHING });
+                    written++;
                     renderCoaching();
                 } catch (e) {
+                    if (e && e.access) {
+                        // Every agent after this one would fail the same way.
+                        blocked = true;
+                        offerCopilotSetup({ force: true, signin: !!e.signin });
+                        break;
+                    }
+                    failed++;
                     toast(`${a.name}: ${(e && e.message) || e}`, 'e', 9000);
                 }
             }
-            toast(`Coaching rows written for ${agents.length} agent${agents.length === 1 ? '' : 's'}.`, 's');
+            if (blocked) {
+                RUN.failed = Math.max(1, RUN.failed);
+                setRunNote('Coaching stopped — Copilot access needed');
+                toast('Coaching stopped — Chrome has not given the QA Tool access to Copilot. Grant it, then press Build from reviews again.', 'e', 12000);
+            } else if (RUN.stop) {
+                RUN.failed = failed;
+                setRunNote(`Coaching stopped — ${written} row${written === 1 ? '' : 's'} written`);
+                toast(`Coaching stopped — ${written} of ${agents.length} row${agents.length === 1 ? '' : 's'} written.`, 'i', 8000);
+            } else {
+                RUN.failed = failed;
+                setRunNote(`Coaching: ${written} of ${agents.length} written${failed ? `, ${failed} failed` : ''}`);
+                toast(`Coaching rows written for ${written} of ${agents.length} agent${agents.length === 1 ? '' : 's'}`
+                    + (failed ? ` — ${failed} could not be written.` : '.'), failed ? 'w' : 's', 8000);
+            }
         } finally {
+            RUN.coaching = false;
             if (btn) btn.disabled = false;
             showRunPill(false);
         }
@@ -3926,46 +5246,31 @@
         $('setRoster').value = ROSTER.join('\n');
         $('setDeident').checked = RULES.deident !== false;
         refreshAiStatus();
-        fillUpdateStatus();
     }
 
-    /* WHEN THE UPDATE CHECK LAST LOOKED, and what it found.
-     *
-     * NOT which repository it watches. That row was here and is deliberately gone: it is the
-     * maintainer's question rather than the reviewer's, and update.js no longer exports the
-     * name at all — so this function could not print it even if a later edit tried to.
-     *
-     * update.js is a separate file with its own closure, so this reads the small surface it
-     * exposes rather than keeping a second copy of anything. */
-    function fillUpdateStatus() {
-        const when = $('updWhen');
-        if (!when) return;
-        const U = window.QaUpdate;
-        if (!U) {
-            when.textContent = 'update.js did not load';
-            when.className = 'qa-set-status bad';
-            return;
-        }
-        const s = U.state;
-        when.textContent = s && s.at
-            ? `${E.fmtDateTime(s.at)}${s.version ? ` — latest published is v${s.version}` : ''}`
-            : 'never';
-        when.className = 'qa-set-status';
-    }
 
+    /* EVERY HOST IN THE GRANT, not only the configured one. Microsoft forwards the chat from
+     * m365.cloud.microsoft to copilot.cloud.microsoft, and naming only the first is how this
+     * read "Ready" in green while every review failed on the host the tab had landed on. */
     async function refreshAiStatus() {
         const el = $('aiStatus');
+        const btn = $('btnGrantAi');
         if (!el) return;
         if (!window.SotiAI) {
             el.textContent = 'ai-provider.js did not load';
             el.className = 'qa-set-status bad';
             return;
         }
-        let granted = false;
-        try { granted = await window.SotiAI.bridgeAccessGranted(); } catch (e) { granted = false; }
-        const origin = window.SotiAI.bridgeOrigin ? window.SotiAI.bridgeOrigin() : '';
-        el.textContent = granted ? `Ready — ${origin}` : `Chrome has not granted access to ${origin || 'the relay'}`;
-        el.className = 'qa-set-status ' + (granted ? 'ok' : 'bad');
+        const bare = (o) => String(o).replace(/^https?:\/\//, '');
+        const hosts = (window.SotiAI.bridgeOrigins ? window.SotiAI.bridgeOrigins() : []).map(bare);
+        const missing = (await copilotAccessMissing()).map(bare);
+        el.textContent = !missing.length
+            ? `Ready — ${hosts.join(' + ')}`
+            : missing.length < hosts.length
+                ? `${missing.join(' + ')} is not granted yet — Microsoft moves the chat there, so reviews fail until you allow it`
+                : 'Not granted yet — reviews cannot be written until you allow it';
+        el.className = 'qa-set-status ' + (missing.length ? 'bad' : 'ok');
+        if (btn) btn.textContent = missing.length ? 'Grant access to Copilot' : 'Access granted to Copilot';
     }
 
     async function saveSettings() {
@@ -4021,102 +5326,125 @@
             CONTEXT = {};
             CHAT_KEY = '';
             await store({ [K.reviews]: REVIEWS, [K.coaching]: COACHING, [K.chats]: CHATS, [K.context]: CONTEXT });
+            /* AND THE TRANSCRIPT DOCUMENTS, which are keyed per case and so are not in the
+             * list of constants above. Left out, the one thing "clear everything" would fail
+             * to clear is the largest thing this tool stores — and it is the customer's case
+             * text, which is exactly what somebody pressing this button means by everything. */
+            const docs = await contextDocKeys();
+            if (docs.length && isExt()) {
+                try { await chrome.storage.local.remove(docs); } catch (e) { console.warn('QA Tool: could not clear the stored transcripts', e); }
+            }
             renderAll();
             toast('Reviews, chats and stored case material cleared.', 's');
         };
 
         $('btnSyncCaseList').onclick = syncCaseList;
-        $('btnAddList').onclick = addListByUrl;
-        $('btnAddByUrl').onclick = addByUrl;
-        $('btnClearList').onclick = async () => {
-            const ok = await confirmAsk('Empty the case list?',
-                'The list is rebuilt from Salesforce the next time you sync. Reviews already written are kept.',
-                'Empty it');
-            if (!ok) return;
-            CASES = { listName: '', origin: CASES.origin, scrapedAt: 0, cases: [] };
-            SELECTED.clear();
-            await store({ [K.cases]: CASES });
-            renderAll();
+        $('ocRefresh').onclick = syncCaseList;
+
+        /* ADD CASE — a menu of three ways in, as the analyser has it. */
+        const addMenu = $('ocAddMenu');
+        $('btnAddCase').onclick = (e) => {
+            e.stopPropagation();
+            const opening = addMenu.style.display === 'none';
+            closeMenu();
+            closeToolbarMenus();
+            addMenu.style.display = opening ? '' : 'none';
+            $('btnAddCase').setAttribute('aria-expanded', opening ? 'true' : 'false');
         };
+        addMenu.onclick = (e) => e.stopPropagation();
+        $('ocAddFromSf').onclick = () => { closeToolbarMenus(); addFromSalesforceTab(); };
+        $('btnAddByUrl').onclick = () => { closeToolbarMenus(); addByUrl(); };
+        $('btnAddList').onclick = () => { closeToolbarMenus(); addListByUrl(); };
+        document.addEventListener('click', () => { closeToolbarMenus(); closeMenu(); });
 
         $('ocSearch').oninput = () => { renderCases(); };
+        $('ocSearch').onkeydown = (e) => {
+            if (e.key === 'Escape' && $('ocSearch').value) { e.preventDefault(); e.stopPropagation(); $('ocSearch').value = ''; renderCases(); }
+        };
         $('ocSort').onchange = () => renderCases();
-        $('ocOwner').onchange = () => renderCases();
         for (const chip of document.querySelectorAll('#ocChips .oc-chip')) {
             chip.onclick = () => {
-                FILTER = chip.dataset.filter;
-                for (const c of document.querySelectorAll('#ocChips .oc-chip')) c.classList.toggle('active', c === chip);
+                // Clicking the active chip clears it, like the tier chips above.
+                FILTER = (FILTER === chip.dataset.filter) ? 'all' : chip.dataset.filter;
+                for (const c of document.querySelectorAll('#ocChips .oc-chip')) c.classList.toggle('active', c.dataset.filter === FILTER);
                 renderCases();
             };
         }
 
-        /* THE COG — what each row shows. A toggle rather than a one-way open: it is the same
-         * button you pressed to get here, and a panel that will not close from the control
-         * that opened it is a panel people leave open. */
+        /* THE COG — the Cases tab's settings: the column chooser, which a right-click on the
+         * column headings also opens. A toggle, so the control that opened it also closes it. */
         const cog = $('ocColumns');
+        const cogMenu = $('ocCogMenu');
         const cols = $('ocColsPanel');
-        if (cog && cols) {
-            cog.onclick = () => {
-                const opening = cols.style.display === 'none';
-                cols.style.display = opening ? '' : 'none';
-                cog.classList.toggle('active', opening);
-                // Rebuilt on the way in rather than only at boot: the JIRA and tier filters
-                // can switch a column on behind this panel's back, and a chooser showing a
-                // stale set of ticks is worse than one that takes a moment to draw.
-                if (opening) renderQaColumns();
-            };
-        }
-        if ($('ocColsClose') && cols) {
-            $('ocColsClose').onclick = () => {
-                cols.style.display = 'none';
-                if (cog) cog.classList.remove('active');
-            };
-        }
+        const openColumns = () => {
+            closeToolbarMenus();
+            closeMenu();
+            cols.style.display = '';
+            cog.classList.add('active');
+            // Rebuilt on the way in: the JIRA chip can switch a column on behind its back.
+            renderQaColumns();
+        };
+        cog.onclick = (e) => {
+            e.stopPropagation();
+            const opening = cogMenu.style.display === 'none';
+            closeMenu();
+            closeToolbarMenus();
+            cogMenu.style.display = opening ? '' : 'none';
+        };
+        cogMenu.onclick = (e) => e.stopPropagation();
+        $('ocCogColumns').onclick = (e) => { e.stopPropagation(); openColumns(); };
+        $('ocColHead').addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); openColumns(); });
+        cols.onclick = (e) => e.stopPropagation();
+        $('ocColsClose').onclick = () => {
+            cols.style.display = 'none';
+            cog.classList.remove('active');
+        };
         /* RESET PUTS BACK BOTH HALVES — which columns and how wide. They are one layout as
-         * far as anybody pressing this is concerned, and a reset that restored the columns
-         * while leaving a subject column somebody had dragged down to 26px would look like
-         * it had not worked. */
-        if ($('ocColsReset')) {
-            $('ocColsReset').onclick = async () => {
-                COLUMNS = defaultColumns();
-                COL_WIDTHS = {};
-                applyColWidths();
-                await Promise.all([saveColumns(), saveWidths()]);
-                renderQaColumns();
+         * far as anybody pressing this is concerned. */
+        $('ocColsReset').onclick = async () => {
+            COLUMNS = defaultColumns();
+            COL_WIDTHS = {};
+            applyColWidths();
+            await Promise.all([saveColumns(), saveWidths()]);
+            renderQaColumns();
+            renderCases();
+            toast('Rows are back to the columns and widths this tool ships with.', 's');
+        };
+
+        /* SELECT, SELECT ALL, THE BIN, CANCEL — the analyser's bar. */
+        $('ocSelect').onclick = () => setSelecting(true);
+        $('ocSelCancel').onclick = () => setSelecting(false);
+        $('ocSelectAll').onclick = () => {
+            if (RUN.active) return;
+            for (const r of visibleCases()) SELECTED.add(keyOf(r));
+            renderCases();
+        };
+        $('ocSelDelete').onclick = () => removeCases(selectedRecords());
+        /* Esc stops selecting; Ctrl+A selects every case on screen — on the Cases tab, and
+         * never while something is being typed or a question is open. */
+        document.addEventListener('keydown', (e) => {
+            if (VIEW !== 'cases' || document.querySelector('.qa-modal-back') || copilotSetupOpen()) return;
+            const t = e.target;
+            const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+            if (e.key === 'Escape' && SELECTING && !typing) { e.preventDefault(); setSelecting(false); return; }
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A') && !typing && CASES.cases.length && !RUN.active) {
+                e.preventDefault();
+                SELECTING = true;
+                for (const r of visibleCases()) SELECTED.add(keyOf(r));
                 renderCases();
-                toast('Rows are back to the columns and widths this tool ships with.', 's');
-            };
-        }
-
-        $('ocSelectAll').onchange = () => {
-            const shown = visibleCases().map(keyOf);
-            if ($('ocSelectAll').checked) for (const k of shown) SELECTED.add(k);
-            else for (const k of shown) SELECTED.delete(k);
-            renderCases();
-        };
-
-        /* SELECT THIS OWNER'S CASES — the second way a reviewer picks work.
-         *
-         * It ticks every case belonging to the chosen agent ACROSS THE WHOLE QUEUE, not just
-         * the ones the current search happens to be showing: "QA everything Imran touched" is
-         * the request, and honouring a stray search box on top of it would silently review
-         * six of his eleven cases. The other filters are left alone; the ticks are what the
-         * run acts on. */
-        $('btnSelectOwner').onclick = () => {
-            const owner = ($('ocOwner').value || '').trim().toLowerCase();
-            if (!owner) { toast('Choose a case owner first.', 'w'); return; }
-            let n = 0;
-            for (const c of CASES.cases) {
-                if (String(c.owner || c.lastModifiedBy || '').toLowerCase() !== owner) continue;
-                SELECTED.add(keyOf(c));
-                n++;
             }
-            renderCases();
-            toast(`${n} case${n === 1 ? '' : 's'} ticked for this owner.`, 's');
-        };
+        });
+        wireTopFold();
 
-        $('btnRunQa').onclick = () => startRun('qa');
+        const needTicks = () => {
+            if (SELECTED.size) return false;
+            setSelecting(true);
+            toast('Click the cases to QA — then press QA again.', 'i', 6000);
+            return true;
+        };
+        $('btnRunQa').onclick = () => { if (!needTicks()) startRun('qa'); };
         $('btnRun306090').onclick = async () => {
+            if (needTicks()) return;
             /* THE 30/60/90 IS FOR AGING CASES, and saying so before the run rather than
              * after is the difference between a warning and an apology: a milestone analysis
              * of a four-day-old case is a page of "not applicable" that cost a Copilot round
@@ -4265,16 +5593,26 @@
             toast('Settings reset.', 's');
         };
 
-        $('btnCheckUpdate').onclick = async () => {
-            if (!window.QaUpdate) { toast('update.js did not load — check it sits next to qa-panel.js.', 'e', 9000); return; }
-            // Interactive, so it asks Chrome for the host permission from inside this click —
-            // which is the only moment Chrome will grant one. See update.js.
-            await window.QaUpdate.check({ interactive: true });
-            fillUpdateStatus();
-        };
         $('btnBackupNow').onclick = () => {
-            if (!window.QaUpdate) { toast('update.js did not load.', 'e'); return; }
-            window.QaUpdate.backup();
+            if (!window.QaBackup) { toast('backup.js did not load — check it sits next to qa-panel.js.', 'e', 9000); return; }
+            window.QaBackup.backup();
+        };
+        $('btnRestore').onclick = () => {
+            if (!window.QaBackup) { toast('backup.js did not load — check it sits next to qa-panel.js.', 'e', 9000); return; }
+            const file = $('restoreFile');
+            file.value = '';                    // so picking the same file twice still fires
+            file.click();
+        };
+        $('restoreFile').onchange = async () => {
+            const file = $('restoreFile');
+            const picked = file.files && file.files[0];
+            file.value = '';
+            if (!picked) return;
+            const ok = await confirmAsk('Restore from this backup?',
+                `${picked.name} — its reviews, chats and settings replace the ones stored now; anything the file does not hold is kept. The panel reloads afterwards.`,
+                'Restore');
+            if (!ok) return;
+            if (await window.QaBackup.restore(picked)) setTimeout(() => location.reload(), 1200);
         };
 
         $('btnGrantAi').onclick = async () => {
@@ -4284,32 +5622,186 @@
             // permission prompt in the middle of a run, or fail silently because the
             // gesture had expired.
             const ok = await window.SotiAI.ensurePermissions();
-            toast(ok ? 'Access granted — the relay can be used now.' : 'Chrome did not grant access. Reviews will fail until you allow it.', ok ? 's' : 'e', 9000);
             refreshAiStatus();
+            if (!ok) {
+                toast('Chrome did not grant access to Copilot. If no prompt appeared, reload the extension at chrome://extensions so it picks up the updated manifest.', 'e', 14000);
+                return;
+            }
+            // GRANTED → TESTED, with nothing else to press — the analyser's order of things.
+            toast('✓ Access granted to Copilot — testing the connection…', 's', 5000);
+            $('btnTestAi').click();
         };
         $('btnTestAi').onclick = async () => {
             const btn = $('btnTestAi');
-            const was = btn.textContent;
+            const was = 'Test the relay';
             btn.disabled = true;
             btn.textContent = 'Testing…';
-            try {
-                /* TWO STAGES, on purpose. The relay has three failure modes that look
-                 * identical from outside — no permission, no injection, or injected but
-                 * unable to find the message box — and a single end-to-end test cannot tell
-                 * them apart. The ping proves the relay is alive and names what it found;
-                 * only then is a real prompt worth sending. */
-                const ping = await window.SotiAI.pingBridge();
-                toast(`Relay alive on ${ping.host} — message box: ${ping.composer}. Sending a test…`, 'i', 5000);
-                const said = await askAi('Reply with exactly: QA TOOL OK', 'QA Tool test');
-                toast(`✓ The relay works. It replied: "${said.trim().slice(0, 60)}"`, 's', 8000);
-            } catch (e) {
-                toast('Relay test failed: ' + ((e && e.message) || e), 'e', 14000);
-            } finally {
-                btn.disabled = false;
-                btn.textContent = was;
-                refreshAiStatus();
+            const r = await runRelayTest((step) => { btn.textContent = step.replace(/ — .*$/, '…'); });
+            btn.disabled = false;
+            btn.textContent = was;
+            if (r.ok) toast(`✓ The relay works. ${r.host} replied: "${r.said.slice(0, 60)}"`, 's', 8000);
+            else toast('Relay test failed: ' + r.error, 'e', 15000);
+        };
+        $('cpsGrant').onclick = () => grantFromCopilotSetup();
+        $('cpsLater').onclick = () => {
+            const done = $('cpsLater').textContent === 'Done';
+            const signin = /sign in|Test/i.test($('cpsGrant').textContent);
+            CPS_THEN = null;
+            closeCopilotSetup();
+            if (!done) {
+                toast(signin
+                    ? 'Sign in to Copilot at m365.cloud.microsoft in a normal tab, then re-run — ⋮ → Settings → The AI → Test the relay checks it.'
+                    : 'You can grant Copilot access any time: ⋮ → Settings → The AI → Grant access to Copilot.', 'i', 8000);
             }
         };
+        $('mCopilotSetup').addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !$('cpsLater').disabled) { e.preventDefault(); $('cpsLater').click(); }
+        });
+        $('btnTestUpload').onclick = testUpload;
+    }
+
+    /* THE TOP OF THE CASES TAB FOLDS AWAY WHEN THE LIST IS SCROLLED DOWN — the analyser's
+     * behaviour, and its reasoning: everything in #ocTop is for FINDING a case, and once you
+     * are scrolling through the list those rows were a third of the panel spent on controls.
+     * Direction, not position: a scroll down past the first rows folds it, any scroll up
+     * brings it back, and at the very top it is always shown. Never while a menu hangs off it,
+     * and a key pressed in the folded filter box opens it again first. */
+    function wireTopFold() {
+        const list = $('ocList');
+        const top = $('ocTop');
+        if (!list || !top) return;
+        let last = 0;
+        let quietUntil = 0;
+        const busy = () => {
+            const menu = $('ocAddMenu');
+            return (menu && menu.style.display !== 'none') || !!$('qaMenu');
+        };
+        const setFolded = (fold) => {
+            if (fold === top.classList.contains('oc-top-hidden')) return;
+            top.style.setProperty('--oc-top-h', top.scrollHeight + 'px');
+            top.classList.add('oc-top-anim');
+            void top.offsetHeight;             // commit the pinned height before it changes
+            top.classList.toggle('oc-top-hidden', fold);
+            // Folding makes the list taller, which moves scrollTop by itself — not a scroll.
+            quietUntil = Date.now() + 320;
+        };
+        top.addEventListener('transitionend', (e) => {
+            if (e.propertyName !== 'max-height') return;
+            top.classList.remove('oc-top-anim');
+            if (!top.classList.contains('oc-top-hidden')) top.style.removeProperty('--oc-top-h');
+        });
+        list.addEventListener('scroll', () => {
+            const y = list.scrollTop;
+            const dy = y - last;
+            last = y;
+            if (y <= 4) { setFolded(false); return; }
+            if (Date.now() < quietUntil) return;
+            if (dy > 6 && y > 40 && !busy()) setFolded(true);
+            else if (dy < -6) setFolded(false);
+        }, { passive: true });
+        const unfold = () => { if (top.classList.contains('oc-top-hidden')) setFolded(false); };
+        top.addEventListener('keydown', unfold, true);
+        top.addEventListener('focusin', unfold);
+    }
+
+    /* ---------------------------------------------------------------------
+     * DOES THE UPLOAD ACTUALLY WORK ON THIS MACHINE?
+     * ---------------------------------------------------------------------
+     * "Test the relay" proves a message can be typed and an answer read back.
+     * It proves nothing at all about the path everything now depends on — that
+     * a FILE reaches the site, that the site reads it, and that what it reads is
+     * the whole file rather than its first page. Those fail differently and they
+     * fail quietly: a missing upload control makes the relay fall back to typing
+     * the case as text, and a partially-read file makes the model answer about
+     * the half it saw. Both come back looking like a working tool.
+     *
+     * So this sends a case that is nothing BUT a check. Three markers, planted at
+     * the start, the middle and the end of a payload big enough to force the
+     * upload, and one instruction: read all three back. Getting the last one
+     * proves the file was read to its end, which is the claim that matters and
+     * the one a smaller test cannot make.
+     *
+     * It is a real request through the real path — same builder, same relay, same
+     * attachment — so a pass here is evidence about reviews rather than about a
+     * test harness.
+     * ------------------------------------------------------------------- */
+    async function testUpload() {
+        const btn = $('btnTestUpload');
+        if (!window.SotiAI || !window.SotiAI.isConfigured()) {
+            toast('Grant access to Copilot first — there is no relay to upload to yet.', 'w', 8000);
+            return;
+        }
+        const was = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Uploading…';
+
+        // Distinctive enough that it cannot be guessed, and cannot be matched by accident
+        // against the instructions: a model that invents an answer here has to invent these.
+        const tag = () => 'QA-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+        const marks = [tag(), tag(), tag()];
+        /* Padding that looks like what this tool really sends — dated, sided, delimited feed
+         * posts — rather than a repeated character. A site that treats an upload differently
+         * by shape would pass a lorem-ipsum test and fail a case. Sized past attachMinChars
+         * with room to spare, so the provider chooses the file path for the same reason it
+         * would on a real case. */
+        const filler = (n) => Array.from({ length: n }, (_, k) =>
+            `[12 March 2026, 09:${String(k % 60).padStart(2, '0')}] [EMAIL] [CUSTOMER] Customer 1:\n`
+            + `Enrolment still fails after the certificate was replaced. Reference line ${k + 1}.`).join('\n\n');
+
+        const material = `[CASE FACTS]\nCase number: UPLOAD-SELF-TEST\nSubject: does the attachment path work\n\n`
+            + `[CASE TRANSCRIPT — OLDEST FIRST]\nMARKER ONE IS ${marks[0]}\n\n${filler(300)}\n\n`
+            + `MARKER TWO IS ${marks[1]}\n\n${filler(300)}\n\nMARKER THREE IS ${marks[2]}\n`;
+
+        const prompt = E.splitPrompt(
+            'You are checking that a file transfer worked. The case material for this request is either attached to '
+            + 'this message as a file or written out below. Somewhere in it are three lines reading "MARKER ONE IS …", '
+            + '"MARKER TWO IS …" and "MARKER THREE IS …".\n\n'
+            + 'RULES:\n'
+            + '- Reply with exactly three lines and nothing else: the three marker codes, one per line, in order.\n'
+            + '- Copy each code exactly as it is written. Do not guess one, and do not invent one.\n'
+            + '- If you cannot find a marker, write MISSING on its line instead.',
+            material,
+            'Read the three marker codes out of the case material and reply with them, one per line, and nothing else.');
+
+        try {
+            const out = {};
+            const said = await askAi(prompt, 'QA Tool upload test', out);
+            const how = out.delivery;
+            const WHERE = ['start', 'middle', 'end'];
+            const found = marks.map(m => said.includes(m));
+            const got = found.filter(Boolean).length;
+            const missing = WHERE.filter((_, i) => !found[i]);
+
+            if (how && how.mode !== 'file') {
+                toast(`The case did NOT go as a file — ${deliveryLine(how)}. Reviews will still be written, `
+                    + 'but large cases will be trimmed to fit the chat box.', 'e', 16000);
+            } else if (got === 3) {
+                toast(`✓ Upload works end to end. All three markers came back out of ${(how && how.file) || 'the attached file'} `
+                    + `(${((how && how.chars) || 0).toLocaleString()} characters), including the one at the very end.`, 's', 12000);
+            } else if (got) {
+                /* NAME THE MARKER THAT WENT MISSING, because which one it was is the finding.
+                 * A missing END marker means the file arrived and was read only part-way,
+                 * which is the failure that would silently halve a long case; a missing
+                 * MIDDLE one means something stranger and is worth reporting as such. */
+                toast(`The file was attached, but the marker at the ${missing.join(' and the ')} did not come back. `
+                    + (missing.indexOf('end') >= 0
+                        ? 'That means the file reached the site but was not read to its end — long cases will lose their newest messages.'
+                        : 'The upload works; treat long cases with caution until this is understood.'), 'w', 18000);
+            } else {
+                toast('The file was attached but none of the three markers came back. Copilot answered: "'
+                    + said.trim().replace(/\s+/g, ' ').slice(0, 120) + '"', 'e', 16000);
+            }
+            logLine(`Upload self-test: ${got}/3 markers returned`
+                + (missing.length ? ` (missing at the ${missing.join(', ')})` : '')
+                + ` — ${deliveryLine(how) || 'delivery not recorded'}`,
+                got === 3 && how && how.mode === 'file' ? 'ok' : 'warn');
+        } catch (e) {
+            toast('Upload test failed: ' + ((e && e.message) || e), 'e', 16000);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = was;
+            refreshAiStatus();
+        }
     }
 
     function coachRows() {

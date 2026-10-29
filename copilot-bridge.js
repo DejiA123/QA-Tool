@@ -1,3 +1,4 @@
+/* © 2026 Ayodeji Augustine. All rights reserved. Carried over from SOTI AI Analyser v9.5.4, whole, so the QA Tool's Copilot relay is the analyser's relay. */
 /* ============================================================================
  * SOTI AI Analyser — Copilot Browser Bridge (relay content script)
  * ============================================================================
@@ -429,16 +430,35 @@
             'input[type="text"]',
             'input[type="search"]'
         ],
+        // A NET, sorted by proximity to the composer at use — see submit(). Deliberately wide
+        // and TAG-AGNOSTIC: M365 Copilot (copilot.cloud.microsoft) renders its composer as a
+        // custom SPAN#m365-chat-editor-target-element, and its send control is not always a
+        // <button> carrying "Send" in aria-label — it can be a [role="button"], or an icon
+        // button identified only by id or data-testid. The id/testid matches also survive a UI
+        // language change, which an aria-label match does not. When none of these hit, submit()
+        // falls back to a shape-based search (heuristicSend) before giving up.
         send: [
             'button[data-testid="send-button"]',
             'button[data-testid="submit-button"]',
+            '[data-testid="send-button"]',
+            '[data-testid*="send" i]',
+            '[id*="send-button" i]',
+            'button[id*="send" i]',
+            '[role="button"][id*="send" i]',
             'button[aria-label*="Send" i]',
+            '[role="button"][aria-label*="Send" i]',
+            '[aria-label*="Send" i]',
             'button[title*="Send" i]',
+            '[title*="Send" i]',
             'button[type="submit"]'
         ],
         stop: [
             'button[data-testid="stop-button"]',
+            '[data-testid="stop-button"]',
+            '[data-testid*="stop" i]',
             'button[aria-label*="Stop" i]',
+            '[role="button"][aria-label*="Stop" i]',
+            '[aria-label*="Stop" i]',
             'button[title*="Stop" i]'
         ],
         // WHERE A FILE GOES IN. Deliberately not narrowed to a testid: the upload input is
@@ -560,6 +580,17 @@
         setTimeout(finish, ms);
     });
     const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+    /* (QA Tool addition) THE ECHO, COMPARED ON LETTERS AND DIGITS ONLY. Copilot draws the user's
+     * own turn through its markdown renderer, so "=== REQUEST ===" and the line break after it
+     * can come back as a heading, as nothing, or run into the next line with no space — and a
+     * comparison that kept the symbols and spacing never found a message that had plainly gone.
+     * Lower-case letters and digits survive every one of those renderings. */
+    const echoKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    function showsPrompt(text, ctx) {
+        const k = echoKey(text);
+        if (ctx.promptKey && k.includes(ctx.promptKey)) return true;
+        return !!(ctx.promptTail && k.includes(ctx.promptTail));
+    }
 
     async function waitFor(fn, timeoutMs, stepMs = 150) {
         const until = Date.now() + timeoutMs;
@@ -724,6 +755,71 @@
     // trims, and trimming here is what keeps an over-large batch from failing wholesale.
     const MAX_ATTACHMENTS = 3;
 
+    /* THE PIECES OF AN OVERSIZED CASE FILE, held between their delivery and the request that
+     * uses them. requestId → (slot → [piece, piece, …]).
+     *
+     * Swept on every arrival rather than on a timer: a buffer whose request never came (the
+     * panel was closed, the tab reloaded mid-handover) would otherwise hold tens of megabytes
+     * in the page for as long as the tab lives. Ten minutes is far longer than a handover
+     * takes and far shorter than a browsing session. */
+    const ATTACH_BUFFER = new Map();
+    const ATTACH_BUFFER_TTL_MS = 600000;
+    const ATTACH_BUFFER_SEEN = new Map();
+    function sweepAttachBuffer(touchId) {
+        const now = Date.now();
+        if (touchId) ATTACH_BUFFER_SEEN.set(touchId, now);
+        for (const [id, at] of [...ATTACH_BUFFER_SEEN]) {
+            if (now - at <= ATTACH_BUFFER_TTL_MS) continue;
+            ATTACH_BUFFER_SEEN.delete(id);
+            ATTACH_BUFFER.delete(id);
+        }
+    }
+    function releaseAttachBuffer(requestId) {
+        ATTACH_BUFFER.delete(requestId);
+        ATTACH_BUFFER_SEEN.delete(requestId);
+    }
+
+    /* A base64 payload — an image delivered as data rather than text — becomes the actual
+     * bytes. The relay runs in the page's own world, where atob is available; a File wants a
+     * byte view, not the base64 string, or the upload control would receive the text of the
+     * encoding instead of the picture. Whitespace is stripped because a data URL occasionally
+     * wraps its payload. */
+    function b64ToBytes(b64) {
+        const clean = String(b64 == null ? '' : b64).replace(/\s+/g, '');
+        const bin = atob(clean);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return bytes;
+    }
+
+    /* Put the delivered pieces back together into the attachment specs attachFiles expects.
+     *
+     * A descriptor that declares `chunks` MUST find that many pieces. A short reassembly is
+     * a truncated log bundle, and a truncated log bundle that reads as a whole one is the
+     * single worst thing this path can produce — the model would answer "that error does not
+     * appear in the logs" about a file whose second half never arrived. So it throws, the
+     * caller falls back to the text layout, and the reason is reported. */
+    function reassembleAttachments(requestId, specs) {
+        const list = Array.isArray(specs) ? specs : [];
+        const slots = ATTACH_BUFFER.get(requestId);
+        return list.map((a, i) => {
+            if (!a || !a.chunks) return a;
+            const pieces = (slots && slots.get(i)) || [];
+            const have = pieces.filter(x => typeof x === 'string').length;
+            if (have !== a.chunks) {
+                throw new Error(`the case file "${a.name}" arrived in ${have} of ${a.chunks} parts, so it would have been uploaded incomplete`);
+            }
+            const text = pieces.join('');
+            if (a.chars != null && text.length !== a.chars) {
+                throw new Error(`the case file "${a.name}" reassembled to ${text.length.toLocaleString()} characters instead of ${Number(a.chars).toLocaleString()}`);
+            }
+            // `encoding` rides through reassembly: a chunked image is base64 text on the wire
+            // and must still be decoded to bytes when the File is built, exactly like one that
+            // was small enough to arrive whole.
+            return { name: a.name, type: a.type, text, encoding: a.encoding };
+        });
+    }
+
     async function attachFiles(specs, timeoutMs = 120000, maxFiles = MAX_ATTACHMENTS) {
         const list = (specs || []).filter(s => s && s.name);
         if (!list.length) return 'nothing to attach';
@@ -789,7 +885,14 @@
         const makeTransfer = () => {
             const t = new DataTransfer();
             for (const s of usable) {
-                t.items.add(new File([s.text == null ? '' : String(s.text)], s.name, { type: s.type || 'text/plain' }));
+                // A base64 spec is a picture (or any binary): decode it to bytes so the File
+                // holds the image, not the text of its encoding. Everything else is text —
+                // a case bundle or a reference file — and rides as a UTF-8 string as before.
+                if (s && s.encoding === 'base64') {
+                    t.items.add(new File([b64ToBytes(s.text)], s.name, { type: s.type || 'application/octet-stream' }));
+                } else {
+                    t.items.add(new File([s.text == null ? '' : String(s.text)], s.name, { type: s.type || 'text/plain' }));
+                }
             }
             return t;
         };
@@ -849,8 +952,12 @@
                 `Sending now would ask the question without the evidence, so the case will be sent as text instead.`);
         }
 
-        const bytes = usable.reduce((n, s) => n + String(s.text || '').length, 0);
-        return `${usable.length} file${usable.length === 1 ? '' : 's'} (${bytes.toLocaleString()} chars) via ${via}` +
+        // A base64 image is reported by its DECODED size — the picture is three quarters of
+        // its encoding — while text files are reported by their character count as before.
+        const bytes = usable.reduce((n, s) => n + (s && s.encoding === 'base64'
+            ? Math.floor(String(s.text || '').replace(/\s+/g, '').length * 3 / 4)
+            : String(s.text || '').length), 0);
+        return `${usable.length} file${usable.length === 1 ? '' : 's'} (${bytes.toLocaleString()} bytes) via ${via}` +
                (cleared.removed ? `, ${cleared.removed} stale attachment(s) removed` : '') +
                (dropped.length ? `, ${dropped.length} not accepted by this site and skipped (${dropped.join(', ')})` : '');
     }
@@ -866,7 +973,7 @@
      * API that produces those faithfully, and it inserts newlines WITHOUT the
      * Enter keydown that would submit the prompt half-written.
      * ------------------------------------------------------------------- */
-    function typeInto(el, text) {
+    async function typeInto(el, text) {
         el.focus();
         el.click();
 
@@ -887,7 +994,15 @@
             sel.addRange(range);
             let ok = false;
             try { ok = document.execCommand('insertText', false, text); } catch (e) { ok = false; }
+            /* (QA Tool addition) GIVE THE EDITOR ITS TURN BEFORE TYPING AGAIN. M365 Copilot's
+             * editor cancels the browser's insert and applies it itself a moment later, so
+             * straight after execCommand the box can look empty — and writing the text in a
+             * second time then sent the message TWICE ("=== REQUEST ===…=== REQUEST ===…").
+             * The fallback still runs when the box really did stay empty. */
             if (!ok || !norm(el.innerText)) {
+                for (let i = 0; i < 6 && !norm(el.innerText); i++) await sleep(50);
+            }
+            if (!norm(el.innerText)) {
                 el.textContent = text;
                 el.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
             }
@@ -917,8 +1032,12 @@
      *    composer shares a near ancestor with it and an unrelated one shares only <body>.
      *
      * The composer emptying is the proof. Nothing below reports success without it.
+     *
+     * `opts.busyMs` is how long a send control that is present but GREYED OUT is worth waiting
+     * for — see THE SEND BUTTON IS BUSY, NOT BROKEN below. Zero (the default) keeps the old
+     * behaviour exactly: one look, one click, then the fallbacks.
      */
-    async function submit(composer) {
+    async function submit(composer, opts = {}) {
         const held = () => {
             const v = composer.value != null ? composer.value : (composer.innerText || '');
             return v.trim().length;
@@ -946,17 +1065,241 @@
             for (const sel of SELECTORS.send) {
                 let nodes;
                 try { nodes = document.querySelectorAll(sel); } catch (e) { continue; }
-                for (const el of nodes) if (clickable(el) && !out.some(o => o.el === el)) out.push({ el, sel, near: near(el) });
+                // A tag-agnostic "Send" selector can match a WRAPPER that holds the composer
+                // (a container labelled "Send a message"), which sorts nearest and clicks to no
+                // effect. The send control never contains the composer, so exclude the ones that do.
+                for (const el of nodes) if (clickable(el) && !(el.contains && el.contains(composer)) && !out.some(o => o.el === el)) out.push({ el, sel, near: near(el) });
             }
             return out.sort((a, b) => a.near - b.near);
         };
 
+        /* THIS composer's send control, enabled or not — the ones candidates() drops.
+         *
+         * Sorted by proximity for the same reason candidates() is: `[aria-label*="Send" i]`
+         * also matches a feedback widget's "Send feedback", and taking the first match in
+         * selector order would report that unrelated, perfectly enabled button as the state of
+         * the one being waited on — which would quietly turn the wait below back off. */
+        const sendAnyState = () => {
+            const out = [];
+            for (const sel of SELECTORS.send) {
+                let nodes;
+                try { nodes = document.querySelectorAll(sel); } catch (e) { continue; }
+                for (const el of nodes) {
+                    if (!el || !el.isConnected) continue;
+                    if (el.contains && el.contains(composer)) continue;
+                    if (out.some(o => o.el === el)) continue;
+                    const off = !!(el.disabled || (el.getAttribute && el.getAttribute('aria-disabled') === 'true'));
+                    out.push({ el, sel, off, near: near(el) });
+                }
+            }
+            out.sort((a, b) => a.near - b.near);
+            return out.length ? out[0] : null;
+        };
+
+        /* THE SEND BUTTON IS BUSY, NOT BROKEN — so wait for it, and press it again.
+         *
+         * M365 Copilot disables Send while it is still taking the attachment in. On a case
+         * carrying a lot of logs that outlasts the eight seconds this used to allow: the
+         * control never became clickable, the run fell through to the heuristic (which filters
+         * on clickable too), then to form.requestSubmit, then to Enter — which M365 Copilot
+         * ignores. The message sat in the composer with the evidence attached beside it, and
+         * the failure blamed the message for being too long, because a greyed-out Send is what
+         * that site does for an over-long message as well.
+         *
+         * So the wait is extended, but ONLY when the disabled button is the busy kind:
+         *  · `busyMs` is non-zero only on a run that actually attached files (see the caller),
+         *    so the over-long-message case still fails in eight seconds with its own advice;
+         *  · a control that is present and ENABLED never enters this path at all;
+         *  · nothing is waited on once the budget set by the panel is spent.
+         *
+         * AND A SWALLOWED CLICK IS RETRIED. A click that lands the instant before the page
+         * re-disables the control does nothing, which is indistinguishable from not clicking.
+         * Going round again is safe for the same reason the Enter fallback below is: a retry
+         * is only reached while the composer STILL HOLDS the message, so a send that did land
+         * has already returned and cannot be duplicated here.
+         */
+        const SEND_READY_MS = 8000;      // for a send control to exist and be clickable at all
+        const busyMs = Math.max(0, opts.busyMs || 0);
+        const busyUntil = Date.now() + busyMs;
+        const onWait = typeof opts.onWait === 'function' ? opts.onWait : null;
+
+        /* A CLICKABLE CONTROL IS NOT NECESSARILY THIS COMPOSER'S SEND CONTROL.
+         *
+         * candidates() ranks by proximity, but it only ever sees the ENABLED ones — so while
+         * the real send button is greyed out it is not in that list at all, and a "Send
+         * feedback" button at the other end of the page becomes the nearest thing left. The
+         * relay then clicks the feedback widget, four times, and reports that the message
+         * would not send. Requiring the winner to be no farther from the composer than the
+         * nearest send control OF ANY STATE is what keeps a disabled neighbour authoritative:
+         * a nearer grey one means the page is not ready yet, not that this is the button. */
+        const readySend = () => {
+            const c = candidates();
+            if (!c.length) return null;
+            const nearest = sendAnyState();
+            if (nearest && nearest.near < c[0].near) return null;
+            return c[0];
+        };
+
+        const waitForClickableSend = async () => {
+            const quick = await waitFor(readySend, SEND_READY_MS, 150);
+            if (quick) return quick;
+            let announced = 0;
+            for (;;) {
+                const remaining = busyUntil - Date.now();
+                if (remaining <= 0) return null;
+                // Present and greyed out is the only shape worth more time. Gone entirely means
+                // a redesign, and the shape-based search below is the answer to that, not delay.
+                const present = sendAnyState();
+                if (!present || !present.off) return null;
+                if (onWait && Date.now() - announced >= 15000) {
+                    announced = Date.now();
+                    // Also keeps the panel's stall watchdog quiet: every message from this
+                    // frame resets it, and a silent two-minute wait is what it exists to catch.
+                    onWait(Math.round((busyMs - remaining) / 1000), present.sel);
+                }
+                const live = await waitFor(readySend, Math.min(5000, remaining), 250);
+                if (live) return live;
+            }
+        };
+
+        /* THE BUTTON IS NOT ALWAYS GREY WHILE IT IS BUSY — IT IS OFTEN JUST INERT.
+         *
+         * Measured on a real case: two log files, 58.7 MB, and the site needed 1m08s after the
+         * upload before Send would do anything. Through all of it the control reported neither
+         * `disabled` nor `aria-disabled` — it matched, it was clickable, and it ignored every
+         * click. A fixed four attempts spent themselves in about twenty seconds and the run
+         * then fell through to the Enter key, which M365 Copilot ignores; the failure blamed a
+         * redesign, which is the one thing it was not.
+         *
+         * So the retry is governed by TIME, not by a count. Press, give the press a few seconds
+         * to prove itself, pause, press again — for as long as the budget the caller allowed,
+         * which is sized from the upload that caused the wait. Roughly one press every nine
+         * seconds, so a 150-second budget is about sixteen of them rather than four.
+         *
+         * AND THE PRESS ITSELF ESCALATES. `el.click()` dispatches one click event and nothing
+         * else, which a framework listening for pointerdown/mouseup never sees. After two
+         * ignored clicks the press becomes a full synthesised pointer-and-mouse sequence, the
+         * shape a real finger produces. Cheap, and it costs nothing when the plain click works.
+         *
+         * DOUBLE-SENDING IS WHAT THIS HAS TO NOT DO, and three things keep it from it: a press
+         * is only repeated while the composer STILL HOLDS the message; the gap is re-checked
+         * for proof before the next press, so a click the page processes slowly is caught
+         * rather than repeated; and a stop control appearing counts as proof on its own, since
+         * the site only shows one once it is answering.
+         */
+        const SEND_PROOF_MS = 6000;      // for a press to show it landed
+        const SEND_GAP_MS = 3000;        // before pressing again, so the budget is not spent at once
+        const SEND_GAP_MAX_MS = 15000;   // …widening as it becomes clear this is a long ingest
+        const SEND_PLAIN_CLICKS = 2;     // plain el.click() presses before escalating
+
+        // A stop control the page did not have before we pressed means it is answering, which
+        // only happens once the message has gone. Captured first so a leftover one cannot read
+        // as proof of a send that has not happened.
+        let wasGenerating = false;
+        try { wasGenerating = isGenerating(); } catch (e) { /* no stop selector on this site */ }
+        const sent = () => {
+            if (gone()) return true;
+            try { return !wasGenerating && isGenerating(); } catch (e) { return false; }
+        };
+
+        const press = (el, full) => {
+            if (!full) { el.click(); return; }
+            try { el.focus(); } catch (e) { /* not focusable */ }
+            const init = { bubbles: true, cancelable: true, composed: true, button: 0, buttons: 1 };
+            /* EVERY CONSTRUCTOR IS LOOKED UP WITH typeof, AND INSIDE THE LOOP.
+             *
+             * A bare `MouseEvent` in the ternary is a ReferenceError where that global is not
+             * defined, and being outside the try it aborted the whole sequence — the pointer
+             * events went, `click` never did, and the press did nothing at all while reporting
+             * that it had happened. `typeof` never throws on an undeclared name, so resolve
+             * that way, skip a type this page cannot construct, and let the remaining ones
+             * through. Plain Event is the last resort: a listener that does not read mouse
+             * coordinates still fires on it. */
+            for (const type of ['pointerover', 'pointerenter', 'pointerdown', 'mousedown',
+                                'pointerup', 'mouseup', 'click']) {
+                const Ctor = (/^pointer/.test(type) && typeof PointerEvent === 'function') ? PointerEvent
+                    : (typeof MouseEvent === 'function') ? MouseEvent
+                    : (typeof Event === 'function') ? Event
+                    : null;
+                if (!Ctor) continue;
+                try { el.dispatchEvent(new Ctor(type, init)); } catch (e) { /* unsupported here */ }
+            }
+        };
+
         const tried = [];
-        const hit = await waitFor(() => { const c = candidates(); return c.length ? c[0] : null; }, 8000, 150);
-        if (hit) {
-            tried.push(`click ${hit.sel}`);
-            try { hit.el.click(); } catch (e) { /* try the next route */ }
-            if (await waitFor(gone, 4000, 150)) return `click ${hit.sel}`;
+        let hit = null;
+        let presses = 0;
+        for (;;) {
+            const c = await waitForClickableSend();
+            if (!c) break;
+            hit = c;
+            presses++;
+            const full = presses > SEND_PLAIN_CLICKS;
+            tried.push(presses === 1 ? `click ${c.sel}`
+                : `${full ? 'pointer press' : 'click'} ${c.sel} (attempt ${presses})`);
+            try { press(c.el, full); } catch (e) { /* try the next route */ }
+            if (await waitFor(sent, SEND_PROOF_MS, 150)) {
+                return presses === 1 ? `click ${c.sel}`
+                    : `${full ? 'pointer press' : 'click'} ${c.sel} on attempt ${presses}`;
+            }
+            // Still holding the message, so that press did not take. Another is worth it only
+            // while the caller's budget lasts — without one this stays a single click, exactly
+            // as it was before any of this.
+            if (Date.now() >= busyUntil) break;
+            if (onWait && presses % 3 === 0) {
+                onWait(Math.round((busyMs - (busyUntil - Date.now())) / 1000), c.sel, presses);
+            }
+            /* THE GAP WIDENS. The first presses are close together because most waits end in
+             * the first minute; once it is clear this is a long ingest, spacing them out keeps
+             * the press count sane over a budget that can now run to minutes, and shrinks the
+             * window in which a press could land on top of one the page is still processing. */
+            const gap = Math.min(SEND_GAP_MAX_MS, SEND_GAP_MS + (presses - 1) * 1500);
+            await sleep(Math.min(gap, Math.max(0, busyUntil - Date.now())));
+            // The page may have processed the earlier press during that pause.
+            if (sent()) return `click ${c.sel} on attempt ${presses}`;
+        }
+
+        // NO CONFIGURED SELECTOR MATCHED — find the send control by SHAPE. A redesigned M365
+        // Copilot send button (icon-only, a [role="button"], or renamed) has no fixed attribute
+        // to match, but it does sit near the composer and reads as "send". Scan the clickable
+        // controls under the composer's toolbar, throw out anything that is clearly something
+        // else (stop, attach, mic, menu…), and require a real send/submit signal before acting —
+        // a wrong click is worse than falling through to the keyboard.
+        if (!hit) {
+            let scope = composer.parentElement || composer;
+            for (let i = 0; i < 6 && scope.parentElement; i++) {
+                if (scope.querySelector('button, [role="button"]')) break;
+                scope = scope.parentElement;
+            }
+            const NO = /\b(stop|cancel|attach|upload|file|photo|image|picture|camera|mic|microphone|voice|dictate|speech|audio|record|emoji|gif|sticker|menu|more|options?|expand|collapse|plugin|gallery|clear|delete|remove|discard|history|settings?|feedback|like|dislike|thumbs|copy|share|close|scroll)\b|new\s*(chat|topic)/i;
+            const YES = /\b(send|submit)\b/i;
+            const nameOf = (el) => {
+                const cls = el.className && el.className.baseVal != null ? el.className.baseVal
+                    : (typeof el.className === 'string' ? el.className : '');
+                return [el.getAttribute && el.getAttribute('aria-label'), el.title, el.id, cls,
+                        el.getAttribute && el.getAttribute('data-testid'), el.getAttribute && el.getAttribute('name')]
+                    .filter(Boolean).join(' ').toLowerCase();
+            };
+            let best = null, bestScore = 0, all = [];
+            try { all = [...scope.querySelectorAll('button, [role="button"], [type="submit"], a[role="button"]')]; } catch (e) { all = []; }
+            for (const b of all) {
+                if (!clickable(b) || (b.contains && b.contains(composer))) continue;
+                const name = nameOf(b);
+                if (NO.test(name)) continue;
+                let score = 0;
+                if (YES.test(name)) score += 100;
+                if (b.getAttribute && b.getAttribute('type') === 'submit') score += 40;
+                if (b.querySelector && b.querySelector('svg, img, i')) score += 8;   // an icon control
+                if (composer.compareDocumentPosition &&
+                    (composer.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)) score += 8; // send sits after the box
+                if (score > bestScore) { bestScore = score; best = b; }
+            }
+            // Only a confident guess acts (a real send/submit signal); anything weaker falls through.
+            if (best && bestScore >= 40) {
+                tried.push('nearest send-like control');
+                try { best.click(); } catch (e) { /* try the next route */ }
+                if (await waitFor(gone, 4000, 150)) return 'heuristic send-like control';
+            }
         }
 
         // The form's own submit path, where there is a form.
@@ -980,12 +1323,73 @@
             if (await waitFor(gone, 1500, 150)) return `Enter key${mods.ctrlKey ? ' (Ctrl)' : mods.metaKey ? ' (Meta)' : ''}`;
         }
 
+        /* A SEND BUTTON THAT IS THERE BUT GREYED OUT IS NOT A MISSING SEND BUTTON, and saying
+         * it is sends whoever reads this to the wrong place entirely.
+         *
+         * `candidates()` filters on `clickable()`, which drops anything disabled or
+         * aria-disabled. M365 Copilot DISABLES Send while the composer holds more than its
+         * input limit — so an over-long message produced "No send control could be found. If
+         * the site has redesigned its send button…", and the honest answer was that the
+         * message was too long and no redesign had happened. Look again without the clickable
+         * filter: if the control is sitting right there disabled, say THAT, and say how much
+         * was in the box, because the length is the thing to act on.
+         *
+         * AND THERE ARE TWO REASONS IT IS GREY, which need opposite things from the engineer.
+         * Over-long is one. The other is that the site has not finished taking the attachment,
+         * and on that one the advice to shorten the message is not merely useless — it points
+         * away from the cause. `busyMs` says which case this was: it is non-zero only on a run
+         * that attached files, and reaching here with it spent means the button stayed disabled
+         * for the whole wait. */
+        const stuck = sendAnyState();
+        const disabledSend = stuck && stuck.off ? stuck.sel : null;
+        const waitedS = Math.round(Math.min(busyMs, Math.max(0, busyMs - (busyUntil - Date.now()))) / 1000);
+
         const e = new Error(
             `${location.host} would not send the message: it is still sitting in the composer with ` +
             `${held().toLocaleString()} of ${before.toLocaleString()} characters after trying ${tried.join(', ') || 'no route at all'}. ` +
-            `${hit ? '' : 'No send control could be found. '}` +
-            `If the site has redesigned its send button, set a new one under Settings (⚙) → Bridge selectors.`);
+            /* CLICKABLE AND IGNORED IS ITS OWN DIAGNOSIS, and it is the one a big upload
+             * produces: the control reports neither disabled nor aria-disabled, takes every
+             * press and does nothing with it while the site finishes ingesting the files.
+             * Saying "the site has redesigned its send button" here sends the engineer to
+             * change a selector that is matching perfectly. */
+            (busyMs && presses >= 2 && !disabledSend
+                ? `Its send button (${hit ? hit.sel : 'found'}) matched and was clickable the whole time — it took `
+                  + `${presses} presses over ${waitedS}s, the last of them as a full pointer sequence, and ignored `
+                  + `every one. That is what this site does while it is still taking an upload in, and ${waitedS}s `
+                  + `was not enough for this one. The files are attached and the question is typed: send it yourself `
+                  + `in the tab, or raise "Answer timeout" under Settings (⚙) → AI Provider, which is what sizes `
+                  + `this wait.`
+                : disabledSend && busyMs
+                ? `Its send button (${disabledSend}) was present but DISABLED for the whole ${Math.round(busyMs / 1000)}s `
+                  + `it was given, which is what this site does while it is still taking an upload in. The files are `
+                  + `attached; it is the sending that did not happen. Try again — a case this size may simply need `
+                  + `longer than the panel allows, and "Answer timeout" under Settings (⚙) → AI Provider is what sets `
+                  + `that budget.`
+                : disabledSend
+                ? `Its send button (${disabledSend}) is present but DISABLED, which is what this site does when the `
+                  + `composer holds more than it accepts — this message is too long for it, rather than the button `
+                  + `having moved. The panel is re-measuring its own limit from this and will retry shorter; if it `
+                  + `keeps happening, lower "Max characters per message" under Settings (⚙) → AI Provider.`
+                : (hit ? '' : 'No send control could be found. ')
+                  + `If the site has redesigned its send button, set a new one under Settings (⚙) → Bridge selectors.`));
         e.__described = true;
+        /* A MEASUREMENT, NOT JUST A COMPLAINT.
+         *
+         * The adapter already re-tunes itself when the composer TRUNCATES what was typed — it
+         * reads back what the box kept and re-splits to that. This case looks nothing like it
+         * from the page: the box took every character and the SITE refused to send them, so
+         * "accepted" equals "attempted" and nothing was learned. The engineer was handed a
+         * setting to change by hand instead, on a limit only the site knows.
+         *
+         * It is still a measurement. A composer holding N characters with Send greyed out
+         * proves the limit is below N, which is exactly the fact the adapter needs. Flagged
+         * separately because the arithmetic is different: a truncation says "this much fits",
+         * this says "less than this fits", so the provider steps down rather than trimming the
+         * last 5%. Only on the over-long case — while the site is still ingesting an upload the
+         * button is grey for a reason that has nothing to do with length. */
+        if (disabledSend && !busyMs) {
+            e.capacity = { accepted: held(), attempted: before, sendDisabled: true };
+        }
         throw e;
     }
 
@@ -1052,6 +1456,8 @@
     // sibling short on its own, and little text dropped in total.
     const CHROME_CHARS = 25;   // longest a single discarded sibling may be
     const CHROME_TOTAL = 50;   // most text tightening may drop at one level
+    // (QA Tool addition) Prose, never chrome: a sibling that is one of these is part of the answer however short.
+    const PROSE_BLOCK = /^(?:P|LI|UL|OL|H[1-6]|BLOCKQUOTE|PRE|TABLE|DL)$/;
 
     function tighten(node) {
         let best = node;
@@ -1065,10 +1471,26 @@
             // block is either mangled or lost. An answer that is MOSTLY one long code block
             // walks straight into this: the widget is the biggest child every time.
             if (codeWidget(best)) break;
-            const kids = best.children ? [...best.children].filter(k => !isNonContent(k)) : [];
+            const all = best.children ? [...best.children].filter(k => !isNonContent(k)) : [];
+            if (!all.length) break;
+
+            /* (QA Tool addition) A ROW OF BUTTONS IS NEVER THE ANSWER, AND NEVER COUNTS AGAINST
+             * IT. Under a short reply the toolbar — "Copy", "Like", "More actions" — can be the
+             * longest child: this walked into it and returned "Regenerate" as what Copilot said,
+             * or, measuring the toolbar as content, refused to step past it and returned the
+             * reply with its button labels stuck on. The same two tests bestCandidate applies to
+             * a whole candidate decide which children are chrome; those are left out of every
+             * measurement below. */
+            let chromeLen = 0;
+            const kids = [];
+            for (const k of all) {
+                const len = (k.innerText || '').trim().length;
+                if (len && (inChrome(k) || buttonTextLen(k) > len * 0.6)) chromeLen += len;
+                else kids.push(k);
+            }
             if (!kids.length) break;
 
-            const full = (best.innerText || '').trim().length;
+            const full = Math.max(0, (best.innerText || '').trim().length - chromeLen);
             if (!full) break;
 
             let biggest = null, biggestLen = -1;
@@ -1091,6 +1513,15 @@
             // Anything sizeable outside the biggest child is content, not chrome.
             const othersTooBig = kids.some(k => k !== biggest && (k.innerText || '').trim().length > CHROME_CHARS);
             if (othersTooBig) break;
+            /* AND A PARAGRAPH IS CONTENT HOWEVER SHORT IT IS (QA Tool addition). The size
+             * rule cannot tell a "Copy" button from a short paragraph, so an answer made of
+             * short paragraphs — three codes on three lines, "Yes." followed by one sentence —
+             * was cut down to its first paragraph and returned as the whole reply. Buttons and
+             * labels are never <p> or <li>; when what would be dropped is prose, stop here. */
+            const proseLeftBehind = kids.some(k => k !== biggest
+                && PROSE_BLOCK.test(String(k.tagName || '').toUpperCase())
+                && (k.innerText || '').trim().length > 0);
+            if (proseLeftBehind) break;
             // Covers the parent's own loose text too, which no child accounts for.
             if (full - biggestLen > CHROME_TOTAL) break;
 
@@ -1161,9 +1592,20 @@
             // Anything showing the prompt back is the user's own turn, or a wrapper
             // holding both turns. Compared on normalised whitespace because innerText
             // re-flows newlines.
-            if (ctx.promptHead && norm(text).includes(ctx.promptHead)) continue;
+            if (ctx.promptHead && (norm(text).includes(ctx.promptHead) || showsPrompt(text, ctx))) continue;
             if (inChrome(el)) continue;
-            if (buttonTextLen(el) > text.length * 0.6) continue;
+            /* (QA Tool addition) SCORED ON ITS OWN TEXT, NOT ITS TOOLBAR'S. This used to drop
+             * any element whose text was mostly button labels — right for a strip of
+             * suggestion chips, and fatal for a SHORT answer: M365 Copilot draws a reply and
+             * its Copy / Like / Dislike / More bar in one go, the bar's screen-reader labels
+             * outweigh "QA TOOL OK", and the only element holding the answer was thrown out.
+             * Nothing was ever read, so the request sat until its ten-minute ceiling — the
+             * connection test stuck at 95%. Now only an element with no text of its own is
+             * dropped, and a mostly-buttons one ranks below any other with the same growth. */
+            const btnLen = buttonTextLen(el);
+            const own = text.length - btnLen;
+            if (own < 2) continue;
+            const mostlyButtons = btnLen > text.length * 0.6 ? 1 : 0;
 
             // HOW MUCH it grew, not merely whether it did. A boolean ranked the page
             // disclaimer — which went from empty to 37 characters in one mutation — level
@@ -1176,14 +1618,15 @@
             cands.push({
                 el,
                 delta,
-                len: text.length,
+                len: own,
+                mostlyButtons,
                 after: comesAfter(ctx.echoNode, el) ? 1 : 0
             });
         }
 
         const pool = requireGrowth ? cands.filter(c => c.delta > 0) : cands;
         if (!pool.length) return null;
-        pool.sort((a, b) => (b.delta - a.delta) || (b.after - a.after) || (b.len - a.len));
+        pool.sort((a, b) => (b.delta - a.delta) || (a.mostlyButtons - b.mostlyButtons) || (b.after - a.after) || (b.len - a.len));
         return pool[0];
     }
 
@@ -1213,7 +1656,7 @@
             if (!el.isConnected) continue;
             if (el === ctx.composer || el.contains(ctx.composer)) continue;
             const text = el.innerText || '';
-            if (!norm(text).includes(ctx.promptHead)) continue;
+            if (!norm(text).includes(ctx.promptHead) && !showsPrompt(text, ctx)) continue;
             // <= so a tie resolves to the DEEPER node: a bubble and the wrapper that holds
             // only that bubble have identical text, and the bubble is the tighter anchor.
             if (!smallest || text.length <= (smallest.innerText || '').length) smallest = el;
@@ -1473,11 +1916,58 @@
         return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
     }
 
+    /* ---------------------------------------------------------------------
+     * THE PAGE'S OWN FURNITURE IS NOT PART OF THE ANSWER
+     * ---------------------------------------------------------------------
+     * The answer is read off a chat page, and the chat page writes things around it: a
+     * progress ticker above the reply ("Lining things up…", "Getting started…") and a
+     * turn label for screen readers ("Copilot said:"). Both land inside the element the
+     * reply is read from, so both were being returned as the first words of the answer —
+     * and a generated JIRA ticket came back starting
+     *
+     *     Lining things up…Copilot said:h3. *Description of Issue:*
+     *
+     * with the chat UI's furniture glued to a ticket about to be filed into JIRA. There
+     * is no newline after "said:", so nothing anchored to a line start could catch it.
+     *
+     * ONLY AT THE FRONT, and only these phrases. An answer may legitimately CONTAIN them
+     * (a ticket quoting a transcript, a log line reading "Searching…"), and editing that
+     * would be corrupting the engineer's evidence to tidy up a label.
+     *
+     * Stripping here rather than only at the reader means it never reaches ANY answer —
+     * chat replies, email drafts and summaries, not just the JIRA generator, which has a
+     * second pass of its own (cleanupJiraOutput in sidepanel.js).
+     * ------------------------------------------------------------------- */
+    const RELAY_CHROME_RE = new RegExp(
+        '^\\s*(?:'
+        + '(?:copilot|claude|chatgpt|assistant|you|user)\\s+said\\s*:'
+        + '|sent\\s+by\\s+copilot\\s*:'
+        + '|(?:lining\\s+things\\s+up|getting\\s+started|working\\s+on\\s+it|just\\s+a\\s+moment'
+        + '|let\\s+me\\s+think|one\\s+moment|almost\\s+there|hang\\s+tight'
+        + '|thinking|reasoning|searching|analy[sz]ing|gathering\\s+information'
+        + '|looking\\s+into\\s+(?:it|this)|reading\\s+(?:the\\s+)?(?:page|document|files?)'
+        + '|generating(?:\\s+(?:a\\s+)?(?:response|answer))?)'
+        + '\\s*(?:\\u2026|\\.{2,})?'
+        + ')\\s*', 'i');
+
+    // "Lining things up…Copilot said:" is two pieces, so this takes them off in turn.
+    // Bounded rather than looped to exhaustion: a pattern that ever matched the empty
+    // string must not be able to spin here, and six is more pieces than any page writes.
+    function stripRelayChrome(text) {
+        let t = String(text || '');
+        for (let i = 0; i < 6; i++) {
+            const cut = t.replace(RELAY_CHROME_RE, '');
+            if (cut === t) break;
+            t = cut;
+        }
+        return t;
+    }
+
     // The one place the answer's text is decided. Markdown when the DOM can give it,
     // innerText when anything at all goes wrong.
     function answerText(el) {
         if (!el) return '';
-        const flat = (el.innerText || '').trim();
+        const flat = stripRelayChrome((el.innerText || '').trim()).trim();
         try {
             const md = domToMarkdown(el);
             // A SERIALISER THAT DROPPED HALF THE ANSWER IS WORSE THAN NO SERIALISER.
@@ -1488,9 +1978,18 @@
             // a filter or a widget handler that swallows real content. When that happens the
             // flat read is returned instead, which loses the formatting but keeps the answer.
             if (md && md.trim()) {
-                const kept = md.replace(/[|`*#>\-\s]/g, '').length;
-                const whole = flat.replace(/\s/g, '').length;
-                if (!whole || kept >= whole * 0.6) return md.trim();
+                // Stripped on the same terms as the flat read above, so the length guard
+                // below compares like with like — otherwise a reply whose only chrome was
+                // in the markdown read would look 30 characters "longer" than the truth.
+                const cleaned = stripRelayChrome(md.trim()).trim();
+                const kept = cleaned.replace(/[|`*#>\-\s]/g, '').length;
+                /* (QA Tool addition) Buttons are skipped by the serialiser ON PURPOSE (MD_SKIP),
+                 * so their labels are not counted as content it lost — under a short reply they
+                 * outweighed it, and the flat read went out with "Copy Like Dislike" in it. */
+                let skipped = 0;
+                try { for (const b of el.querySelectorAll('button')) skipped += (b.innerText || '').replace(/\s/g, '').length; } catch (e) { /* none */ }
+                const whole = Math.max(0, flat.replace(/\s/g, '').length - skipped);
+                if (cleaned && (!whole || kept >= whole * 0.6)) return cleaned;
             }
         } catch (e) { /* fall through to the flat read */ }
         return flat;
@@ -1658,6 +2157,9 @@
     async function runRequest(msg) {
         const { requestId } = msg;
         const quietMs = msg.quietMs || 1500;
+        // When this run started, for the send wait below: the only honest bound on how long
+        // anything here may take is the deadline the panel is already counting down.
+        const askedAt = Date.now();
         // A bare `prompt` is the single-message shape and still works unchanged.
         // Not const: a failed attachment swaps this for the adapter's text-only layout
         // below, which is what keeps an un-attachable site working instead of erroring.
@@ -1683,6 +2185,33 @@
         const failure = (why) => { const e = new Error(why); e.__described = true; return e; };
 
         let watcher = null;
+
+        /* HOW LONG A SEND THAT WILL NOT TAKE IS WORTH PRESSING FOR, and it is only worth
+         * pressing at all on a run that put files up: see the two comments in submit().
+         *
+         * MEASURED AGAINST THE RUN'S OWN DEADLINE, not a flat number and not a share of one.
+         * The panel already computes what this whole request may take — the answer timeout plus
+         * a minute per ten megabytes of upload — and kills the run at it. That deadline is
+         * therefore the only honest bound on the wait: anything shorter gives up while the run
+         * still had time to spare, which is exactly what happened on the 58.7MB case at a flat
+         * 150s, and anything longer is time the panel has already stopped waiting for.
+         *
+         * So: whatever is left of the budget when the question has been typed, less a reserve
+         * for the answer to actually come back in. On that 58.7MB case the budget is ten
+         * minutes, the upload spends some of it, and the send gets whatever remains — minutes,
+         * not 150 seconds. A small case is unaffected, because a small case leaves the whole
+         * answer timeout standing and never has a button to wait for.
+         *
+         * The old quarter-of-the-upload-allowance rule is kept for a panel that does not send
+         * a budget (an older build talking to a newer relay), and the floor means a run that is
+         * nearly out of time still gets one honest go rather than none. */
+        let attached = false;
+        const ANSWER_RESERVE_MS = 90000;
+        const sendBusyMs = () => {
+            const budget = Number(msg.budgetMs) || 0;
+            if (!budget) return Math.min(180000, Math.max(30000, Math.round((msg.attachTimeoutMs || 120000) / 4)));
+            return Math.max(30000, budget - (Date.now() - askedAt) - ANSWER_RESERVE_MS);
+        };
 
         // TYPE ONE PART AND GET IT ACCEPTED. Everything up to and including the echo check is
         // identical for a context part and for the final question, so it is written once.
@@ -1717,6 +2246,11 @@
                 // nonce for exactly this, and falls back to the old rule when there is one
                 // part and no stamp.
                 promptHead: norm(part.echoKey) || norm(text).slice(0, 40),
+                // (QA Tool addition) The same test on letters and digits only — the opening
+                // and, for a message with no stamp, its closing words too, which a renderer
+                // that drops the "=== REQUEST ===" line still shows.
+                promptKey: echoKey(part.echoKey) || echoKey(text).slice(0, 32),
+                promptTail: part.echoKey ? '' : (echoKey(text).length >= 16 ? echoKey(text).slice(-24) : ''),
                 watcher: null,
                 strategy: ''
             };
@@ -1729,7 +2263,7 @@
             watcher = makeWatcher();
             ctx.watcher = watcher;
 
-            const typedLen = typeInto(composer, text);
+            const typedLen = await typeInto(composer, text);
             if (!typedLen) {
                 throw failure(`Could not type into the message box on ${location.host} (matched "${found.selector}"). It may be a custom editor — try a different composer selector in Settings (⚙).`);
             }
@@ -1755,7 +2289,18 @@
             }
             if (index === 0) diag('typed', `${held.toLocaleString()} chars accepted`);
 
-            const how = await submit(composer);
+            const budgetForSend = attached ? sendBusyMs() : 0;
+            const how = await submit(composer, {
+                busyMs: budgetForSend,
+                // Reported rather than waited out in silence: the engineer watching the relay
+                // sees why nothing is happening, and the panel's stall watchdog counts any
+                // message from this frame as a sign of life.
+                onWait: (secs, sel, presses) => diag('send-wait',
+                    `${location.host} has not taken the send button (${sel}) ${secs}s after the case was typed`
+                    + (presses ? ` — ${presses} presses ignored so far` : ' — it is still greyed out')
+                    + `. It is finishing the upload; pressing for up to ${Math.round(budgetForSend / 1000)}s, `
+                    + `which is what is left of this run's budget.`)
+            });
             if (index === 0) diag('submit', how);
 
             // Gate 1: was the message accepted at all? Nothing may be read off the page
@@ -1788,15 +2333,31 @@
                     // time — the request arrives the instant the script is injected, which is
                     // routinely earlier than the app is ready to be driven.
                     await waitFor(() => findComposer(SELECTORS.composer), 15000);
-                    diag('attach', await attachFiles(msg.attachments, msg.attachTimeoutMs || 120000, msg.maxAttachments));
+                    // A case file too big to ride inside this message was delivered ahead of
+                    // it in pieces; this is where it becomes one string again.
+                    const specs = reassembleAttachments(requestId, msg.attachments);
+                    const bytes = specs.reduce((n, a) => n + String((a && a.text) || '').length, 0);
+                    diag('attach', await attachFiles(specs, msg.attachTimeoutMs || 120000, msg.maxAttachments)
+                        + ` (${bytes.toLocaleString()} chars)`);
+                    // Set only once the files are up and quiet, because this is what buys the
+                    // send button its patience — and a grey button on a run that attached
+                    // NOTHING is the over-long-message case, which must still fail fast.
+                    attached = true;
                 } catch (e) {
                     if (Array.isArray(msg.fallbackParts) && msg.fallbackParts.length) {
                         diag('attach-fallback', (e && e.message) || String(e));
                         parts = msg.fallbackParts;
+                        attached = false;
                         await clearAttachments();
                     } else {
                         throw failure((e && e.message) || String(e));
                     }
+                } finally {
+                    // The pieces have become a File (or the attempt has failed and the text
+                    // layout has taken over). Either way nothing needs them again, and a big
+                    // bundle left in this Map is tens of megabytes held in the page for as
+                    // long as the tab lives.
+                    releaseAttachBuffer(requestId);
                 }
             }
 
@@ -1852,6 +2413,8 @@
             let sawGenerating = false;
             let finished = false;
             const hardStop = Date.now() + 10 * 60 * 1000;
+            // (QA Tool addition) How long an unchanged answer outlasts a Stop control — see stuckStop.
+            const STOP_STALE_MS = 30000;
 
             await new Promise((resolve) => {
                 let mo = null, iv = null;
@@ -1879,12 +2442,22 @@
 
                     const generating = isGenerating();
                     if (generating) sawGenerating = true;
+                    /* (QA Tool addition) A STOP CONTROL THAT NEVER GOES AWAY IS NOT A MODEL
+                     * STILL WRITING. Something on the page that answers to a "Stop" selector and
+                     * stays put after the reply — a dictation control, a hidden stop button left
+                     * in the layout — held `generating` true for good: no one-shot reply could be
+                     * adopted and nothing could finish before the ten-minute ceiling. Once an
+                     * answer is in hand and has not changed for STOP_STALE_MS, the control is
+                     * treated as stale. Never before an answer: a model thinking over a large
+                     * case shows nothing at all for a minute or more, and that silence is real. */
+                    const stuckStop = generating && !!prevFull && Date.now() - lastChange > STOP_STALE_MS;
+                    const writing = generating && !stuckStop;
 
                     // While the model is still writing, only a GROWING element may be
                     // adopted — that is what stops a static page label being streamed as the
                     // answer. Once it has gone quiet, an answer that rendered in one shot
                     // (short replies do) is accepted on its own merits.
-                    const settling = !generating && Date.now() - lastChange > quietMs;
+                    const settling = !writing && Date.now() - lastChange > quietMs;
                     const full = readAnswer(ctx, !settling);
 
                     if (full) {
@@ -1941,7 +2514,7 @@
                     // the same thing now that nothing is held back, but they were not always,
                     // and a loop that ends on what was emitted is one edit away from hanging
                     // on a reply it decided not to emit.
-                    const done = prevFull && quiet && !generating &&
+                    const done = prevFull && quiet && !writing &&
                                  (sawGenerating || Date.now() - lastChange > quietMs * 2);
                     if (done || Date.now() > hardStop) finish();
                 };
@@ -2317,7 +2890,7 @@
     // for tests/copilot-bridge.test.js to drive against a fake DOM. Everything else here
     // needs a live page; this part is pure enough to pin down properly.
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = { heuristicAnswerNode, bestCandidate, readAnswer, tighten, commonPrefixLen, reconcileTail, norm, promptEchoed, typeable, findComposer, currentConversationId, findConversationRow, looksLikeRelayTitle, findDeleteItem, findConfirmButton, triggerScore, looksTruncated, domToMarkdown, answerText, codeWidget, acceptsFile, findFileInput, findFileInputIn, reachableDocs, revealUploadControl, attachmentRemovers, attachmentsBusy, clearAttachments, attachFiles };
+        module.exports = { stripRelayChrome, heuristicAnswerNode, bestCandidate, readAnswer, tighten, commonPrefixLen, reconcileTail, norm, promptEchoed, typeable, findComposer, currentConversationId, findConversationRow, looksLikeRelayTitle, findDeleteItem, findConfirmButton, triggerScore, looksTruncated, domToMarkdown, answerText, codeWidget, acceptsFile, findFileInput, findFileInputIn, reachableDocs, revealUploadControl, attachmentRemovers, attachmentsBusy, clearAttachments, attachFiles, reassembleAttachments, releaseAttachBuffer, sweepAttachBuffer };
     }
     if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.onMessage) return;
 
@@ -2375,6 +2948,31 @@
 
         if (!msg.requestId) return;
 
+        /* A PIECE OF A BIG CASE FILE, arriving ahead of the request that will use it.
+         *
+         * See deliverLargeAttachments in ai-provider.js. A 37.5 MB log bundle is not something
+         * to put inside one extension message, so it comes over in 4 MB pieces which are held
+         * here until the ASK arrives and names them. Every piece is acknowledged — an
+         * unacknowledged one is an error on the panel's side rather than a file that is
+         * quietly short at this one.
+         *
+         * Pieces are kept per requestId and per slot (the index of the attachment they belong
+         * to), so two requests in flight cannot bleed into each other. */
+        if (msg.type === 'SOTI_BRIDGE_ATTACH_CHUNK') {
+            try {
+                let slots = ATTACH_BUFFER.get(msg.requestId);
+                if (!slots) { slots = new Map(); ATTACH_BUFFER.set(msg.requestId, slots); }
+                let pieces = slots.get(msg.slot || 0);
+                if (!pieces) { pieces = []; slots.set(msg.slot || 0, pieces); }
+                pieces[msg.index || 0] = String(msg.text == null ? '' : msg.text);
+                sweepAttachBuffer(msg.requestId);
+                sendResponse({ ok: true, held: pieces.filter(x => x != null).length });
+            } catch (e) {
+                sendResponse({ ok: false, why: (e && e.message) || String(e) });
+            }
+            return false;
+        }
+
         if (msg.type === 'SOTI_BRIDGE_ASK') {
             if (msg.selectors && typeof msg.selectors === 'object') {
                 SELECTORS = {
@@ -2403,6 +3001,7 @@
         }
 
         if (msg.type === 'SOTI_BRIDGE_CANCEL') {
+            releaseAttachBuffer(msg.requestId);
             const st = active.get(msg.requestId);
             if (st) st.cancelled = true;
             const stop = pick(SELECTORS.stop);

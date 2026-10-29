@@ -90,6 +90,15 @@
     </header>
     <!-- AN UNOFFICIAL COPY SAYS SO ON EVERY SCREEN — see verifyIntegrity in qa-panel.js. -->
     <div class="integrity-banner" id="integrityBanner" role="alert" hidden></div>
+    <!-- A NEW RELEASE IS READY IN THE SHARED FOLDER — the analyser's bar; see updater.js and
+         UPDATES in qa-panel.js. Restart now restarts onto it; × leaves it until the panel is
+         closed or out of sight and idle, when it restarts by itself. -->
+    <div class="update-banner" id="updateBanner" role="status" hidden>
+        <span class="update-banner-tag">Update</span>
+        <span class="update-banner-title" id="updateBannerTitle"></span>
+        <button class="update-banner-go" id="updateBannerGo" type="button">Restart now</button>
+        <button class="update-banner-x" id="updateBannerLater" type="button" title="Later — it is applied by itself when the panel is closed" aria-label="Later">×</button>
+    </div>
 
     <!-- A FIXED SET OF TABS, drawn as the analyser draws its own: the queue is the solid
          pill, the rest are the quieter ones beside it. A QA reviewer works the LIST — they
@@ -216,7 +225,30 @@
         <!-- THE CHIPS: the tiers, JIRA and Focus (the analyser's row), then this tool's own —
              the 30/60/90 milestones and whether a case has been QA'd. -->
         <div class="oc-filters" id="ocFilters2" style="display:none">
-            <div class="oc-chips" id="ocTierChips"></div>
+            <!-- THE TIER CHIPS, AND THE OWNER PICKER AT THE END OF THEIR LINE. The picker lists
+                 only the people whose cases are loaded, ticks as many as wanted, and narrows the
+                 list to their cases; every chip count below it follows. Filled by
+                 renderOwnerPicker(). -->
+            <div class="qa-chipline">
+                <div class="oc-chips" id="ocTierChips"></div>
+                <div class="qa-owner-wrap" id="ocOwnerWrap">
+                    <button class="qa-owner-btn" id="ocOwnerBtn" type="button" aria-haspopup="listbox" aria-expanded="false"
+                            title="Show only the cases of the owners you pick — tick one or several">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                        <span class="qa-owner-label" id="ocOwnerLabel">All owners</span>
+                        <span class="qa-owner-caret" aria-hidden="true">▾</span>
+                    </button>
+                    <div class="oc-menu qa-owner-menu" id="ocOwnerMenu" style="display:none">
+                        <div class="qa-owner-head">
+                            <span id="ocOwnerHead">Case owners</span>
+                            <button class="qa-owner-clear" id="ocOwnerClear" type="button" title="Show every owner's cases again">Clear</button>
+                        </div>
+                        <input class="oc-search qa-owner-find" id="ocOwnerFind" type="search" autocomplete="off"
+                               placeholder="Find an owner…" aria-label="Find an owner">
+                        <div class="qa-owner-list" id="ocOwnerList" role="listbox" aria-multiselectable="true"></div>
+                    </div>
+                </div>
+            </div>
             <div class="oc-chips qa-ms-chips" id="ocChips">
                 <button class="oc-chip active" data-filter="all" type="button" title="Every case, whatever its age or review">Any age</button>
                 <button class="oc-chip" data-filter="30" type="button" title="Cases 30 days old or more but under 60">30-day</button>
@@ -312,6 +344,26 @@
                     <option value="milestone">30/60/90 analyses</option>
                     <option value="failed">Incomplete</option>
                 </select>
+            </div>
+            <!-- HOW THE FOLDERS ARE ORDERED INSIDE. The reviews are filed by the month their case
+                 closed, then by owner (see renderReviews); this orders the cases inside each owner
+                 — and, for the two score orders, the owners inside each month by their average. -->
+            <div class="oc-filter-row qa-rev-order" id="revOrder" style="display:none">
+                <label class="qa-rev-sortlab" for="revSort">Sort</label>
+                <select class="oc-sort qa-rev-sort" id="revSort" title="The order of the cases inside each owner's folder">
+                    <option value="at-desc" selected>Newest review first</option>
+                    <option value="at-asc">Oldest review first</option>
+                    <option value="score-asc">Score: lowest first</option>
+                    <option value="score-desc">Score: highest first</option>
+                    <option value="age-desc">Case age: oldest first</option>
+                    <option value="age-asc">Case age: newest first</option>
+                    <option value="closed-desc">Closed: latest first</option>
+                    <option value="case">Case number</option>
+                </select>
+                <span class="qa-rev-fold">
+                    <button class="qa-rev-foldbtn" id="revExpand" type="button" title="Open every month and every owner">Expand all</button>
+                    <button class="qa-rev-foldbtn" id="revCollapse" type="button" title="Close every folder">Collapse all</button>
+                </span>
             </div>
             <!-- THE TWO LIST ACTIONS ON A LINE OF THEIR OWN. Beside the filter they squeezed the
                  box down to a few letters, which is the one control on the tab people type into.
@@ -682,6 +734,7 @@
     <script src="ai-provider.js"></script>
     <script src="qa-engine.js"></script>
     <script src="case-reader.js"></script>
+    <script src="updater.js"></script>
     <script src="qa-panel.js"></script>
     <script src="backup.js"></script>
 </body>

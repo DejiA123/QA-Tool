@@ -963,3 +963,228 @@
     background: rgba(99, 102, 241, .22);
     border-color: var(--blue);
 }
+
+/* ============================================================
+   THE OWNER DROPDOWN — at the end of the tier chips' line
+   ============================================================
+   The chips take what the line has and wrap; the picker keeps its own width at
+   the right-hand end, where the eye goes after reading the tiers. */
+.qa-chipline { display: flex; align-items: flex-start; gap: 8px; }
+.qa-chipline > .oc-chips { flex: 1 1 auto; min-width: 0; }
+.qa-owner-wrap { position: relative; flex-shrink: 0; }
+.qa-owner-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 190px;
+    padding: 3px 9px;
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 600;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, .05);
+    border: 1px solid var(--border2);
+    color: var(--txt1);
+    cursor: pointer;
+    transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.qa-owner-btn:hover { border-color: rgba(129, 140, 248, .6); }
+.qa-owner-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.qa-owner-btn.active { color: #fff; background: rgba(99, 102, 241, .22); border-color: var(--blue); }
+.qa-owner-btn svg { flex-shrink: 0; color: var(--blue2); }
+.qa-owner-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qa-owner-caret { flex-shrink: 0; font-size: 9px; color: var(--txt3); }
+
+.oc-menu.qa-owner-menu {
+    left: auto;
+    right: 0;
+    min-width: 230px;
+    max-width: min(300px, calc(100vw / var(--ui-zoom, 1) - 28px));
+    padding: 6px;
+    gap: 4px;
+}
+.qa-owner-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 4px 2px 6px;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    color: var(--txt3);
+}
+.qa-owner-clear {
+    padding: 2px 7px;
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+    background: none;
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    color: var(--txt2);
+    cursor: pointer;
+}
+.qa-owner-clear:hover { color: #fff; border-color: var(--blue); }
+.qa-owner-clear[hidden] { display: none; }
+.qa-owner-find { padding: 5px 8px; font-size: 11px; }
+.qa-owner-list {
+    display: flex;
+    flex-direction: column;
+    max-height: min(300px, calc(100vh / var(--ui-zoom, 1) - 220px));
+    min-height: 40px;
+    overflow-y: auto;
+}
+.qa-owner-item {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    background: none;
+    border: none;
+    border-radius: 7px;
+    font-family: inherit;
+    font-size: 11.5px;
+    color: var(--txt1);
+    text-align: left;
+    cursor: pointer;
+}
+.qa-owner-item:hover { background: rgba(255, 255, 255, .06); }
+.qa-owner-item:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.qa-owner-item.qa-owner-all { border-bottom: 1px solid var(--border); border-radius: 7px 7px 0 0; margin-bottom: 2px; color: var(--txt2); }
+.qa-owner-item.qa-owner-zero .qa-owner-name,
+.qa-owner-item.qa-owner-zero .qa-owner-n { color: var(--txt4); }
+.qa-owner-box {
+    flex-shrink: 0;
+    position: relative;
+    width: 13px;
+    height: 13px;
+    border: 1.5px solid var(--txt3);
+    border-radius: 3px;
+}
+.qa-owner-item.on .qa-owner-box { background: var(--blue); border-color: var(--blue); }
+.qa-owner-item.on .qa-owner-box::after {
+    content: '';
+    position: absolute;
+    left: 3.5px;
+    top: 0.5px;
+    width: 3px;
+    height: 7px;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+/* "All owners" is a choice of one, not a tick among many: a round mark. */
+.qa-owner-item.qa-owner-all .qa-owner-box { border-radius: 50%; }
+.qa-owner-item.qa-owner-all.on .qa-owner-box::after { left: 3px; top: 3px; width: 4px; height: 4px; border: none; border-radius: 50%; background: #fff; transform: none; }
+.qa-owner-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qa-owner-n {
+    flex-shrink: 0;
+    min-width: 20px;
+    padding: 0 6px;
+    font-size: 10px;
+    font-weight: 700;
+    text-align: center;
+    color: var(--txt2);
+    background: rgba(255, 255, 255, .07);
+    border-radius: 999px;
+    font-variant-numeric: tabular-nums;
+}
+.qa-owner-none { padding: 8px; font-size: 11px; color: var(--txt3); }
+
+/* ============================================================
+   THE REVIEWS TAB'S FOLDERS — closed month, then owner
+   ============================================================ */
+.qa-rev-order { flex-wrap: wrap; row-gap: 6px; }
+.qa-rev-sortlab { font-size: 10.5px; color: var(--txt3); flex-shrink: 0; }
+.oc-sort.qa-rev-sort { max-width: 60%; }
+.qa-rev-fold { display: inline-flex; gap: 4px; margin-left: auto; }
+.qa-rev-foldbtn {
+    padding: 4px 9px;
+    font-family: inherit;
+    font-size: 10.5px;
+    font-weight: 600;
+    background: none;
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    color: var(--txt2);
+    cursor: pointer;
+}
+.qa-rev-foldbtn:hover { color: #fff; border-color: rgba(129, 140, 248, .6); }
+
+.qa-fold { flex-shrink: 0; display: flex; flex-direction: column; }
+.qa-fold-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 9px 10px;
+    font-family: inherit;
+    text-align: left;
+    background: var(--bg1);
+    border: 1px solid var(--border2);
+    border-radius: var(--r8);
+    color: var(--txt1);
+    cursor: pointer;
+    user-select: none;
+    transition: background .15s ease, border-color .15s ease;
+}
+.qa-fold-head:hover { background: var(--bg2); border-color: rgba(129, 140, 248, .45); }
+.qa-fold-head:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.qa-fold-chev { flex-shrink: 0; width: 10px; font-size: 10px; color: var(--txt3); transition: transform .15s ease; }
+.qa-fold.open > .qa-fold-head .qa-fold-chev { transform: rotate(90deg); }
+.qa-fold-icon { flex-shrink: 0; display: inline-flex; color: var(--blue2); }
+.qa-fold-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.qa-fold-meta { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; color: var(--txt3); }
+.qa-fold-avg { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; }
+.qa-fold-avglab { font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--txt3); }
+.qa-fold-avg .qa-score { min-width: 30px; text-align: center; font-size: 10.5px; }
+
+/* The month: the bigger of the two, and the one the eye scans down. */
+.qa-fold-month > .qa-fold-head { font-size: 12.5px; }
+.qa-fold-month.open > .qa-fold-head { border-color: rgba(129, 140, 248, .5); background: rgba(99, 102, 241, .10); }
+.qa-fold-month > .qa-fold-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 4px 0 6px 10px;
+    padding-left: 10px;
+    border-left: 2px solid rgba(129, 140, 248, .25);
+}
+/* The owner: one step in, one step quieter. */
+.qa-fold-owner > .qa-fold-head { padding: 7px 10px; font-size: 11.5px; background: rgba(255, 255, 255, .02); border-color: var(--border); }
+.qa-fold-owner > .qa-fold-head .qa-fold-icon { color: var(--txt2); }
+.qa-fold-owner.open > .qa-fold-head { border-color: var(--border2); background: rgba(255, 255, 255, .04); }
+.qa-fold-owner > .qa-fold-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 4px 0 4px 10px;
+}
+.qa-fold-body[hidden] { display: none !important; }
+.qa-fold-note { padding: 2px 2px 4px; font-size: 10.5px; line-height: 1.45; color: var(--txt3); }
+
+/* Inside an owner's folder the folder already says whose case it is. */
+.qa-fold-owner .qa-rev-agent { display: none; }
+.qa-rev-closed { flex-shrink: 0; font-size: 10px; color: var(--txt3); white-space: nowrap; }
+
+/* ============================================================
+   A NEW RELEASE IS READY IN THE SHARED FOLDER — the analyser's bar
+   ============================================================
+   Under the red integrity strip, in the panel's blue. See UPDATES in qa-panel.js. */
+.update-banner { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 12px;
+    background: rgba(99, 102, 241, .12); border-bottom: 1px solid rgba(129, 140, 248, .40); font-size: 11px; color: #c7d2fe; }
+.update-banner[hidden] { display: none; }
+.update-banner-tag { flex-shrink: 0; font-size: 9.5px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase; color: #a5b4fc; }
+.update-banner-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.4; font-weight: 600; }
+.update-banner-go { flex-shrink: 0; padding: 3px 10px; border: 1px solid rgba(129, 140, 248, .6); border-radius: 6px;
+    background: rgba(99, 102, 241, .28); color: #fff; font-family: inherit; font-size: 10.5px; font-weight: 700; cursor: pointer; }
+.update-banner-go:hover { background: rgba(99, 102, 241, .45); }
+.update-banner-go:disabled { opacity: .6; cursor: default; }
+.update-banner-x { flex-shrink: 0; width: 22px; height: 22px; border: none; border-radius: 6px; background: none; color: #c7d2fe;
+    font-size: 14px; line-height: 1; cursor: pointer; }
+.update-banner-x:hover { background: rgba(255, 255, 255, .08); color: #fff; }

@@ -84,7 +84,9 @@
          * from one they were never offered — see loadColumnPrefs), and the dragged widths. */
         columns: 'qa_columns',
         columnsSeen: 'qa_columns_seen',
-        colWidths: 'qa_col_widths'
+        colWidths: 'qa_col_widths',
+        // Which month and owner folders are open on the Reviews tab — see REV_OPEN.
+        revFolders: 'qa_rev_folders'
     };
 
     /* THE TEAM, as the coaching sheet has it. A default, not a fixture: it is
@@ -115,6 +117,9 @@
     let ONLY_JIRA = false;
     // "★ Focus" — the cases that need action now. Computed, never curated; see needsAction.
     let ONLY_FOCUS = false;
+    /* THE OWNERS PICKED IN THE OWNER DROPDOWN — ownerKey()s, empty for everyone. Not persisted,
+     * for TIER's reason; the button says who is picked, so the filter is never invisible. */
+    let OWNERS = new Set();
 
     /* THE CHAT, AND WHAT IT STANDS ON.
      *
@@ -719,7 +724,7 @@
     async function boot() {
         const got = await load([K.cases, K.reviews, K.coaching, K.rules, K.roster, K.lastList,
                                 K.lists, K.month, K.chats, K.context,
-                                K.columns, K.columnsSeen, K.colWidths]);
+                                K.columns, K.columnsSeen, K.colWidths, K.revFolders]);
         if (got[K.cases] && Array.isArray(got[K.cases].cases)) CASES = got[K.cases];
         if (Array.isArray(got[K.reviews])) REVIEWS = got[K.reviews];
         if (Array.isArray(got[K.coaching])) COACHING = got[K.coaching];
@@ -731,6 +736,7 @@
         SHEET_MONTH = got[K.month] || defaultMonth();
         if (got[K.chats] && typeof got[K.chats] === 'object') CHATS = got[K.chats];
         if (got[K.context] && typeof got[K.context] === 'object') CONTEXT = got[K.context];
+        if (Array.isArray(got[K.revFolders])) REV_OPEN = new Set(got[K.revFolders].map(String));
         // Before the first render, so the queue is drawn in the reviewer's own layout rather
         // than drawn in the default and then rearranged under them.
         loadColumnPrefs(got);
@@ -784,6 +790,7 @@
         renderQaColumns();
         renderAll();
         paintIntegrity();
+        wireUpdates();
         paintTermsLine();
         // The terms first, then — once the panel is on screen, and only when Chrome has not
         // given it Copilot yet — the Copilot connection.
@@ -884,7 +891,7 @@
         // A code file added to the folder that the signature does not cover is a change too.
         for (const file of ['QA_Tool.html', 'manifest.json', 'qa-panel.js', 'qa-engine.js', 'ai-provider.js', 'copilot-bridge.js',
                             'background.js', 'content.js', 'case-reader.js', 'reader-wake.js', 'display-size.js', 'backup.js',
-                            'styles.css', 'qa-styles.css']) {
+                            'updater.js', 'styles.css', 'qa-styles.css']) {
             if (!(file in rec.files)) changed.push(file);
         }
         return { status: changed.length ? 'modified' : 'verified', changed, build: rec.build };
@@ -915,6 +922,130 @@
         }
         if (bad) console.warn(`[QA Tool] integrity: ${r.status}`, r.changed);
         return r;
+    }
+
+    /* ---------------------------------------------------------------------
+     * UPDATES FROM THE SHARED FOLDER — the analyser's (Global 1.3.2); see updater.js
+     * ---------------------------------------------------------------------
+     * The background finds a complete, signed release in the extension's own folder (OneDrive
+     * brings it down from the shared folder this copy was loaded from) and restarts onto it when
+     * the panel is closed. While the panel is OPEN it is never pulled from under the reviewer: a
+     * bar says "Version X is ready — Restart now". It restarts by itself only when the panel has
+     * been out of sight for ten minutes with nothing running. Everything this tool keeps is
+     * written to storage as it changes, so a restart loses nothing but a run in progress — which
+     * is why a run, a sync, a chat answer or the coaching build holds it off. After the restart,
+     * the panel says what it was updated to.
+     * ------------------------------------------------------------------- */
+    const UPD = { ready: null, dismissed: '', hiddenSince: 0, restarting: false };
+
+    // Something is running that a restart would cut off.
+    function updPanelBusy() {
+        const sync = $('btnSyncCaseList');
+        return !!(RUN.active || RUN.coaching || CHAT_BUSY || (sync && sync.disabled));
+    }
+
+    function paintUpdateBanner() {
+        const bar = $('updateBanner');
+        if (!bar) return;
+        const show = !!(UPD.ready && UPD.ready.to !== UPD.dismissed);
+        bar.hidden = !show;
+        if (!show) return;
+        const short = (v) => String(v || '').split(' ')[0];
+        $('updateBannerTitle').textContent = `Version ${short(UPD.ready.to)} is ready. Restarting takes a second, and your reviews are kept.`;
+        $('updateBannerTitle').title = `Installed: ${UPD.ready.from}. New: ${UPD.ready.to}. Restart now, or it is applied by itself when the panel is closed.`;
+    }
+
+    async function updRestartNow(auto) {
+        if (UPD.restarting || !window.QaUpdater) return;
+        if (!auto && updPanelBusy()) {
+            const ok = await confirmAsk('Restart in the middle of this?',
+                'Something is still running — a QA run, a sync or an answer being written. Restarting now stops it; '
+                + 'reviews already finished are kept. Or press × and it updates by itself once the panel is closed.',
+                'Restart now');
+            if (!ok) return;
+        }
+        UPD.restarting = true;
+        const go = $('updateBannerGo');
+        if (go) { go.disabled = true; go.textContent = 'Restarting…'; }
+        try {
+            // A version the browser has downloaded (installed by IT policy): restarting is what applies it.
+            if (UPD.ready && UPD.ready.crx) { await window.QaUpdater.apply(UPD.ready); return; }
+            // Checked again at the moment of restarting: the folder may have changed since.
+            const r = await window.QaUpdater.check();
+            if (r.state !== 'ready') {
+                UPD.ready = null;
+                paintUpdateBanner();
+                if (!auto) toast('The update is not ready yet — it is still arriving. It is applied by itself when it is.', 'i', 6000);
+                return;
+            }
+            await window.QaUpdater.apply(r);
+        } catch (e) {
+            console.warn('[QA Tool] update restart failed', e);
+        } finally {
+            UPD.restarting = false;
+            if (go) { go.disabled = false; go.textContent = 'Restart now'; }
+        }
+    }
+
+    function updShowReady(info) {
+        if (!info || !info.to) return;
+        const isNew = !UPD.ready || UPD.ready.to !== info.to;
+        UPD.ready = { from: info.from, to: info.to, crx: !!info.crx };
+        paintUpdateBanner();
+        if (isNew) console.log(`[QA Tool] ${info.to} is ready in the shared folder (installed: ${info.from}).`);
+    }
+
+    function wireUpdates() {
+        if (!isExt() || !window.QaUpdater) return;
+        if ($('updateBannerGo')) $('updateBannerGo').onclick = () => updRestartNow(false);
+        if ($('updateBannerLater')) $('updateBannerLater').onclick = () => {
+            UPD.dismissed = (UPD.ready && UPD.ready.to) || '';
+            paintUpdateBanner();
+            toast('OK — the update is applied by itself when you close the panel.', 'i', 5000);
+        };
+        try {
+            chrome.runtime.onMessage.addListener((m) => {
+                if (m && m.type === 'QA_UPDATE_READY') updShowReady(m);
+            });
+        } catch (e) { /* the background tells nobody — the panel's own look below still finds it */ }
+
+        // The panel's own look, once it has settled — so a release that arrived while it was closed shows at once.
+        setTimeout(async () => {
+            try {
+                const pend = ((await chrome.storage.session.get('qa_update_crx_pending')) || {}).qa_update_crx_pending;
+                if (pend && pend.to) { updShowReady(pend); return; }
+            } catch (e) { /* none waiting */ }
+            try { const r = await window.QaUpdater.check(); if (r.state === 'ready') updShowReady(r); } catch (e) { /* the background looks too */ }
+        }, 15000);
+
+        // Out of sight for ten minutes with nothing running: restart onto it then.
+        document.addEventListener('visibilitychange', () => {
+            UPD.hiddenSince = document.visibilityState === 'hidden' ? Date.now() : 0;
+        });
+        setInterval(() => {
+            if (!UPD.ready || UPD.restarting) return;
+            if (document.visibilityState === 'hidden' && UPD.hiddenSince && Date.now() - UPD.hiddenSince >= 10 * 60000 && !updPanelBusy()) {
+                updRestartNow(true);
+            }
+        }, 60000);
+
+        /* "Updated to …" — once, the first time the panel opens on a new version, however it got
+         * there: a release in the shared folder, an IT-policy update, or a browser restart. */
+        try {
+            const SEEN_KEY = 'qa_version_seen';
+            chrome.storage.local.get([window.QaUpdater.APPLIED_KEY, SEEN_KEY]).then((got) => {
+                const m = chrome.runtime.getManifest();
+                const running = String(m.version_name || m.version);
+                const note = got && got[window.QaUpdater.APPLIED_KEY];
+                // The version seen last, or — on a panel never opened before — the one a restart note names.
+                const prev = (got && got[SEEN_KEY]) || (note && Date.now() - (note.at || 0) < 3 * 86400000 ? note.from : '');
+                chrome.storage.local.set({ [SEEN_KEY]: running });
+                if (note) chrome.storage.local.remove(window.QaUpdater.APPLIED_KEY);
+                if (!prev || prev === running) return;
+                const short = (v) => String(v || '').split(' ')[0];
+                setTimeout(() => toast(`Updated to version ${short(running)} (from ${short(prev)}). Everything you had is still here.`, 's', 7000), 2500);
+            }).catch(() => {});
+        } catch (e) { /* nothing to say */ }
     }
 
     function wireTerms() {
@@ -1266,8 +1397,8 @@
          * before the case number and a chat button after the last cell, neither of which that
          * list carries, and both of which come out of the subject. Squeezed into a narrow
          * side panel this is the first column worth turning off — its job is already done
-         * twice above the list, by a search box that matches the owner and the alias and by a
-         * dropdown that filters to one person by name. */
+         * twice above the list, by a search box that matches the owner and the alias and by the
+         * owner dropdown, which filters to the people ticked in it. */
         { key: 'owner',       head: 'Owner',     label: 'Case owner',                               on: true  },
         { key: 'status',      head: 'Status',    label: 'Case status',                              on: false },
         { key: 'account',     head: 'Account',   label: 'Account name',                             on: false },
@@ -1737,6 +1868,210 @@
         }
     }
 
+    /* ---------------------------------------------------------------------
+     * THE OWNER DROPDOWN — whose cases are on screen
+     * ---------------------------------------------------------------------
+     * It lists the people who own the cases LOADED NOW, and nobody else: sync Robert's, Daiva's
+     * and Callum's cases and those are the three names in it. Tick one to see only their cases,
+     * tick several to see them together; with none ticked every case shows. It works with every
+     * other filter rather than instead of one — the tier chips, the search box and Select all
+     * all act on what it leaves on screen, and their counts follow it.
+     *
+     * The owner is the name the Owner column shows: the Case Owner, or whoever last modified the
+     * case when the list carries no owner column. Two spellings that differ only in case or
+     * spacing are one person. A case with neither is listed as "No owner listed", so a list
+     * filtered by owner can still reach it.
+     * ------------------------------------------------------------------- */
+    const NO_OWNER = '';
+    function ownerOf(rec) {
+        return String((rec && (rec.owner || rec.lastModifiedBy)) || '').replace(/\s+/g, ' ').trim();
+    }
+    function ownerKey(rec) { return ownerOf(rec).toLowerCase(); }
+
+    // Every owner among the loaded cases, A to Z with "No owner listed" last: [{ key, name, total }].
+    function ownerNames() {
+        const map = new Map();
+        for (const rec of CASES.cases || []) {
+            const key = ownerKey(rec);
+            const had = map.get(key);
+            if (had) had.total++;
+            else map.set(key, { key, name: key === NO_OWNER ? 'No owner listed' : ownerOf(rec), total: 1 });
+        }
+        return [...map.values()].sort((a, b) => (a.key === NO_OWNER) - (b.key === NO_OWNER)
+            || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    }
+
+    function ownerMenuOpen() {
+        const m = $('ocOwnerMenu');
+        return !!m && m.style.display !== 'none';
+    }
+    function closeOwnerMenu() {
+        const m = $('ocOwnerMenu');
+        if (!m || m.style.display === 'none') return;
+        m.style.display = 'none';
+        const btn = $('ocOwnerBtn');
+        if (btn) btn.setAttribute('aria-expanded', 'false');
+    }
+    function openOwnerMenu() {
+        const m = $('ocOwnerMenu');
+        const btn = $('ocOwnerBtn');
+        if (!m || !btn) return;
+        closeToolbarMenus();
+        closeMenu();
+        m.style.display = '';
+        btn.setAttribute('aria-expanded', 'true');
+        const find = $('ocOwnerFind');
+        if (find) find.value = '';
+        renderOwnerPicker();
+        // Kept inside the panel: the button sits at the right-hand end of the chip line, so a
+        // menu hung off its left edge would run off the side.
+        m.style.left = '';
+        m.style.right = '0';
+        const box = m.getBoundingClientRect();
+        if (box.left < 8) { m.style.right = ''; m.style.left = '0'; }
+        if (find && find.offsetParent) try { find.focus({ preventScroll: true }); } catch (e) { /* not focusable yet */ }
+    }
+
+    function toggleOwner(key) {
+        if (OWNERS.has(key)) OWNERS.delete(key); else OWNERS.add(key);
+        renderCases();
+    }
+
+    /* THE BUTTON, AND — WHILE IT IS OPEN — THE LIST UNDER IT.
+     *
+     * Each name carries the number of its cases the list would show with every OTHER filter as
+     * it is, the chips' rule: it answers "how many would I see if I ticked this". A picked owner
+     * whose cases have all gone with a re-sync is let go here, so the queue is never filtered by
+     * a name that is no longer in the dropdown to untick. */
+    function renderOwnerPicker() {
+        const wrap = $('ocOwnerWrap');
+        if (!wrap) return;
+        const owners = ownerNames();
+        const present = new Set(owners.map(o => o.key));
+        for (const k of [...OWNERS]) if (!present.has(k)) OWNERS.delete(k);
+        wrap.style.display = owners.length ? '' : 'none';
+        if (!owners.length) { closeOwnerMenu(); return; }
+
+        const picked = owners.filter(o => OWNERS.has(o.key));
+        const label = $('ocOwnerLabel');
+        const btn = $('ocOwnerBtn');
+        if (label) {
+            label.textContent = !picked.length ? 'All owners'
+                : picked.length === 1 ? picked[0].name
+                : `${picked.length} owners`;
+        }
+        if (btn) {
+            btn.classList.toggle('active', picked.length > 0);
+            btn.title = picked.length
+                ? `Showing the cases of ${picked.map(o => o.name).join(', ')}. Click to change who is picked.`
+                : `Show only the cases of the owners you pick — tick one or several. ${owners.length} owner${owners.length === 1 ? '' : 's'} in this list.`;
+        }
+        if (!ownerMenuOpen()) return;
+
+        const head = $('ocOwnerHead');
+        if (head) head.textContent = picked.length
+            ? `${picked.length} of ${owners.length} owner${owners.length === 1 ? '' : 's'} picked`
+            : `${owners.length} owner${owners.length === 1 ? '' : 's'} in this list`;
+        const clear = $('ocOwnerClear');
+        if (clear) clear.hidden = !picked.length;
+        const find = $('ocOwnerFind');
+        // The find box only earns its line once the list is long enough to need finding in.
+        if (find) find.style.display = owners.length > 8 ? '' : 'none';
+        const q = find && owners.length > 8 ? find.value.trim().toLowerCase() : '';
+
+        const counts = new Map();
+        for (const rec of visibleCases({ ignoreOwner: true })) {
+            const k = ownerKey(rec);
+            counts.set(k, (counts.get(k) || 0) + 1);
+        }
+
+        const list = $('ocOwnerList');
+        if (!list) return;
+        const keepScroll = list.scrollTop;
+        // The list is rebuilt under the click that ticked a name, so the focus is put back on
+        // that name afterwards — otherwise the keyboard loses its place on every tick.
+        const had = document.activeElement;
+        const keepFocus = had && list.contains(had) ? had.dataset.key : null;
+        list.textContent = '';
+        const row = (key, name, count, on, extra) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'qa-owner-item' + (on ? ' on' : '') + (extra || '');
+            b.dataset.key = key;
+            b.setAttribute('role', 'option');
+            b.setAttribute('aria-selected', on ? 'true' : 'false');
+            const box = document.createElement('span');
+            box.className = 'qa-owner-box';
+            box.setAttribute('aria-hidden', 'true');
+            const nm = document.createElement('span');
+            nm.className = 'qa-owner-name';
+            nm.textContent = name;
+            nm.title = name;
+            const n = document.createElement('span');
+            n.className = 'qa-owner-n';
+            n.textContent = String(count);
+            b.append(box, nm, n);
+            return b;
+        };
+
+        if (!q) {
+            const all = row('*', 'All owners', visibleCases({ ignoreOwner: true }).length, !picked.length, ' qa-owner-all');
+            all.title = 'Every owner\'s cases — clears the ticks below';
+            all.onclick = (e) => { e.stopPropagation(); OWNERS.clear(); renderCases(); };
+            list.appendChild(all);
+        }
+        const shown = owners.filter(o => !q || o.name.toLowerCase().includes(q));
+        for (const o of shown) {
+            const count = counts.get(o.key) || 0;
+            const b = row(o.key, o.name, count, OWNERS.has(o.key), count ? '' : ' qa-owner-zero');
+            b.title = count === o.total
+                ? `${o.name} — ${o.total} case${o.total === 1 ? '' : 's'}`
+                : `${o.name} — ${count} of their ${o.total} case${o.total === 1 ? '' : 's'} pass the other filters`;
+            b.onclick = (e) => { e.stopPropagation(); toggleOwner(o.key); };
+            list.appendChild(b);
+        }
+        if (!shown.length) {
+            const none = document.createElement('div');
+            none.className = 'qa-owner-none';
+            none.textContent = 'No owner matches that.';
+            list.appendChild(none);
+        }
+        list.scrollTop = keepScroll;
+        if (keepFocus !== null) {
+            const again = [...list.querySelectorAll('.qa-owner-item')].find(x => x.dataset.key === keepFocus);
+            if (again) try { again.focus({ preventScroll: true }); } catch (e) { /* not focusable */ }
+        }
+    }
+
+    function wireOwnerPicker() {
+        const btn = $('ocOwnerBtn');
+        const menu = $('ocOwnerMenu');
+        if (!btn || !menu) return;
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            if (ownerMenuOpen()) closeOwnerMenu(); else openOwnerMenu();
+        };
+        // A click inside the menu is not a click outside it — see the document handler in wire().
+        menu.addEventListener('click', (e) => e.stopPropagation());
+        $('ocOwnerClear').onclick = () => { OWNERS.clear(); renderCases(); };
+        $('ocOwnerFind').oninput = () => renderOwnerPicker();
+        menu.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                const find = $('ocOwnerFind');
+                if (find && find.value) { find.value = ''; renderOwnerPicker(); return; }
+                closeOwnerMenu();
+                try { btn.focus({ preventScroll: true }); } catch (err) { /* gone */ }
+            } else if (e.key === 'Enter' && e.target === $('ocOwnerFind')) {
+                // Enter in the find box ticks the one name it has narrowed the list to.
+                e.preventDefault();
+                const items = [...$('ocOwnerList').querySelectorAll('.qa-owner-item:not(.qa-owner-all)')];
+                if (items.length === 1) items[0].click();
+            }
+        });
+    }
+
     /* ONE COLUMN'S CELL ON ONE ROW.
      *
      * Every branch draws a cell even when the value is missing, and that is the point: a
@@ -1930,8 +2265,8 @@
      * one alternative must appear somewhere on the row, in any order — "linde enrol" finds the
      * Linde enrolment case. A term that names somebody who owns cases in this queue is matched
      * against the OWNER only, as whole words, so "Tom" finds Tom's cases and not every subject
-     * with "customer" in it. That is the by-owner workflow now: the dropdown that sat above the
-     * list is gone with the analyser's, which found the box did the same job a row lower. */
+     * with "customer" in it. The owner dropdown at the end of the chip line does the same job by
+     * picking names off a list rather than typing them — see renderOwnerPicker. */
     function searchTerms(q) {
         return String(q || '').toLowerCase().split(/[,;]+/).map(t => t.trim()).filter(Boolean);
     }
@@ -1966,12 +2301,16 @@
         const ignoreTier = !!(opts && opts.ignoreTier);
         const ignoreJira = !!(opts && opts.ignoreJira);
         const ignoreFocus = !!(opts && opts.ignoreFocus);
+        const ignoreOwner = !!(opts && opts.ignoreOwner);
         const terms = searchTerms($('ocSearch').value);
         const sort = $('ocSort').value || 'age-desc';
         const all = CASES.cases;
         const ownerTerms = new Set(terms.filter(t => all.some(c => nameHit(ownerWords(c), t))));
 
         let list = all.filter(c => matchesSearch(c, terms, ownerTerms));
+        if (!ignoreOwner && OWNERS.size) {
+            list = list.filter(c => OWNERS.has(ownerKey(c)));
+        }
         if (!ignoreTier && TIER !== 'all') {
             list = list.filter(c => entitlementTier(c.entitlement).key === TIER);
         }
@@ -2011,6 +2350,7 @@
         // screen is marked, the tier chips and the heading strip are built from what the sync
         // returned, and the Sync button's title carries the count and the age.
         renderLists();
+        renderOwnerPicker();
         renderTierChips();
         renderQaColumnHeader();
         paintSyncLabel();
@@ -2039,6 +2379,10 @@
             const q = ($('ocSearch').value || '').trim();
             const terms = searchTerms(q);
             if (q) active.push(terms.length > 1 ? `matching any of “${terms.join('”, “')}”` : `matching “${q}”`);
+            if (OWNERS.size) {
+                const names = ownerNames().filter(o => OWNERS.has(o.key)).map(o => o.name);
+                active.push(names.length === 1 ? `owned by ${names[0]}` : `owned by the ${names.length} owners picked`);
+            }
             if (TIER !== 'all') active.push('in that tier');
             if (ONLY_JIRA) active.push('with a JIRA');
             if (ONLY_FOCUS) active.push('needing action');
@@ -2432,6 +2776,7 @@
             const m = $(id);
             if (m) m.style.display = 'none';
         }
+        closeOwnerMenu();
     }
 
     /* TAKE CASES OFF THE QUEUE — one from its ×, or the ticked ones from the bin. Asked first,
@@ -2591,7 +2936,12 @@
      * another name keeps theirs and is not given a second chip. */
     const DEFAULT_LISTS = [
         { id: 'ql-agent-cases', name: 'Agent Cases',
-          url: 'https://soti.lightning.force.com/lightning/r/Report/00OOF000003bijV2AQ/view?queryScope=userFolders' }
+          url: 'https://soti.lightning.force.com/lightning/r/Report/00OOF000003bijV2AQ/view?queryScope=userFolders' },
+        /* EVERY CASE CLOSED IN EMEA — the list to QA closed work from. Its closed date is what
+         * files each review under its month on the Reviews tab, and the owner dropdown narrows
+         * it to the people being reviewed. Second, so a first Sync still opens Agent Cases. */
+        { id: 'ql-emea-closed', name: 'EMEA Closed Cases',
+          url: 'https://soti.lightning.force.com/lightning/r/Report/00OOF000003c2K12AI/view?queryScope=userFolders' }
     ];
     async function offerDefaultLists() {
         if (!isExt()) return;
@@ -2599,13 +2949,22 @@
             const got = await load([K.listsOffered]);
             const offered = Array.isArray(got[K.listsOffered]) ? got[K.listsOffered] : [];
             let changed = false;
+            const added = [];
             for (const d of DEFAULT_LISTS) {
                 if (offered.includes(d.id)) continue;
                 offered.push(d.id);
                 if (!LISTS.some(l => l.id === d.id || sameList(l.url, d.url))) {
-                    LISTS.unshift({ id: d.id, name: d.name, url: d.url, at: Date.now() });
+                    added.push({ id: d.id, name: d.name, url: d.url, at: Date.now() });
                 }
                 changed = true;
+            }
+            /* In front of the reviewer's own lists, and in THIS order — Agent Cases first, because
+             * a Sync that has never run opens the first list in Current View. A reviewer who has
+             * already been given Agent Cases gets the new one put just after it. */
+            if (added.length) {
+                const after = LISTS.findIndex(l => l.id === 'ql-agent-cases');
+                if (after >= 0 && !added.some(a => a.id === 'ql-agent-cases')) LISTS.splice(after + 1, 0, ...added);
+                else LISTS.unshift(...added);
             }
             if (changed) await store({ [K.lists]: LISTS, [K.listsOffered]: offered });
         } catch (e) { /* offered next start */ }
@@ -3116,7 +3475,18 @@
         set('contact', data.contactName);
         set('jira', data.jiraNumber);
         set('ageDays', data.caseAge);
+        // The closing instant, when the record shows one — see closedAtOf.
+        if (data.qaClosed && data.qaClosed.at) { rec.closedAt = data.qaClosed.at; rec.closed = data.qaClosed.raw || ''; }
         if (!rec.url && data.caseUrl) set('url', data.caseUrl);
+    }
+
+    /* WHEN THE CASE CLOSED, as far as anything this tool has read can say — the record itself
+     * first (read during the run), then the list or report it was synced from. null for a case
+     * that is still open, and for one whose layout and list carry no closed date. */
+    function closedAtOf(rec, data) {
+        const read = data && data.qaClosed && data.qaClosed.at;
+        const n = Number(read || (rec && rec.closedAt));
+        return Number.isFinite(n) && n > 0 ? n : null;
     }
 
     /* ---------------------------------------------------------------------
@@ -3585,6 +3955,8 @@
             subject: data.subject || rec.subject || '',
             account: data.accountName || rec.account || '',
             status: data.caseStatus || rec.status || '',
+            // What files this review under its month on the Reviews tab — see closedBucketOf.
+            closedAt: closedAtOf(rec, data),
             agent: agentOf(rec, data),
             url: urlOf(rec) || data.caseUrl || '',
             milestone: metrics.milestone,
@@ -3707,6 +4079,8 @@
             caseNum: rec.caseNum || keyOf(rec),
             subject: rec.subject || '',
             account: rec.account || '',
+            status: rec.status || '',
+            closedAt: closedAtOf(rec, null),
             agent: agentOf(rec, null),
             url: urlOf(rec),
             fields: {},
@@ -4522,6 +4896,8 @@
 
         const q = ($('revSearch').value || '').trim().toLowerCase();
         const filter = $('revFilter').value || '';
+        const order = $('revOrder');
+        if (order) order.style.display = REVIEWS.length ? '' : 'none';
         let shown = REVIEWS.slice().sort((a, b) => b.at - a.at);
         if (filter === 'qa') shown = shown.filter(r => r.kind === 'qa' && !incomplete(r));
         if (filter === 'milestone') shown = shown.filter(r => r.kind === '306090');
@@ -4582,10 +4958,256 @@
             list.appendChild(hint);
             return;
         }
-        for (const r of shown) list.appendChild(reviewCard(r));
+        renderReviewFolders(list, shown, !!(q || filter));
     }
 
-    function reviewCard(r) {
+    /* ---------------------------------------------------------------------
+     * THE REVIEWS, IN FOLDERS — the month the case closed, then its owner
+     * ---------------------------------------------------------------------
+     * A month folder holds every review of a case that closed in that month, and carries the
+     * AVERAGE SCORE of all of them. Inside it, one folder per owner with that owner's own
+     * average, and inside that, the review cards. So "how did October go" and "how did Robert
+     * do in October" are each one look, not a calculation.
+     *
+     * WHERE THE CLOSING MONTH COMES FROM, best first: the Date/Time Closed read off the case
+     * itself when it was reviewed; then the closed date on the list or report the case was last
+     * synced from (a report of closed cases carries one — sync it and older reviews move into
+     * their months). A case with neither is either still open — its status says so — and sits
+     * under "Not closed yet", or it is filed under "Closed month not known".
+     *
+     * The average counts the written-up QA reviews that have a score. A 30/60/90 analysis and an
+     * incomplete review sit in the folder with everything else but are not scored, and the
+     * count beside the average says how many it is the average of.
+     * ------------------------------------------------------------------- */
+    // The folders that are open: 'm:2026-10', 'open', 'unknown', and '<bucket>|<owner>' for an
+    // owner inside one. null until the reviewer first opens or closes one — the newest is then
+    // open by default. Kept in storage: it is how the reviewer left the tab.
+    let REV_OPEN = null;
+
+    const CLOSED_STATUS_RE = /\bclosed\b/i;
+
+    function closedBucketOf(r, rec) {
+        const at = Number(r.closedAt) || Number(rec && rec.closedAt) || 0;
+        if (at > 0) {
+            const d = new Date(at);
+            const key = `m:${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            let label = key.slice(2);
+            try { label = d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }); } catch (e) { /* the bare key */ }
+            return { key, label, rank: -(d.getFullYear() * 12 + d.getMonth()) };
+        }
+        /* NO CLOSING DATE. The status says which kind of "no": a list synced after the review is
+         * the fresher word on it, so a case that has closed since moves out of "Not closed yet"
+         * — into its month when that list carries the date, otherwise into "not known". */
+        const fresh = rec && rec.status && CASES.scrapedAt > (r.at || 0);
+        const status = String((fresh && rec.status) || r.status || (rec && rec.status) || '');
+        if (status && !CLOSED_STATUS_RE.test(status)) {
+            return { key: 'open', label: 'Not closed yet', rank: -Infinity,
+                     note: 'These cases were still open — no closing date yet. Once a case closes, a sync from a report of closed cases (or a re-run of its review) files it under its month.' };
+        }
+        return { key: 'unknown', label: 'Closed month not known', rank: Infinity,
+                 note: 'No closing date was read for these — neither the case page nor the list it came from showed Date/Time Closed. '
+                     + 'Sync them from a report of closed cases that has a Closed Date column, or re-run the review, and they move into their month.' };
+    }
+
+    function reviewScore(r) {
+        return r && r.kind === 'qa' && !incomplete(r) && r.score && r.score.value !== null && r.score.value !== undefined
+            ? Number(r.score.value) : null;
+    }
+
+    // { avg, n } over the scored reviews in a folder, or null when none is scored.
+    function averageScore(reviews) {
+        const got = reviews.map(reviewScore).filter(v => v !== null && Number.isFinite(v));
+        if (!got.length) return null;
+        return { avg: Math.round(got.reduce((a, b) => a + b, 0) / got.length), n: got.length };
+    }
+
+    function reviewSortComparator(sort, recOf) {
+        const age = (r) => {
+            const a = E.ageDaysOf(r.metrics && r.metrics.ageDays);
+            if (a !== null) return a;
+            const rec = recOf(r);
+            return rec ? E.ageDaysOf(rec.ageDays) : null;
+        };
+        const closed = (r) => Number(r.closedAt) || Number((recOf(r) || {}).closedAt) || null;
+        const newest = (a, b) => (b.at || 0) - (a.at || 0);
+        const then = (cmp) => (a, b) => cmp(a, b) || newest(a, b);
+        switch (sort) {
+            case 'at-asc':      return then((a, b) => (a.at || 0) - (b.at || 0));
+            case 'score-asc':   return then((a, b) => nullLast(reviewScore(a), reviewScore(b), (x, y) => x - y));
+            case 'score-desc':  return then((a, b) => nullLast(reviewScore(a), reviewScore(b), (x, y) => y - x));
+            case 'age-desc':    return then((a, b) => nullLast(age(a), age(b), (x, y) => y - x));
+            case 'age-asc':     return then((a, b) => nullLast(age(a), age(b), (x, y) => x - y));
+            case 'closed-desc': return then((a, b) => nullLast(closed(a), closed(b), (x, y) => y - x));
+            case 'case':        return then((a, b) => String(a.caseNum || '').localeCompare(String(b.caseNum || ''), undefined, { numeric: true }));
+            default:            return newest;
+        }
+    }
+
+    function saveRevFolders() {
+        return store({ [K.revFolders]: REV_OPEN ? [...REV_OPEN] : [] });
+    }
+
+    // One folder: a header that opens and closes it, and a body built only when it is opened —
+    // a year of reviews is hundreds of cards, and nobody opens every month at once.
+    function revFolder(level, id, title, meta, avg, note, open, build, onToggle) {
+        const fold = document.createElement('div');
+        fold.className = `qa-fold qa-fold-${level}` + (open ? ' open' : '');
+        fold.dataset.id = id;
+
+        const head = document.createElement('button');
+        head.type = 'button';
+        head.className = 'qa-fold-head';
+        head.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (note) head.title = note;
+
+        const chev = document.createElement('span');
+        chev.className = 'qa-fold-chev';
+        chev.setAttribute('aria-hidden', 'true');
+        chev.textContent = '▸';
+        const icon = document.createElement('span');
+        icon.className = 'qa-fold-icon';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.innerHTML = level === 'month'
+            ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>'
+            : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>';
+        const t = document.createElement('span');
+        t.className = 'qa-fold-title';
+        t.textContent = title;
+        const m = document.createElement('span');
+        m.className = 'qa-fold-meta';
+        m.textContent = meta;
+        head.append(chev, icon, t, m);
+
+        const score = document.createElement('span');
+        score.className = 'qa-fold-avg';
+        const lab = document.createElement('span');
+        lab.className = 'qa-fold-avglab';
+        lab.textContent = level === 'month' ? 'Avg score' : 'Avg';
+        const val = document.createElement('span');
+        if (avg) {
+            val.className = 'qa-score band-' + scoreBand({ value: avg.avg });
+            val.textContent = String(avg.avg);
+            score.title = `Average of ${avg.n} scored review${avg.n === 1 ? '' : 's'}`;
+        } else {
+            val.className = 'qa-score';
+            val.textContent = '—';
+            score.title = 'No scored QA review in here yet';
+        }
+        score.append(lab, val);
+        head.appendChild(score);
+
+        const body = document.createElement('div');
+        body.className = 'qa-fold-body';
+        let built = false;
+        const paint = (isOpen) => {
+            fold.classList.toggle('open', isOpen);
+            head.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+            body.hidden = !isOpen;
+            if (isOpen && !built) { built = true; build(body); }
+        };
+        head.onclick = () => {
+            const now = !fold.classList.contains('open');
+            paint(now);
+            onToggle(now);
+        };
+        fold.append(head, body);
+        paint(open);
+        return fold;
+    }
+
+    function renderReviewFolders(list, shown, forced) {
+        const sort = ($('revSort') && $('revSort').value) || 'at-desc';
+        const recByKey = new Map((CASES.cases || []).map(c => [keyOf(c), c]));
+        const recOf = (r) => recByKey.get(r.key) || null;
+        const cmp = reviewSortComparator(sort, recOf);
+        const n = (x, one, many) => `${x} ${x === 1 ? one : (many || one + 's')}`;
+
+        // month → owner → reviews
+        const buckets = new Map();
+        for (const r of shown) {
+            const b = closedBucketOf(r, recOf(r));
+            if (!buckets.has(b.key)) buckets.set(b.key, Object.assign({ reviews: [], owners: new Map() }, b));
+            const bucket = buckets.get(b.key);
+            bucket.reviews.push(r);
+            const name = String(r.agent || '').replace(/\s+/g, ' ').trim() || 'Unassigned';
+            const okey = name.toLowerCase();
+            if (!bucket.owners.has(okey)) bucket.owners.set(okey, { key: okey, name, reviews: [] });
+            bucket.owners.get(okey).reviews.push(r);
+        }
+        const months = [...buckets.values()].sort((a, b) => a.rank - b.rank);
+
+        const isOpen = (id, dflt) => forced || (REV_OPEN ? REV_OPEN.has(id) : dflt);
+        const toggled = (id) => (now) => {
+            if (forced) return;   // a search opens what it found; it does not rewrite the layout
+            if (!REV_OPEN) {
+                // The first press: write the default down first, so it is what the press changes.
+                REV_OPEN = new Set(months.length ? [months[0].key] : []);
+            }
+            if (now) REV_OPEN.add(id); else REV_OPEN.delete(id);
+            saveRevFolders();
+        };
+
+        // The score orders rank the owners by their average; every other order keeps them A to Z.
+        const ownerOrder = (owners) => {
+            const list = [...owners.values()];
+            const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+            if (sort === 'score-asc' || sort === 'score-desc') {
+                const avg = new Map(list.map(o => [o.key, averageScore(o.reviews)]));
+                const v = (o) => (avg.get(o.key) ? avg.get(o.key).avg : null);
+                return list.sort((a, b) => nullLast(v(a), v(b), (x, y) => sort === 'score-asc' ? x - y : y - x) || byName(a, b));
+            }
+            return list.sort(byName);
+        };
+
+        const frag = document.createDocumentFragment();
+        months.forEach((month, i) => {
+            const owners = ownerOrder(month.owners);
+            const meta = `${n(month.reviews.length, 'review')} · ${n(owners.length, 'owner')}`;
+            frag.appendChild(revFolder('month', month.key, month.label, meta, averageScore(month.reviews), month.note,
+                isOpen(month.key, i === 0),
+                (body) => {
+                    if (month.note) {
+                        const why = document.createElement('div');
+                        why.className = 'qa-fold-note';
+                        why.textContent = month.note;
+                        body.appendChild(why);
+                    }
+                    for (const owner of owners) {
+                        const id = `${month.key}|${owner.key}`;
+                        const bad = owner.reviews.filter(incomplete).length;
+                        const ometa = n(owner.reviews.length, 'review') + (bad ? ` · ${bad} incomplete` : '');
+                        body.appendChild(revFolder('owner', id, owner.name, ometa, averageScore(owner.reviews), '',
+                            isOpen(id, false),
+                            (inner) => {
+                                for (const r of owner.reviews.slice().sort(cmp)) inner.appendChild(reviewCard(r, recOf(r)));
+                            },
+                            toggled(id)));
+                    }
+                },
+                toggled(month.key)));
+        });
+        list.appendChild(frag);
+    }
+
+    // Every folder on the tab, open or shut — for Expand all / Collapse all.
+    function setAllRevFolders(open) {
+        if (open) {
+            const recByKey = new Map((CASES.cases || []).map(c => [keyOf(c), c]));
+            const ids = new Set();
+            for (const r of REVIEWS) {
+                const b = closedBucketOf(r, recByKey.get(r.key) || null);
+                ids.add(b.key);
+                ids.add(`${b.key}|${(String(r.agent || '').replace(/\s+/g, ' ').trim() || 'Unassigned').toLowerCase()}`);
+            }
+            REV_OPEN = ids;
+        } else {
+            REV_OPEN = new Set();
+        }
+        saveRevFolders();
+        renderReviews();
+    }
+
+    function reviewCard(r, rec) {
         const card = document.createElement('div');
         card.className = 'qa-rev';
         card.dataset.id = r.id;
@@ -4617,6 +5239,16 @@
         who.className = 'qa-rev-agent';
         who.textContent = r.agent || '';
         head.appendChild(who);
+
+        // When it closed — the date its month folder was chosen by.
+        const closedAt = Number(r.closedAt) || Number(rec && rec.closedAt) || 0;
+        if (closedAt) {
+            const c = document.createElement('span');
+            c.className = 'qa-rev-closed';
+            c.textContent = 'Closed ' + E.fmtDate(closedAt);
+            c.title = `Closed ${E.fmtDateTime(closedAt)}`;
+            head.appendChild(c);
+        }
 
         if (incomplete(r)) {
             // Not a score: a review that did not come back has nothing to score — see the
@@ -5356,6 +5988,7 @@
         $('btnAddByUrl').onclick = () => { closeToolbarMenus(); addByUrl(); };
         $('btnAddList').onclick = () => { closeToolbarMenus(); addListByUrl(); };
         document.addEventListener('click', () => { closeToolbarMenus(); closeMenu(); });
+        wireOwnerPicker();
 
         $('ocSearch').oninput = () => { renderCases(); };
         $('ocSearch').onkeydown = (e) => {
@@ -5424,6 +6057,7 @@
          * never while something is being typed or a question is open. */
         document.addEventListener('keydown', (e) => {
             if (VIEW !== 'cases' || document.querySelector('.qa-modal-back') || copilotSetupOpen()) return;
+            if (e.key === 'Escape' && ownerMenuOpen()) { e.preventDefault(); closeOwnerMenu(); return; }
             const t = e.target;
             const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
             if (e.key === 'Escape' && SELECTING && !typing) { e.preventDefault(); setSelecting(false); return; }
@@ -5467,6 +6101,9 @@
 
         $('revSearch').oninput = renderReviews;
         $('revFilter').onchange = renderReviews;
+        $('revSort').onchange = renderReviews;
+        $('revExpand').onclick = () => setAllRevFolders(true);
+        $('revCollapse').onclick = () => setAllRevFolders(false);
         $('btnDeleteReviews').onclick = async () => {
             if (RUN.active) { toast('Wait for the run to finish — it is writing into this list.', 'w'); return; }
             let ids = [];
@@ -5674,7 +6311,7 @@
         let quietUntil = 0;
         const busy = () => {
             const menu = $('ocAddMenu');
-            return (menu && menu.style.display !== 'none') || !!$('qaMenu');
+            return (menu && menu.style.display !== 'none') || ownerMenuOpen() || !!$('qaMenu');
         };
         const setFolded = (fold) => {
             if (fold === top.classList.contains('oc-top-hidden')) return;

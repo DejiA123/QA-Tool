@@ -10,6 +10,33 @@ other's settings, cases or reviews.
 
 ---
 
+## What's new in 3.1.0
+
+* **An owner dropdown on the Cases tab.** At the end of the tier chips' line, **All owners ▾**
+  lists only the people whose cases are loaded — sync Robert's, Daiva's and Callum's cases and
+  those are the three names in it, each with how many cases they have. Tick one to see only their
+  cases, tick several to see them together, **Clear** (or *All owners*) to see everyone again.
+  The tier chips, the search box, **Select all** and **QA selected** all work on what it leaves
+  on screen. With more than eight owners a *Find an owner…* box appears at the top of the list.
+* **The Reviews tab is filed in folders: the month the case closed, then its owner.** Each
+  month folder shows how many reviews and owners it holds and the **average score of every case
+  reviewed in it**; each owner folder inside shows that owner's own average. Click a folder to
+  open it, or use **Expand all / Collapse all**. Cases still open sit under **Not closed yet**;
+  a closed case whose closing date was never read sits under **Closed month not known**. The
+  folders you leave open are remembered.
+* **A sort on the Reviews tab** — newest or oldest review, score lowest or highest first (which
+  also orders the owners in each month by their average), case age, closed date, or case
+  number.
+* **The closed date is read** — off the case page during a review (*Date/Time Closed*), and off
+  any list view or report that carries a closed-date column. A review written before this
+  version moves into its month as soon as its case is synced from such a report.
+* **EMEA Closed Cases in Current View**, after Agent Cases — the report of every closed case in
+  EMEA. Sync it, pick the owners being reviewed in the dropdown, QA them, and each review lands
+  in its closing month. Offered once; right-click it to rename or forget it.
+* **Updates from the shared folder, with a Restart now bar** — the analyser's (Global 1.3.2)
+  mechanism. Installed from the OneDrive folder, the tool finds a new signed release in its own
+  folder by itself; see [New versions](#new-versions).
+
 ## What's new in 3.0.0
 
 * **Copilot works again, the way it does in the SOTI AI Analyser v9.5.4.** Microsoft now
@@ -94,10 +121,17 @@ the top of every review card, the written judgement is prose below it.
 
 ## Installing it
 
-1. Chrome → `chrome://extensions`
-2. Turn on **Developer mode** (top right)
-3. **Load unpacked** → choose this folder (`QA Tool v3.0.0`)
-4. Pin the teal **QA** icon to the toolbar and click it to open the side panel
+**For the team, install from the shared OneDrive folder** — then every release reaches you by
+itself. The step-by-step page is **Install_QA_Tool.html**; in short:
+
+1. Open the shared **QA Tool** folder in OneDrive on the web and press **Add shortcut to My
+   files**. It appears in File Explorer under *OneDrive* (the owner's name, then *QA Tool*).
+2. Right-click it → **Always keep on this device**, so every file is on the laptop.
+3. Chrome → `chrome://extensions` → turn on **Developer mode** (top right) → **Load unpacked**
+   → choose that **QA Tool** folder (the one with `manifest.json` in it).
+4. Pin the teal **QA** icon to the toolbar and click it to open the side panel.
+
+Installing from a copied folder or a zip still works — it just does not update itself.
 
 Then, once:
 
@@ -440,9 +474,32 @@ check on the written row beside it.
 
 ## New versions
 
-There is **no update check** any more — no button, no dot, no request to GitHub. A new build
-arrives as a folder: unzip it, copy it over this one (or load the new folder), then press
-**Reload** on `chrome://extensions`.
+**Installed from the shared OneDrive folder, a new version arrives by itself** — the SOTI AI
+Analyser's (Global 1.3.2) mechanism, in `updater.js`. Nothing is asked of the network: the tool
+only ever reads its own folder, which OneDrive keeps in step with the shared one.
+
+* Once a minute (and when the browser starts) the background looks at the folder's
+  `manifest.json`. While its version is the one running, that is all it reads.
+* When the version differs, the release is applied **only if it is complete and genuine**:
+  `integrity.json` must carry a valid signature from the owner's key, be the one made for that
+  version, and every file it lists must match. A folder OneDrive is still part-way through
+  filling is left alone and looked at again in half a minute. A release signed by anyone else
+  is never applied.
+* **Panel closed** → the tool restarts onto the new version straight away.
+  **Panel open** → a blue bar says *Version X is ready* with **Restart now**. **×** puts it off;
+  it then restarts by itself when the panel is closed, or has been out of sight for ten minutes
+  with nothing running. A QA run, a sync, a chat answer or the coaching build holds the restart
+  off, and **Restart now** asks first if one is going.
+* After the restart, the panel says *Updated to version X (from Y)*. Every review, chat and
+  setting is kept — they live in `chrome.storage`, which a restart does not touch.
+
+**To publish a release:** bump `"version"` in `manifest.json`, re-sign the folder (so
+`integrity.json` is made for the new version and lists every code file — `updater.js`
+included), then copy the files into the shared OneDrive folder. Put `integrity.json` in last
+if you can; the tool waits for it either way.
+
+Installed from a zip or a copied folder instead, a new build is copied over the old one and
+**Reload** pressed on `chrome://extensions`, as before.
 
 ### Your reviews survive a new version
 
@@ -479,8 +536,9 @@ git commit -m "QA Tool v1.1.0 — <what changed>"
 git push
 ```
 
-Then zip the folder as `QA Tool v<version>` and hand that out — nothing in the tool checks for
-it, so telling the team is the release.
+Then re-sign it, and copy the files into the shared OneDrive folder — every install made from
+that folder picks the release up by itself (see [New versions](#new-versions)). For anyone
+installed from a zip, zip the folder as `QA Tool v<version>` and hand that out too.
 
 ### Line endings
 
@@ -593,8 +651,10 @@ gets a coaching row.
 | `ai-provider.js` | The Copilot relay. The analyser's v9.5.4, with a few QA Tool additions, each marked `(QA Tool addition)` |
 | `copilot-bridge.js` | Injected into the relay tab. The analyser's v9.5.4, with one QA Tool addition, marked the same way |
 | `styles.css` | The analyser's v9.5.4 stylesheet, unchanged, so the two tools look like siblings |
-| `qa-styles.css` | Only what QA adds — the QA button, the run pill, the chat, the sheets |
-| `background.js` | Opens the side panel, and keeps a clock running for the relay |
+| `qa-styles.css` | Only what QA adds — the QA button, the run pill, the chat, the sheets, the owner dropdown, the review folders, the update bar |
+| `Install_QA_Tool.html` | The install guide for the team — sent to people, not put in the shared folder: a file changed there after signing marks every copy as modified. Put the shared folder's link in it first (search it for `PASTE-THE-QA-TOOL-FOLDER-LINK-HERE`) |
+| `background.js` | Opens the side panel, keeps a clock running for the relay, and looks for a new release in the shared folder |
+| `updater.js` | Decides when the folder holds a complete, signed new release, and restarts onto it. The analyser's (Global 1.3.2) |
 | `backup.js` | Back up and restore everything the tool stores |
 | `display-size.js` | Settings → Display size, applied before the first paint |
 | `icons/` | The toolbar mark: a teal "QA" badge, drawn so it is not mistaken for the analyser's indigo hexagon at 16px |

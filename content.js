@@ -3677,6 +3677,10 @@ function scrapeSalesforceCaseList() {
             analysis: caseListCell(row, 'Case Analysis Comments'),
             ageDays:  caseListCell(row, 'Case Age (in days)'),
             opened:   caseListCell(row, 'Date/Time Opened'),
+            /* (QA Tool addition) WHEN THE CASE CLOSED — only on a list of closed cases, and only
+             * when the view carries the column. It is what files a review under its month on the
+             * Reviews tab; see CLOSED_DATE_HEADERS and stampClosedDates. */
+            closed:   caseListCellAny(row, CLOSED_DATE_HEADERS),
             modified: caseListCell(row, 'Last Modified Date'),
             /* WHOSE CASE IS THIS. Read through the alias names as well as the full ones,
              * because the alias columns are the ones most list views actually carry.
@@ -7250,6 +7254,12 @@ const REPORT_CASE_NUMBER_HEADERS = ['case number', 'case: case number', 'case #'
 // "Case Owner's Manager", however a report or list view spells it. Shared by both readers.
 const OWNER_MANAGER_HEADERS = ["Case Owner's Manager", 'Case Owner’s Manager', 'Case Owners Manager', 'Case Owner Manager',
                                "Owner's Manager", 'Owner’s Manager', 'Owner Manager', 'Team Lead'];
+/* (QA Tool addition) "DATE/TIME CLOSED", however a list view or report spells it. Shared by both
+ * readers. The bare "Closed" comes LAST because on most layouts it is the IsClosed tick-box rather
+ * than a date — it is only reached when nothing better is there, and a value that does not read
+ * as a date is dropped by stampClosedDates rather than taken for one. */
+const CLOSED_DATE_HEADERS = ['Date/Time Closed', 'Closed Date', 'Date Closed', 'Closed Date/Time', 'Case Closed Date',
+                             'Closed On', 'Closed'];
 // "Temporary Case Owner", likewise.
 const TEMP_OWNER_HEADERS = ['Temporary Case Owner', 'Temporary Case Owner Name', 'Temp Case Owner', 'Temporary Owner',
                             'Temp Owner', 'Case: Temporary Case Owner'];
@@ -7266,6 +7276,8 @@ const REPORT_FIELDS = {
     analysis:       ['Case Analysis Comments'],
     ageDays:        ['Case Age (in days)', 'Case Age (Days)', 'Age (in days)', 'Age (Days)', 'Case Age', 'Age'],
     opened:         ['Date/Time Opened', 'Opened Date', 'Date Opened', 'Created Date'],
+    // (QA Tool addition) The closing instant, on a report of closed cases — see CLOSED_DATE_HEADERS.
+    closed:         CLOSED_DATE_HEADERS,
     modified:       ['Last Modified Date', 'Last Modified', 'Case Last Modified Date'],
     owner:          ['Case Owner', 'Case Owner: Full Name', 'Owner', 'Owner Full Name', 'Owner Name',
                      'Assigned To', 'Case Owner Alias', 'Owner Alias', 'Case Owner: Alias'],
@@ -8390,6 +8402,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 try {
                     const wait = await waitForReportRows(Math.max(0, Math.min(Number(request.waitMs) || 20000, 45000)));
                     const data = await loadWholeReport();
+                    stampClosedDates(data);
                     data.listWait = wait;
                     data.empty = !!wait.empty;
                     sendResponse(data);
@@ -8408,6 +8421,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             try {
                 const load = await loadWholeCaseList(document);
                 const data = scrapeSalesforceCaseList();
+                stampClosedDates(data);
                 data.listLoad = load;
                 console.log(`SOTI AI Analyser: Scraped case list — ${data.cases.length} rows`
                     + (load.declared ? ` of ${load.declared} the list declares` : '')
@@ -9593,6 +9607,46 @@ function readCaseOpenedAt(root) {
     return out;
 }
 
+/* WHEN THE CASE WAS CLOSED — the month the Reviews tab files its review under.
+ *
+ * Read like the opening instant above, off the same labels with the same root and fallback.
+ * Blank on a case that is still open, which is an answer rather than a failure: Salesforce
+ * only fills Date/Time Closed once a case is closed. The bare "Closed" is last because on most
+ * layouts it is the tick-box, and a tick-box does not parse as a date.
+ */
+function readCaseClosedAt(root) {
+    const out = { raw: '', at: null };
+    let labels = findInShadows(FIELD_LABEL_SELECTOR, root || document, false);
+    if (!labels.length && root && root !== document) labels = findInShadows(FIELD_LABEL_SELECTOR, document, false);
+    const wanted = ['date/time closed', 'closed date', 'date closed', 'closed date/time', 'case closed date', 'closed on', 'closed'];
+    for (const want of wanted) {
+        for (const label of labels) {
+            if (labelTextOf(label) !== want) continue;
+            const v = getFieldValue(label, true);
+            if (!v) continue;
+            const at = parseSalesforceDate(v, Date.now());
+            if (at) return { raw: v, at };
+        }
+    }
+    return out;
+}
+
+/* THE CLOSED DATE OF EVERY ROW A SYNC READ, as an instant beside the text it came from.
+ *
+ * Parsed HERE rather than in the panel because this is where parseSalesforceDate lives, and it
+ * reads the date in the same locale Salesforce wrote it in. A row whose cell does not read as a
+ * date (the IsClosed tick-box, a blank) gets no closedAt at all rather than a guessed one. */
+function stampClosedDates(data) {
+    if (!data || !Array.isArray(data.cases)) return data;
+    for (const c of data.cases) {
+        if (!c || !c.closed) continue;
+        const at = parseSalesforceDate(c.closed, Date.now());
+        if (at) c.closedAt = at;
+        else delete c.closed;
+    }
+    return data;
+}
+
 /* THE ONE MESSAGE THE QA PANEL SENDS PER CASE.
  *
  * A separate listener rather than another branch in the one above, so this file stays a
@@ -9620,6 +9674,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             // a stuck feed and a short case, and they look identical from the count alone.
             if (data.feedLoad) data.qaFeed.load = data.feedLoad;
             data.qaOpened = readCaseOpenedAt(root);
+            data.qaClosed = readCaseClosedAt(root);
             data.qaReadAt = Date.now();
             console.log(`SOTI QA Tool: read ${data.caseNumber || 'case'} — `
                 + `${data.qaFeed.items.length} feed record(s), ${data.qaFeed.dated} dated (${data.qaFeed.reason})`);

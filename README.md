@@ -10,7 +10,7 @@ other's settings, cases or reviews.
 
 ---
 
-## What's new in 3.1.0
+## What's new in 4.0.0
 
 * **An owner dropdown on the Cases tab.** At the end of the tier chips' line, **All owners ▾**
   lists only the people whose cases are loaded — sync Robert's, Daiva's and Callum's cases and

@@ -2930,7 +2930,7 @@
     }
 
     /* EMEA AGENT CASES, THERE FROM THE START — the analyser's default list (named "Agent Cases"
-     * there, and here until 3.1.0 — see RENAMED_LISTS). Put in Current View the
+     * there, and here until 4.0.0 — see RENAMED_LISTS). Put in Current View the
      * first time this build runs, like a list the reviewer saved themselves: same chip, same
      * sync, same right-click. OFFERED ONCE: its id is written down when it is put in, so a
      * reviewer who forgets it has forgotten it, and one who already saved the same report under

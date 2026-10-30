@@ -12,54 +12,66 @@ other's settings, cases or reviews.
 
 ## What's new in 4.0.1
 
-* **Select works the Gmail way, as in the SOTI AI Analyser (Global 1.3.2).** Every case has its
-  own tick-box on the left, always: the box ticks the case, and clicking the rest of the row still
-  opens it in Salesforce. Ticking the first case brings up the count and the bin; unticking the
-  last puts them away.
+Everything that has changed since 3.0.0.
+
+**Updates arrive by themselves**
+
+* **Installed from the shared OneDrive folder, the QA Tool keeps itself up to date** — the
+  SOTI AI Analyser's (Global 1.3.2) mechanism. When a new version is published, OneDrive brings
+  it to the laptop and the tool restarts onto it. If it is open at that moment, a bar says
+  *Version … is ready* with **Restart now**; **×** puts it off until the panel is closed. Only a
+  complete release signed by the owner is ever applied, and every review, chat and setting is
+  kept. After the restart it says *Updated to version …*. See [New versions](#new-versions).
+* **Install_QA_Tool.html** walks the team through the one-time setup: add the shared folder as a
+  shortcut, load it in Chrome, done.
+
+**Cases tab**
+
+* **An owner dropdown.** At the end of the tier chips' line, **All owners ▾** lists only the
+  people whose cases are loaded, each with how many cases they have. Tick one to see only their
+  cases, tick several to see them together, **Clear** to see everyone again. The chips, the
+  search box and the tick-boxes all work on what it leaves on screen. With more than eight owners
+  a *Find an owner…* box appears.
+* **Select works the Gmail way, as in the SOTI AI Analyser.** Every case has its own tick-box,
+  always: the box ticks the case, and clicking the rest of the row still opens it in Salesforce.
+  Ticking a case brings up the count and the bin.
 * **One checkbox above the list** replaces Select, Select all and Cancel. With nothing ticked it
-  ticks every case on screen; with any ticked it clears them. It shows empty, a dash (some
-  ticked) or a tick (every case on screen). Its **▾** picks *All*, *None*, *Not yet QA'd*,
-  *Already QA'd*, *Needs 30/60/90*, *With JIRA*, *Without JIRA*, *Focus* or *Not focus* — always
-  from the cases on screen, so the owner dropdown and the chips narrow what it picks from.
-* **Ctrl+A** still ticks every case on screen and **Esc** clears the ticks. **QA selected** and
-  **30/60/90** pressed with nothing ticked say where the tick-boxes are.
-* **A smooth progress strip, as in the SOTI AI Analyser**, under the tabs in place of the
-  *Reading C017…* pill: *Reviewing 5 cases · 2 done — 48%* on a bar that keeps climbing between
-  cases — paced by how long a case takes on this laptop — and is pulled forward each time a case
-  is read or written. Stop is beside it; hovering shows the step it is on. The same strip shows
+  ticks every case on screen; with any ticked it clears them. Its **▾** picks *All*, *None*,
+  *Not yet QA'd*, *Already QA'd*, *Needs 30/60/90*, *With JIRA*, *Without JIRA*, *Focus* or
+  *Not focus*, from the cases on screen. **Ctrl+A** ticks everything on screen, **Esc** clears.
+* **EMEA Agent Cases and EMEA Closed Cases in Current View.** *Agent Cases* is now called *EMEA
+  Agent Cases* (a button you renamed yourself keeps your name). *EMEA Closed Cases* — every
+  closed case in EMEA — sits beside it: sync it, pick the owners being reviewed in the dropdown,
+  and QA them.
+
+**Reviews tab**
+
+* **Folders by the month the case closed, then by owner.** Each month shows how many reviews and
+  owners it holds and the **average score** of every case reviewed in it; each owner inside shows
+  their own average. Click a folder to open it, or **Expand all / Collapse all**; the folders you
+  leave open are remembered. Cases still open sit under **Not closed yet**.
+* **The closed date is read** off the case during a review, and off any list or report with a
+  closed-date column — so a review written before this version moves into its month as soon as
+  its case is synced from *EMEA Closed Cases*.
+* **A sort**: newest or oldest review, score lowest or highest first (which also ranks the
+  owners in each month by their average), case age, closed date, or case number.
+* **No run log.** The timeline under the filters is gone; each review card says how its case
+  went. The timeline is still kept in the browser console for diagnosing a run.
+
+**While it works**
+
+* **A smooth progress strip under the tabs**, as in the SOTI AI Analyser, in place of the
+  *Reading C017…* pill: *Reviewing 5 cases · 2 done — 48%* on a bar that keeps climbing the
+  whole time — paced by how long a case takes on that laptop — and moves forward each time a
+  case is read or written. **Stop** is beside it, and hovering it shows the step it is on. It
+  ends with what came of the run — *Done — 5 reviewed* — and then goes. The same strip shows
   reading a case for the chat and writing the coaching summaries.
-* **No run log on the Reviews tab.** The timeline under the filters is gone; each review card
-  says how its case went, and the timeline itself is kept in the browser console for diagnosing
-  a run.
 
-## What's new in 4.0.0
+**Fixed**
 
-* **An owner dropdown on the Cases tab.** At the end of the tier chips' line, **All owners ▾**
-  lists only the people whose cases are loaded — sync Robert's, Daiva's and Callum's cases and
-  those are the three names in it, each with how many cases they have. Tick one to see only their
-  cases, tick several to see them together, **Clear** (or *All owners*) to see everyone again.
-  The tier chips, the search box, **Select all** and **QA selected** all work on what it leaves
-  on screen. With more than eight owners a *Find an owner…* box appears at the top of the list.
-* **The Reviews tab is filed in folders: the month the case closed, then its owner.** Each
-  month folder shows how many reviews and owners it holds and the **average score of every case
-  reviewed in it**; each owner folder inside shows that owner's own average. Click a folder to
-  open it, or use **Expand all / Collapse all**. Cases still open sit under **Not closed yet**;
-  a closed case whose closing date was never read sits under **Closed month not known**. The
-  folders you leave open are remembered.
-* **A sort on the Reviews tab** — newest or oldest review, score lowest or highest first (which
-  also orders the owners in each month by their average), case age, closed date, or case
-  number.
-* **The closed date is read** — off the case page during a review (*Date/Time Closed*), and off
-  any list view or report that carries a closed-date column. A review written before this
-  version moves into its month as soon as its case is synced from such a report.
-* **Agent Cases is now called EMEA Agent Cases** in Current View. A copy that already has the
-  button gets it renamed once; a button you renamed yourself keeps your name.
-* **EMEA Closed Cases in Current View**, after EMEA Agent Cases — the report of every closed case in
-  EMEA. Sync it, pick the owners being reviewed in the dropdown, QA them, and each review lands
-  in its closing month. Offered once; right-click it to rename or forget it.
-* **Updates from the shared folder, with a Restart now bar** — the analyser's (Global 1.3.2)
-  mechanism. Installed from the OneDrive folder, the tool finds a new signed release in its own
-  folder by itself; see [New versions](#new-versions).
+* **"Identifier 'boxIsClaimed' has already been declared"** no longer appears on the extension's
+  Errors page. Sync could put a second copy of the Salesforce reader into a list that was still
+  loading; it now waits for the page instead.
 
 ## What's new in 3.0.0
 

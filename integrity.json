@@ -2,10 +2,10 @@
   "v": 1,
   "by": "Ayodeji Augustine",
   "build": "4.0.1",
-  "signedAt": "2026-10-29T15:34:16.791Z",
+  "signedAt": "2026-10-30T09:03:06.894Z",
   "files": {
     "QA_Tool.html": "1a1fcc73ea0a8579ecb09f0e2164c1c7304af5e48bddcc90b697611bf5609afc",
-    "README.md": "b0259a6ee336271249742185f8562d9c39e4dfddccce9e3af66af09773fd88a4",
+    "README.md": "12339eab26fb06e8703163dcb52f2b175304f393bb66917bfca22ccef3228824",
     "ai-provider.js": "55a0a7c09631705caed7f365c3af6008cfe10946d258ae208a2948935c44b94f",
     "background.js": "9aede7bc6e089b2443aad629c3a09a47f8cda25aa16786131e663d3bf945331f",
     "backup.js": "c8073a53dbf5449b88b9d562ab0ea47d5dc12e0dadb2fe2e712e2e617c5cc1fa",
@@ -22,5 +22,5 @@
     "styles.css": "bd7d81391f66f8ce43c8845fc7510439f5b1f4d1d2ab63d6485c512702b203c0",
     "updater.js": "3d5cae81069562b388e24b3a1625ec9be69a871289a712c9f9f6e924d37f55c3"
   },
-  "sig": "i/utB7C8/j89v/tVy7WMcbkvaxa43IYSuFnATK/8mOz/SrlFBPLR3nuMCUOkzMjpoCehUnP05mTFIHEcaux+Lg=="
+  "sig": "tWWnAucBfnPrWg8siF+QCfJZMZaFvNN4g2qiqWWrWiRMdK7YR26ETqyHyjYs9VvMKaLReTcbx3HRiWlMK+Bi8Q=="
 }

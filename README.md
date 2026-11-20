@@ -10,7 +10,7 @@ other's settings, cases or reviews.
 
 ---
 
-## What's new in 5.0.0
+## What's new in 5.0.1
 
 * **The Copilot file is named as the SOTI AI Analyser names it**: `C01741241-case-material-<time>.log`,
   on every attempt. A retry used to rename it `C01741241-try-3-case-material-…` and title the chat
@@ -18,6 +18,10 @@ other's settings, cases or reviews.
 * **No more answers that are only the headers.** The request typed into Copilot said "Output exactly
   the headers", and Copilot sometimes did just that — every header, no answers — so the review went to
   try 2, try 3… It now asks Copilot to fill in every header with its findings (QA, 30/60/90 and coaching).
+  If Copilot still sends back bare headers, the next attempt opens a fresh chat and tells it exactly that,
+  instead of the "a previous attempt declined" note meant for refusals.
+
+## What's new in 5.0.0
 
 **Cases are read straight from Salesforce, over GraphQL** — the SOTI AI Analyser's Beta 9.8.6 engine
 (`salesforce/`). No window opens and nothing scrolls: the case's emails, logged calls, internal notes,

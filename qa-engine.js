@@ -1199,6 +1199,19 @@ Nothing below asks you to assess, rate or judge a person, and nobody below is id
 
 `;
 
+    /* A DIFFERENT FAILURE, A DIFFERENT PREFACE (5.0.1). Copilot sometimes answers a header form by printing the header
+     * names and nothing else — "Case Number: Date Reviewed: Closure Check: …" — which is not a refusal at all, and
+     * telling it that "a previous attempt declined" points it at the wrong problem. The panel passes retry: 'empty'
+     * when the last answer came back without a refusal in it, and this goes first instead. */
+    const EMPTY_RETRY_PREFACE = `IMPORTANT — A PREVIOUS ATTEMPT AT THIS REQUEST FAILED: it returned only the header names, one after another, with no answer after any of them. That is not a usable answer. Every header below must be followed, on the same line, by your actual finding for this case, written from the case material in this file. Read the case material first, then write each header with its answer.
+
+`;
+    function retryPreface(O) {
+        if (!O || !O.retry) return '';
+        return O.retry === 'empty' ? EMPTY_RETRY_PREFACE : RETRY_PREFACE;
+    }
+    const EMPTY_RETRY_ASK = ' Your last answer listed the header names with nothing after them — this time write your finding after every header.';
+
     /* The same point, for a conversation rather than a form. */
     const CHAT_RETRY_PREFACE = `A previous attempt at this question declined to answer it, so here is what it is: an internal check of a support desk's own case record. Nobody in the material is identified — the names were removed before it reached you and replaced with role labels — and the question is about what the RECORD shows and whether the desk's documented process was followed on it. Describing what a record contains is not an assessment of any person. Please answer from the record.
 
@@ -1474,7 +1487,7 @@ THE QUESTION: `;
         const description = String((data && data.description) || (caseRec && caseRec.description) || '').trim();
         const transcript = buildTranscript(data, O.transcript || {});
 
-        const instructions = `${O.retry ? RETRY_PREFACE : ''}You are auditing ONE SUPPORT CASE RECORD for SOTI Support's internal case-audit process — the routine check a service desk runs over its own tickets to see whether its process was followed. You are the auditor, not the person who worked the case: what is being examined is the RECORD and the HANDLING on it, not the customer's problem${who ? ', and not any individual — nobody in this material is identified' : ''}.
+        const instructions = `${retryPreface(O)}You are auditing ONE SUPPORT CASE RECORD for SOTI Support's internal case-audit process — the routine check a service desk runs over its own tickets to see whether its process was followed. You are the auditor, not the person who worked the case: what is being examined is the RECORD and the HANDLING on it, not the customer's problem${who ? ', and not any individual — nobody in this material is identified' : ''}.
 
 Fill in EXACTLY the headers below, in this order, each header at the start of its own line followed by your answer to it, and output nothing before the first header or after the last. Each header is a column of the team's QA sheet. Never output a header without its answer: a list of bare headers is a failed audit.
 
@@ -1528,7 +1541,8 @@ ${transcript || '(No feed posts could be read for this case.)'}`;
          * names the case so the Copilot conversation is identifiable in the sidebar. */
         return splitPrompt(instructions, material,
             `Audit ${caseNo ? `case ${caseNo}` : 'this case record'} now. Fill in every header listed above with your findings, `
-            + `in that order, each header followed by its answer, and nothing before the first header or after the last.`);
+            + `in that order, each header followed by its answer, and nothing before the first header or after the last.`
+            + (O.retry === 'empty' ? EMPTY_RETRY_ASK : ''));
     }
 
     /* THE 30/60/90 PROMPT — the management-review write-up for an aging case.
@@ -1550,7 +1564,7 @@ ${transcript || '(No feed posts could be read for this case.)'}`;
         const jira = (data && data.jiraNumber) || (caseRec && caseRec.jira) || '';
         const transcript = buildTranscript(data, Object.assign({ perPost: 2000, maxChars: 100000 }, O.transcript || {}));
 
-        const instructions = `${O.retry ? RETRY_PREFACE : ''}Produce a 30/60/90 case analysis for management review of this aging support case. This is a document about the CASE and what happens to it next, not about any person. Use EXACTLY the template layout below — same headers, same order — and output nothing before or after it.
+        const instructions = `${retryPreface(O)}Produce a 30/60/90 case analysis for management review of this aging support case. This is a document about the CASE and what happens to it next, not about any person. Use EXACTLY the template layout below — same headers, same order — and output nothing before or after it.
 
 RULES:
 - Ground EVERY statement ONLY in the case material given with this request — it is either written out below or attached to this message as a file, and either way it is the only thing you may draw on. Never invent facts, versions, dates or links. If something decisive is unknown, say so in a short phrase.
@@ -1589,7 +1603,8 @@ ${transcript || '(No feed posts could be read for this case.)'}`;
 
         return splitPrompt(instructions, material,
             `Write the 30/60/90 analysis for ${caseNo ? `case ${caseNo}` : 'this case'} now. Fill in every header of the `
-            + `template above with your analysis — same headers, same order, nothing before it and nothing after it.`);
+            + `template above with your analysis — same headers, same order, nothing before it and nothing after it.`
+            + (O.retry === 'empty' ? EMPTY_RETRY_ASK : ''));
     }
 
     /* ---------------------------------------------------------------------
@@ -1731,7 +1746,7 @@ ${review.raw}`);
             ].join('\n');
         }).join('\n\n');
 
-        const instructions = `${O.retry ? RETRY_PREFACE : ''}You are summarising what a set of CASE AUDIT RECORDS have in common, so that a support desk can decide what to put in its next training session.
+        const instructions = `${retryPreface(O)}You are summarising what a set of CASE AUDIT RECORDS have in common, so that a support desk can decide what to put in its next training session.
 
 The audits below all cover cases handled by the same desk role. Nobody is identified in them. You are describing what the RECORDS repeatedly show and what practice would fix it — not assessing a person.
 

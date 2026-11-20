@@ -4277,6 +4277,9 @@
         let asks = 0;
         let accessBlocked = false;
         let signinBlocked = false;
+        /* WHY THE LAST ASK FAILED, so the next one can say so (5.0.1): 'empty' when Copilot answered but the answer had no
+         * review in it (the bare-header reply), true for a refusal or a relay failure — the framing it has always had. */
+        let retryAs = true;
         for (let n = 0; n < sizes.length; n++) {
             if (RUN.stop) break;
             if (n > 0) {
@@ -4295,7 +4298,7 @@
             asks++;
             let said = '';
             try {
-                said = await ask(n > 0, sizes[n], label);
+                said = await ask(n > 0 ? retryAs : false, sizes[n], label);
                 threw = '';
             } catch (e) {
                 threw = (e && e.message) || String(e);
@@ -4315,6 +4318,8 @@
             if (judged.usable) break;
 
             refusedOnce = refusedOnce || judged.refused;
+            // Once a refusal has been seen, every later ask keeps the refusal framing.
+            retryAs = (judged.refused || refusedOnce) ? true : 'empty';
             // n >= 2 means the retry framing has now been sent twice and declined twice.
             const giveUp = judged.refused && n >= 2;
             logLine(`${caseNo}: ${judged.refused ? 'the relay declined to write this up' : 'the answer came back without a review in it'}`

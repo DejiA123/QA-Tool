@@ -1476,7 +1476,7 @@ THE QUESTION: `;
 
         const instructions = `${O.retry ? RETRY_PREFACE : ''}You are auditing ONE SUPPORT CASE RECORD for SOTI Support's internal case-audit process — the routine check a service desk runs over its own tickets to see whether its process was followed. You are the auditor, not the person who worked the case: what is being examined is the RECORD and the HANDLING on it, not the customer's problem${who ? ', and not any individual — nobody in this material is identified' : ''}.
 
-Fill in EXACTLY the headers below, in this order, one per line, and output nothing before or after them. Each header is a column of the team's QA sheet.
+Fill in EXACTLY the headers below, in this order, each header at the start of its own line followed by your answer to it, and output nothing before the first header or after the last. Each header is a column of the team's QA sheet. Never output a header without its answer: a list of bare headers is a failed audit.
 
 RULES:
 - Ground every statement ONLY in the case material given with this request — it is either written out below or attached to this message as a file, and either way it is the only thing you may draw on. Never invent a date, a version, an article number, a JIRA code or a name. If something is not in the material, say "Not evident from the case".
@@ -1527,8 +1527,8 @@ ${transcript || '(No feed posts could be read for this case.)'}`;
          * model two places to read the schema from and a chance to disagree with itself. It
          * names the case so the Copilot conversation is identifiable in the sidebar. */
         return splitPrompt(instructions, material,
-            `Audit ${caseNo ? `case ${caseNo}` : 'this case record'} now. Output exactly the headers listed above, `
-            + `in that order, one per line, with nothing before them and nothing after them.`);
+            `Audit ${caseNo ? `case ${caseNo}` : 'this case record'} now. Fill in every header listed above with your findings, `
+            + `in that order, each header followed by its answer, and nothing before the first header or after the last.`);
     }
 
     /* THE 30/60/90 PROMPT — the management-review write-up for an aging case.
@@ -1588,8 +1588,8 @@ ${measurementBlock(m, R)}
 ${transcript || '(No feed posts could be read for this case.)'}`;
 
         return splitPrompt(instructions, material,
-            `Write the 30/60/90 analysis for ${caseNo ? `case ${caseNo}` : 'this case'} now, using exactly the `
-            + `template above — same headers, same order, nothing before it and nothing after it.`);
+            `Write the 30/60/90 analysis for ${caseNo ? `case ${caseNo}` : 'this case'} now. Fill in every header of the `
+            + `template above with your analysis — same headers, same order, nothing before it and nothing after it.`);
     }
 
     /* ---------------------------------------------------------------------
@@ -1735,7 +1735,7 @@ ${review.raw}`);
 
 The audits below all cover cases handled by the same desk role. Nobody is identified in them. You are describing what the RECORDS repeatedly show and what practice would fix it — not assessing a person.
 
-Fill in EXACTLY these headers, one per line, and output nothing before or after them.
+Fill in EXACTLY these headers, each at the start of its own line followed by your answer to it, and output nothing before the first header or after the last. Never output a header without its answer.
 
 RULES:
 - Base everything ONLY on the audit records given with this request — written out below, or attached to this message as a file. Do not invent a case, a date or a behaviour.
@@ -1763,8 +1763,8 @@ Notes: anything a Team Lead should know before the conversation — including wh
 ${lines}`;
 
         return splitPrompt(instructions, material,
-            'Write the coaching row for these audit records now. Output exactly the headers listed above, '
-            + 'one per line, with nothing before them and nothing after them.');
+            'Write the coaching row for these audit records now. Fill in every header listed above with your findings, '
+            + 'in that order, each header followed by its answer, and nothing before the first header or after the last.');
     }
 
     /* ---------------------------------------------------------------------

@@ -385,8 +385,12 @@
             throw err;
         }
     }
-    function askAi(prompt, label, out, subject) { return timedAi(aiRunKind(label), prompt, () => askAiOnce(prompt, label, out, subject)); }
-    async function askAiOnce(prompt, label, out, subject) {
+    /* `fresh` asks the relay for a NEW Copilot conversation (payload.freshConversation in ai-provider.js). A retry uses it:
+     * the label stays the bare case number on every try — so the chat is titled "C01741241 - <subject>" and the file goes up
+     * as "C01741241-case-material-<time>.log", exactly as the SOTI AI Analyser names it — and the retry still gets a clean
+     * chat rather than one that already holds the answer it is replacing. */
+    function askAi(prompt, label, out, subject, fresh) { return timedAi(aiRunKind(label), prompt, () => askAiOnce(prompt, label, out, subject, fresh)); }
+    async function askAiOnce(prompt, label, out, subject, fresh) {
         if (!window.SotiAI) {
             throw new Error('ai-provider.js did not load, so there is nothing to send this to. Check it sits next to qa-panel.js and reload the extension at chrome://extensions.');
         }
@@ -407,6 +411,7 @@
         const res = await window.SotiAI.chat({
             messages,
             stream: false,
+            freshConversation: !!fresh,
             // Low, not zero. A QA write-up is prose and needs to read like it; the facts
             // it is allowed to use are pinned by the prompt rather than by the temperature.
             options: { temperature: 0.2 }
@@ -4245,7 +4250,7 @@
             const said = aliases.show(await askAi({
                 system: aliases.hide(prompt.system),
                 request: aliases.hide(prompt.request)
-            }, label, out, aliases.hide(String(rec.subject || data.subject || '').replace(/^\(not read yet\)$/, ''))));
+            }, label, out, aliases.hide(String(rec.subject || data.subject || '').replace(/^\(not read yet\)$/, '')), retry));
             askDelivery = out.delivery;
             return said;
         };
@@ -4282,7 +4287,11 @@
                 await new Promise(r => setTimeout(r, pause));
                 if (RUN.stop) break;
             }
-            const label = n === 0 ? caseNo : `${caseNo} (try ${n + 1})`;
+            /* THE CASE NUMBER ON EVERY TRY, never "C01741241 (try 3)". The label names the Copilot chat AND the uploaded
+             * file, and "(try 3)" turned the file into "C01741241-try-3-case-material-<time>.log" — not the Analyser's
+             * "C01741241-case-material-<time>.log" — and the chat title into "C01741241 (try 3) - <subject>". A retry
+             * still gets a conversation of its own: ask() passes `retry` through as a fresh-conversation request. */
+            const label = caseNo;
             asks++;
             let said = '';
             try {
@@ -6969,7 +6978,7 @@
                         const prompt = E.buildCoachingPrompt(a.name, a.reviews, { retry });
                         return aliases.show(await askAi(
                             { system: aliases.hide(prompt.system), request: aliases.hide(prompt.request) },
-                            retry ? `Coaching — ${i + 1} (again)` : `Coaching — ${i + 1} of ${agents.length}`));
+                            `Coaching — ${i + 1} of ${agents.length}`, undefined, '', retry));
                     };
 
                     /* THE SAME LADDER AS A WRITE-UP, for the same reason — see writeUp.

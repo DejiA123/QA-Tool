@@ -98,7 +98,7 @@ globalThis.SfQaScan ??= (() => {
 
   /* ---------------------------------------------------------------- the activity of many cases ----------------- */
   const after = (c) => (c ? `, after: ${JSON.stringify(c)}` : '');
-  const emailsQ = (ids, c) => `query q { uiapi { query { EmailMessage(where: { ParentId: { in: ${strings(ids)} } }, orderBy: { MessageDate: { order: ASC } }, first: ${PAGE}${after(c)}) { pageInfo { hasNextPage endCursor } edges { node { Id ParentId { value } Incoming { value } MessageDate { value } FromName { value } FromAddress { value } TextBody { value } HasAttachment { value } Status { value } } } } } } }`;
+  const emailsQ = (ids, c) => `query q { uiapi { query { EmailMessage(where: { ParentId: { in: ${strings(ids)} } }, orderBy: { MessageDate: { order: ASC } }, first: ${PAGE}${after(c)}) { pageInfo { hasNextPage endCursor } edges { node { Id ParentId { value } Incoming { value } MessageDate { value } FromName { value } FromAddress { value } Subject { value } TextBody { value } HasAttachment { value } Status { value } } } } } } }`;
   const callsQ = (ids, c) => `query q { uiapi { query { Task(where: { and: [{ WhatId: { in: ${strings(ids)} } }, { TaskSubtype: { eq: "Call" } }] }, first: ${PAGE}${after(c)}) { pageInfo { hasNextPage endCursor } edges { node { Id WhatId { value } CreatedDate { value } Description { value } Owner { ... on User { Name { value } } } } } } } } }`;
   const histQ = (ids, c, withValues) => `query q { uiapi { query { CaseHistory(where: { CaseId: { in: ${strings(ids)} } }, orderBy: { CreatedDate: { order: ASC } }, first: ${PAGE}${after(c)}) { pageInfo { hasNextPage endCursor } edges { node { Id CaseId { value } Field { value } ${withValues ? 'OldValue { value } NewValue { value } ' : ''}CreatedDate { value } CreatedBy { Name { value } } } } } } } }`;
 
@@ -170,7 +170,7 @@ globalThis.SfQaScan ??= (() => {
           part.forEach((row, k) => {
             if (!emails) return;
             out[i + k].data = toData(row, {
-              emails: (em.get(row.recordId) || []).map((n) => ({ id: n.Id, incoming: !!n.Incoming?.value, date: value(n.MessageDate), from: value(n.FromName) || value(n.FromAddress), body: value(n.TextBody), hasFile: !!n.HasAttachment?.value, draft: String(value(n.Status)) === '5' })),
+              emails: (em.get(row.recordId) || []).map((n) => ({ id: n.Id, incoming: !!n.Incoming?.value, date: value(n.MessageDate), from: value(n.FromName) || value(n.FromAddress), subject: value(n.Subject), body: value(n.TextBody), hasFile: !!n.HasAttachment?.value, draft: String(value(n.Status)) === '5' })),
               calls: (ca.get(row.recordId) || []).map((n) => ({ id: n.Id, date: value(n.CreatedDate), by: value(n.Owner?.Name), body: value(n.Description) })),
               history: histNodes ? globalThis.SfQaCase.ownerChangesFrom(hi.get(row.recordId) || [], row.owner, historyValues) : null,
               closure: closure.get(row.recordId) || {},

@@ -10,6 +10,22 @@ other's settings, cases or reviews.
 
 ---
 
+## What's new in 5.0.2
+
+* **"Meeting never written up" only for a meeting that happened.** Before, any email that merely
+  *mentioned* Webex, Teams or a remote session — an invite, "are you free for a call?", a Teams join
+  footer — was taken as a meeting held at that moment. Now a meeting counts only when a call was logged
+  or the words say it took place ("thanks for the call today", "during our Webex", "as discussed on the
+  call"), never from a sentence about the future. The flag quotes that sentence. A write-up is a call
+  log, an internal note or a summary from SOTI within 24 hours either side of it. A session that was only
+  proposed or invited shows as *Session arranged — check it went ahead*, and costs no points.
+* **Automatic emails are set aside.** Out-of-office replies, bounces and SOTI's own automatic
+  acknowledgements are no longer counted as customer replies, chases, "waiting on SOTI", a frustrated
+  customer ("for urgent matters…") or a first response. They stay in the transcript marked [AUTOMATIC],
+  and Copilot is told to ignore them. Email subjects are now read over GraphQL to spot them.
+* **The filter chips are one shape again.** The tier, JIRA and ★ Focus chips no longer break onto two or
+  three lines — every chip is the same single-line pill.
+
 ## What's new in 5.0.1
 
 * **The Copilot file is named as the SOTI AI Analyser names it**: `C01741241-case-material-<time>.log`,

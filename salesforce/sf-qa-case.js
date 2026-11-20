@@ -151,7 +151,7 @@ globalThis.SfQaCase ??= (() => {
       const body = String(own[i] ?? e.body ?? '').replace(/\r\n/g, '\n').trim();
       const at = when(e.date);
       items.push({
-        at, label: e.date, sender: e.from || 'Unknown', kind: 'email', internal: false,
+        at, label: e.date, sender: e.from || 'Unknown', subject: String(e.subject || ''), kind: 'email', internal: false,
         fromUs: !e.incoming, body: body.slice(0, 20000), bodyUnread: !body, replies: [],
         mentionsMeeting: MEETING.test(body), readsAsMeetingNote: MEETING_NOTE.test(body),
         recordId: e.id || '', url: link(origin, 'EmailMessage', e.id) || caseUrl, source: 'email',

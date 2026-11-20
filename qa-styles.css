@@ -1211,6 +1211,27 @@
 .qa-chip-run { display: contents; }
 .oc-listbar #ocChips { align-items: center; gap: 5px; }
 .oc-listbar #ocChips > .qa-owner-wrap { flex: 0 0 auto; }
+/* EVERY CHIP ONE SHAPE (5.0.1). The analyser's "never wrap, never shrink" rule is written for chips that are direct
+   children of #ocChips; the tier, JIRA and Focus chips sit inside #ocTierChips (display: contents), so it never reached
+   them — the line squeezed them and each broke onto two or three lines ("All / 33", "★ / Focus / 4"), at different
+   heights. One rule for all of them, wherever they sit: one line, one height, the same pill. */
+.oc-listbar #ocChips .oc-chip,
+.oc-listbar #ocChips .qa-owner-btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    box-sizing: border-box;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    line-height: 1;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-radius: 999px;
+    vertical-align: middle;
+}
+.oc-listbar #ocChips select.oc-chip.qa-age-chip { display: inline-block; line-height: 22px; }
 select.oc-chip.qa-age-chip {
     flex: 0 0 auto;
     appearance: none;

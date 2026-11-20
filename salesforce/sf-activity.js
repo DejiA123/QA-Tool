@@ -36,6 +36,7 @@ globalThis.SfActivity ??= (() => {
     incoming: !!node.Incoming?.value,
     date: value(node.MessageDate),
     from: value(node.FromName) || value(node.FromAddress),
+    subject: value(node.Subject),
     body: value(node.TextBody),
     hasFile: !!node.HasAttachment?.value,
     draft: String(value(node.Status)) === DRAFT,
@@ -43,7 +44,7 @@ globalThis.SfActivity ??= (() => {
   const toCall = (node) => ({ date: value(node.CreatedDate), by: value(node.Owner?.Name), body: value(node.Description) });
 
   const emailsQuery = (id, withBodies, cursor) =>
-    `query q { uiapi { query { EmailMessage(where: { ParentId: { eq: ${JSON.stringify(id)} } }, orderBy: { MessageDate: { order: DESC } }, first: ${PAGE}${after(cursor)}) { pageInfo { hasNextPage endCursor } edges { node { Id Incoming { value } MessageDate { value } FromName { value } FromAddress { value } ${withBodies ? 'TextBody { value } ' : ''}HasAttachment { value } Status { value } } } } } } }`;
+    `query q { uiapi { query { EmailMessage(where: { ParentId: { eq: ${JSON.stringify(id)} } }, orderBy: { MessageDate: { order: DESC } }, first: ${PAGE}${after(cursor)}) { pageInfo { hasNextPage endCursor } edges { node { Id Incoming { value } MessageDate { value } FromName { value } FromAddress { value } Subject { value } ${withBodies ? 'TextBody { value } ' : ''}HasAttachment { value } Status { value } } } } } } }`;
   const callsQuery = (id, withBodies, cursor) =>
     `query q { uiapi { query { Task(where: { and: [{ WhatId: { eq: ${JSON.stringify(id)} } }, { TaskSubtype: { eq: "Call" } }] }, orderBy: { CreatedDate: { order: DESC } }, first: ${PAGE}${after(cursor)}) { pageInfo { hasNextPage endCursor } edges { node { Id TaskSubtype { value } CreatedDate { value } ${withBodies ? 'Description { value } ' : ''}Owner { ... on User { Name { value } } } } } } } } }`;
   const linksQuery = (ids, cursor) =>

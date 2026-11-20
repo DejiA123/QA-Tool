@@ -277,6 +277,103 @@
             : none;
     }
 
+    /* ---------------------------------------------------------------------
+     * AUTOMATIC MESSAGES — out-of-office replies, bounces, auto-acknowledgements (5.0.1)
+     * ---------------------------------------------------------------------
+     * Nobody wrote them, so they are not part of the conversation. Counted as a customer
+     * message, an out-of-office reply made the case "wait on SOTI", turned the customer's next
+     * real email into a "chase", left a "customer message unanswered" at closure and — because
+     * an auto-reply says "for urgent matters please contact…" — read as a frustrated customer.
+     * Counted as ours, an automatic "your case has been created" was a first response nobody
+     * sent. They stay in the transcript, labelled, and are left out of every measurement.
+     *
+     * Read from the subject when the reader has one (the GraphQL read does), and otherwise from
+     * the first lines of the message, where every auto-reply says what it is. */
+    const AUTO_SUBJECT = /^\s*(?:(?:re|fw|fwd|aw|wg|sv|vs|tr|rv|r)\s*:\s*)*(?:automatic reply|auto(?:matic)?[- ]?reply|autoreply|auto[- ]?response|out of (?:the )?office|ooo\b|abwesenheit|automatische antwort|r[ée]ponse automatique|absent(?:e)? du bureau|respuesta autom[aá]tica|fuera de (?:la )?oficina|risposta automatica|fuori (?:sede|ufficio)|automatisch antwoord|afwezig|resposta autom[aá]tica|automatyczna odpowied[zź]|autosvar|automaattinen vastaus|automatick[aá] odpov[eě]ď|otomatik yan[ıi]t|undeliverable|undelivered mail|delivery status notification|mail delivery (?:failed|failure|subsystem)|delivery has failed|non[- ]?delivery|returned mail|message not delivered)/i;
+    // Says what it is outright: only a machine writes these.
+    const AUTO_STRONG = /\bautomatic(?:ally generated)? (?:reply|response|message|notification)\b|\bauto[- ]?(?:reply|response)\b|\bthis is an auto(?:mated|matic|[- ]generated) (?:reply|response|message|notification|e-?mail)\b|\bthis (?:mailbox|e-?mail address|inbox) is (?:not|no longer) (?:monitored|in use|active)\b|\bdelivery (?:has failed|status notification)\b|\b(?:could|can) ?not be delivered\b|\bundeliverable\b/i;
+    // Away from work…
+    const OOO_PHRASE = /\b(?:i am|i'm|im|i will be|i'll be|i shall be|i have been)\s+(?:currently\s+|now\s+)?(?:out of (?:the )?office|away from (?:the |my )?(?:office|desk|e-?mail)|on (?:annual |parental |maternity |paternity |sick |medical |study |personal )?(?:leave|vacation|holidays?|pto|business travel)|off (?:work |sick )?(?:until|till|from))|\bout of (?:the )?office\b|\bich bin (?:derzeit |zurzeit )?(?:nicht im b[üu]ro|abwesend)\b|\bje suis (?:actuellement )?absent|\bestoy (?:fuera de la oficina|de vacaciones)\b|\bsono (?:fuori ufficio|in ferie)\b/i;
+    // …said the way an auto-reply says it. A person writing "I'm out of the office tomorrow, call Sam" is still a person.
+    const OOO_CONTEXT = /\blimited access to (?:my )?e-?mail\b|\b(?:upon|on|after) my return\b|\b(?:return(?:ing)?|back) (?:on|to the office|in the office|at work)\b|\bwill (?:respond|reply|get back to you|answer)(?: to your (?:e-?mail|message))?(?: as soon as possible)? (?:when|upon|on|after)\b|\buntil\b|\bin my absence\b|\bfor (?:urgent|immediate) (?:matters|issues|requests|queries|support|assistance)\b|\bthank you for your (?:e-?mail|message)\b|\bwith (?:limited|no) access\b/i;
+    // SOTI's own automatic acknowledgement — only ever on a short message from our side.
+    const AUTO_ACK = /\b(?:your |a |the )?(?:support )?(?:case|ticket|request)(?: number)?(?: #?\s*[A-Z]?\d{4,})? has been (?:created|opened|logged|received|registered)\b|\bthis is an auto(?:mated|matic|[- ]generated)\b|\bdo not reply (?:directly )?to this (?:automated )?(?:e-?mail|message)\b/i;
+
+    function autoMessageWhy(i) {
+        if (!i || typeof i !== 'object') return '';
+        if (i.kind === 'call' || i.internal) return '';
+        if (i.auto === true) return String(i.autoWhy || 'automatic message');
+        const subj = String(i.subject || '');
+        const sm = subj && AUTO_SUBJECT.exec(subj);
+        if (sm) return /deliver|returned mail/i.test(sm[0]) ? 'delivery failure (bounce)' : 'automatic reply (out of office)';
+        const body = String(i.body || '').replace(/\s+/g, ' ').trim();
+        if (!body) return '';
+        const head = body.slice(0, 600);
+        const sm2 = AUTO_STRONG.exec(head);
+        if (sm2) return /deliver/i.test(sm2[0]) ? 'delivery failure (bounce)' : 'automatic reply (out of office)';
+        if (OOO_PHRASE.test(head) && OOO_CONTEXT.test(head) && body.length < 2500) return 'automatic reply (out of office)';
+        if (i.fromUs === true && body.length < 900 && AUTO_ACK.test(head)) return 'automatic acknowledgement';
+        return '';
+    }
+
+    /* ---------------------------------------------------------------------
+     * MEETINGS — WHAT HAPPENED, NOT WHAT WAS MENTIONED (5.0.1)
+     * ---------------------------------------------------------------------
+     * The old test took ANY message naming WebEx, Teams or a remote session as a meeting held at
+     * the moment the message was sent. So an email asking "are you free for a Teams call?", an
+     * invite, a "join the meeting" footer, a customer saying "can we have a remote session" — each
+     * became "Meeting never written up" at a time when no meeting took place.
+     *
+     * Now, sentence by sentence:
+     *   HELD      — the words say a session took place: "thanks for the call today", "during our
+     *               Webex", "as discussed on the call", "we had a remote session", or a call log.
+     *               Only these can be "never written up".
+     *   ARRANGED  — a session proposed, requested or invited, with nothing to say it happened.
+     *               Reported as "check it went ahead", never as a failure.
+     * A sentence in the future tense ("we will", "tomorrow", "let me know a time") is never HELD.
+     * Every flag carries the sentence it stands on, so a reviewer can check it in one look. */
+    const SESSION_WORDS = String.raw`(?:(?:phone |conference |teams |zoom |webex |video |remote )?call|meeting|session|webex|teams(?: call| meeting| session)?|zoom(?: call| meeting| session)?|remote(?: support| control| troubleshooting)? session|screen ?share|troubleshooting session|conversation)`;
+    const NOT_INVITE = String.raw`(?! ?(?:invite|invitation|link|request|details|id\b|room))`;
+    const WHEN_PAST = String.raw`(?:the|our|today'?s|yesterday'?s|this morning'?s|this afternoon'?s|earlier|previous|recent|last|my|your)`;
+    const MEETING_HELD = new RegExp([
+        String.raw`\bthank(?:s| you)(?: (?:so |very )?much| again| both)? for (?:your time|joining|taking the time|the time|(?:${WHEN_PAST} |a )?${SESSION_WORDS}${NOT_INVITE})`,
+        String.raw`\b(?:during|after|following|per|from|in|on|over) ${WHEN_PAST} ${SESSION_WORDS}${NOT_INVITE}\b`,
+        String.raw`\b(?:we|i) (?:had|held|did|completed|conducted|ran|joined|finished|ended|wrapped up) (?:a|an|the|our|this|that|today'?s) (?:\w+ ){0,2}?${SESSION_WORDS}${NOT_INVITE}\b`,
+        String.raw`\b(?:spoke|spoken|talked|met) (?:to|with) (?:\S+ ){0,5}?(?:on|over|via|during|in) (?:a |the |our |)?(?:phone|call|teams|webex|zoom|session|meeting)\b`,
+        String.raw`\bas (?:we |i )?(?:discussed|agreed|mentioned|explained|reviewed|shown|demonstrated) (?:on|in|during|over|earlier on|at) (?:the |our |today'?s |a |this morning'?s |yesterday'?s )?${SESSION_WORDS}\b`,
+        String.raw`\b(?:our|the|today'?s) ${SESSION_WORDS} (?:today|earlier|this morning|this afternoon|yesterday|just now)\b`,
+        String.raw`\b(?:i|we) (?:connected|remoted) (?:remotely|in remotely|to (?:the|your|their) (?:device|machine|server|pc|computer|console))\b`,
+        String.raw`\b(?:the|our) (?:call|meeting|session|webex) (?:went|ended|took place|was held|has ended|is over)\b`,
+    ].join('|'), 'i');
+    const MEETING_FUTURE = /\b(?:will|shall|going to|tomorrow|next (?:week|time|monday|tuesday|wednesday|thursday|friday)|later today|scheduled? (?:for|a|the|on)|book(?:ed)? (?:a|in)|arrange|set up|propose|available|availability|convenient|let (?:me|us) know|please join|invite|invitation|upcoming|would you like|can we|could we|shall we|when (?:are|would|is) you|are you free|if needed|if required|if you (?:want|wish|would like))\b/i;
+    const MEETING_MENTION = /\b(webex|zoom (?:call|meeting|link)|teams (?:call|meeting|session|invite|link)|microsoft teams meeting|remote (?:session|assistance|support session|control session)|screen ?share|screenshare|gotomeeting|google meet|conference call|troubleshooting session|joint session|live session|meeting invite|calendar invite|join (?:the |a |our )?(?:call|meeting|session))\b/i;
+    const CALENDAR_SUBJECT = /^\s*(?:(?:re|fw|fwd)\s*:\s*)*(?:accepted|declined|tentative(?:ly accepted)?|invitation|updated invitation|new time proposed|canceled|cancelled)\s*:/i;
+    // What reads as a write-up of a session: the old note test, plus the shapes a recap usually takes.
+    const MEETING_WRITEUP = /\b(meeting notes?|call notes?|session notes?|minutes of|summary of (?:the )?(?:call|meeting|session)|(?:call|meeting|session) summary|recap|during (?:the|our) (?:call|meeting|session|webex|remote session)|on (?:the|our) call|in (?:the|our) (?:call|meeting|session)|we (?:discussed|reviewed|walked through|went through|covered|agreed|found|checked|confirmed|tested|verified|identified|observed|noticed)|attendees|action items?|next steps|as discussed|findings)\b/i;
+
+    function sentencesOf(text) {
+        return String(text || '').replace(/\r\n/g, '\n').split(/(?<=[.!?])\s+|\n+/).map(x => x.trim()).filter(x => x.length > 3);
+    }
+    /* { kind: 'call' | 'held' | 'arranged' | '', quote } for one item of the timeline. */
+    function meetingSignal(i) {
+        if (!i) return { kind: '', quote: '' };
+        if (i.kind === 'call') return { kind: 'call', quote: String(i.body || '').replace(/\s+/g, ' ').trim().slice(0, 140) };
+        const body = String(i.body || '');
+        if (!body.trim()) {
+            // Nothing readable: what the reader saw in the headers ("WebEx invite") is a mention, never proof.
+            return { kind: i.mentionsMeeting ? 'arranged' : '', quote: '' };
+        }
+        let arranged = '';
+        for (const sent of sentencesOf(body)) {
+            const future = MEETING_FUTURE.test(sent);
+            const q = sent.replace(/[.!?;:,\s]+$/, '').slice(0, 200);
+            if (!future && MEETING_HELD.test(sent)) return { kind: 'held', quote: q };
+            if (!arranged && (MEETING_MENTION.test(sent) || (future && MEETING_HELD.test(sent)))) arranged = q;
+        }
+        if (!arranged && CALENDAR_SUBJECT.test(String(i.subject || ''))) arranged = String(i.subject).slice(0, 200);
+        return arranged ? { kind: 'arranged', quote: arranged } : { kind: '', quote: '' };
+    }
+
     /* THE WHOLE MEASUREMENT, in one pass over the feed.
      *
      * Everything here is a fact about timestamps. Nothing here is an opinion, and nothing here
@@ -287,10 +384,15 @@
         const R = Object.assign({}, DEFAULT_RULES, rules || {});
         const feed = (data && data.qaFeed) || { items: [], reason: 'no-feed', dated: 0, seen: 0 };
         const items = asList(feed.items).filter(i => i && typeof i === 'object');
-        const dated = items.filter(i => i.at);
+        /* AUTOMATIC MESSAGES ARE SET ASIDE before anything is measured — see autoMessageWhy. The case's opening still
+         * looks at every dated item (an auto-reply is still proof the case existed then); nothing else does. */
+        const autoWhy = new Map();
+        for (const i of items) { const why = autoMessageWhy(i); if (why) autoWhy.set(i, why); }
+        const datedAll = items.filter(i => i.at);
+        const dated = datedAll.filter(i => !autoWhy.has(i));
         const now = (data && data.qaReadAt) || Date.now();
 
-        const opened = caseOpenedAt(data, dated);
+        const opened = caseOpenedAt(data, datedAll);
         const assigned = ownerAssignedAt(data, feed);
         // The instant the first response is measured FROM: the transfer when the feed carried
         // one, the case opening when it did not.
@@ -319,7 +421,9 @@
             openedDerived: !!opened.derived,
             ageDays: ageDaysOf(data && data.caseAge),
             milestone: milestoneFor(data && data.caseAge, R),
-            counts: { email: 0, call: 0, internal: 0, post: 0, fromUs: 0, fromCustomer: 0, unattributed: 0 },
+            counts: { email: 0, call: 0, internal: 0, post: 0, fromUs: 0, fromCustomer: 0, unattributed: 0, automatic: 0 },
+            // The automatic messages set aside: { at, sender, fromUs, why }.
+            autoMessages: [],
             // Who the case was handed to, and when — the start of the first response clock
             assignedAt: assigned.at,
             assignedTo: assigned.to,
@@ -352,6 +456,9 @@
             // Meetings
             meetings: [],
             meetingsUndocumented: 0,
+            // Sessions proposed or invited with nothing on the record to say they took place: { at, sender, quote }.
+            sessionsArranged: [],
+            meetingNoteHours: R.meetingNoteHours,
             // Response times after the first
             responseTimes: [],
             medianResponseMs: null,
@@ -360,6 +467,11 @@
 
         for (const i of items) {
             if (out.counts[i.kind] !== undefined) out.counts[i.kind]++;
+            if (autoWhy.has(i)) {
+                out.counts.automatic++;
+                out.autoMessages.push({ at: i.at, sender: i.sender, fromUs: i.fromUs, why: autoWhy.get(i) });
+                continue;
+            }
             if (i.fromUs === true) out.counts.fromUs++;
             else if (i.fromUs === false) out.counts.fromCustomer++;
             else out.counts.unattributed++;
@@ -507,38 +619,54 @@
             out.medianResponseMs = sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
         }
 
-        /* MEETINGS, AND WHETHER THEY WERE WRITTEN UP.
+        /* MEETINGS, AND WHETHER THEY WERE WRITTEN UP — see meetingSignal for what counts as one.
          *
-         * A logged call IS its own note — that is what the call log is for — so it is
-         * documented by construction. Everything else that mentions a session has to be
-         * followed, inside the grace period, by something that reads as a write-up: another
-         * call log, or a post in the past tense about what happened.
+         * A logged call IS its own note. A session the words say took place has to have a write-up
+         * from SOTI within the grace period either side of it: a call log, an internal note, or a
+         * message from us that reads as a recap. Either side, because the call log is often entered
+         * before the customer's "thanks for the call" arrives.
          *
-         * MEETINGS ARE COUNTED ONCE. A WebEx arranged in an email, confirmed in a reply and
-         * mentioned again in the note afterwards is one meeting, not three, and counting the
-         * mentions would report two undocumented meetings on a case that was written up
-         * perfectly. So consecutive mentions inside the grace window collapse into the first
-         * of them, and a mention that is ITSELF a write-up ("as discussed on the call") is
-         * not treated as a new meeting to chase. */
+         * COUNTED ONCE. "Thanks for the call" from the customer and "as discussed on the call" from
+         * us an hour later are one session, not two — mentions inside the grace window of the last
+         * one are the same meeting. */
         const grace = R.meetingNoteHours * HOUR;
-        let lastMeetingAt = null;
-        for (let n = 0; n < dated.length; n++) {
-            const i = dated[n];
-            const isCall = i.kind === 'call';
-            if (!isCall && !i.mentionsMeeting) continue;
-            // A note about a meeting is not another meeting.
-            if (!isCall && i.readsAsMeetingNote && lastMeetingAt !== null && (i.at - lastMeetingAt) <= grace) continue;
-            if (lastMeetingAt !== null && (i.at - lastMeetingAt) <= grace) continue;
-            lastMeetingAt = i.at;
-
-            const documented = isCall || dated.slice(n + 1).some(j =>
-                j.at - i.at >= 0 && j.at - i.at <= grace && j.readsAsMeetingNote);
-            const meeting = {
-                at: i.at, sender: i.sender, kind: i.kind, documented,
-                how: isCall ? 'call log' : documented ? 'note written afterwards' : ''
-            };
-            out.meetings.push(meeting);
-            if (!documented) out.meetingsUndocumented++;
+        const signals = dated.map(i => ({ i, sig: meetingSignal(i) }));
+        for (const { i, sig } of signals) {
+            if (sig.kind !== 'call' && sig.kind !== 'held') continue;
+            const last = out.meetings[out.meetings.length - 1];
+            if (last && i.at - last.lastAt <= grace) {
+                last.lastAt = i.at;
+                if (sig.kind === 'call' && !last.documented) { last.documented = true; last.how = 'call log'; }
+                continue;
+            }
+            out.meetings.push({
+                at: i.at, lastAt: i.at, sender: i.sender, kind: i.kind, fromUs: i.fromUs,
+                evidence: sig.kind === 'call' ? 'call log' : 'held', quote: sig.quote,
+                documented: sig.kind === 'call', how: sig.kind === 'call' ? 'call log' : ''
+            });
+        }
+        for (const mt of out.meetings) {
+            if (mt.documented) continue;
+            const note = dated.find(j => j.fromUs === true && j.at >= mt.at - grace && j.at <= mt.lastAt + grace && (
+                j.kind === 'call'
+                || (j.internal && String(j.body || '').trim().length >= 40)
+                || MEETING_WRITEUP.test(String(j.body || ''))));
+            if (note) {
+                mt.documented = true;
+                mt.how = note.kind === 'call' ? 'call log'
+                    : note.internal ? `internal note, ${fmtDateTime(note.at)}`
+                    : `summary sent by ${note.sender}, ${fmtDateTime(note.at)}`;
+            }
+        }
+        out.meetingsUndocumented = out.meetings.filter(mt => !mt.documented).length;
+        /* ARRANGED, AND NOTHING SAYS IT HAPPENED. An invite is covered by any session on the record from a day before it
+         * to a fortnight after; what is left is for the reviewer to check, not a failure. One per fortnight. */
+        for (const { i, sig } of signals) {
+            if (sig.kind !== 'arranged') continue;
+            if (out.meetings.some(mt => mt.lastAt >= i.at - DAY && mt.at <= i.at + 14 * DAY)) continue;
+            const prev = out.sessionsArranged[out.sessionsArranged.length - 1];
+            if (prev && i.at - prev.at <= 14 * DAY) continue;
+            out.sessionsArranged.push({ at: i.at, sender: i.sender, fromUs: i.fromUs, quote: sig.quote });
         }
 
         /* ---------------------------------------------------------------
@@ -639,13 +767,21 @@
         }
         for (const m of out.meetings) {
             if (m.documented) {
-                F('pass', 'meeting', `Meeting on ${fmtDateTime(m.at)} was written up (${m.how}).`);
+                F('pass', 'meeting', `${m.evidence === 'call log' ? 'Call' : 'Session'} on ${fmtDateTime(m.at)} was written up (${m.how}).`);
             } else {
-                F('fail', 'meeting-note', `A meeting or session around ${fmtDateTime(m.at)} has no call log or post written up within ${R.meetingNoteHours} hours.`);
+                F('fail', 'meeting-note', `A session took place on or before ${fmtDateTime(m.at)} — ${m.sender} wrote “${m.quote}” — `
+                    + `and there is no call log, internal note or written summary from SOTI within ${R.meetingNoteHours} hours of it.`);
             }
         }
-        if (!out.meetings.length && out.itemsDated) {
+        for (const a of out.sessionsArranged) {
+            F('info', 'meeting-arranged', `A session was proposed or invited on ${fmtDateTime(a.at)} (${a.sender}: “${a.quote}”), and nothing on the record says it took place — check whether it went ahead.`);
+        }
+        if (!out.meetings.length && !out.sessionsArranged.length && out.itemsDated) {
             F('info', 'no-meetings', 'No meetings or calls were found on this case.');
+        }
+        if (out.counts.automatic) {
+            F('info', 'automatic', `${out.counts.automatic} automatic message(s) — ${[...new Set(out.autoMessages.map(a => a.why))].join(', ')} — `
+                + 'were set aside: they are not counted as replies, chases, waiting time or a first response.');
         }
         if (out.milestone) {
             F('info', 'milestone', `The case is ${Math.round(out.ageDays)} days old — it is at its ${out.milestone}-day review.`);
@@ -709,7 +845,8 @@
              * its text is missing, and the model must not quote what it cannot see. */
             if (!body && i.bodyUnread) body = '[The text of this message could not be read from the page — its timing and author are known, its wording is not. Do not quote or characterise its contents.]';
 
-            let block = `[${when}] [${kind}] [${who}] ${i.sender}:\n${body}`;
+            const auto = autoMessageWhy(i);
+            let block = `[${when}] [${kind}]${auto ? ` [AUTOMATIC — ${auto}; not written by a person]` : ''} [${who}] ${i.sender}:\n${body}`;
             for (const r of asList(i.replies)) {
                 const rWhen = r.at ? fmtDateTime(r.at) : (r.label || 'date not known');
                 let rBody = String(r.body || '').trim();
@@ -801,7 +938,7 @@
         if (m.ageDays !== null) L.push(`Case age: ${Math.round(m.ageDays)} days${m.milestone ? ` — at its ${m.milestone}-day review milestone` : ''}`);
         L.push(`Feed read: ${m.itemsSeen} message(s), ${m.itemsDated} with a usable timestamp${m.itemsUndated ? `, ${m.itemsUndated} without` : ''}`
             + `${m.itemsBodyless ? `. ${m.itemsBodyless} of them arrived with NO READABLE TEXT — their timing counts, their wording is unknown, and you must not characterise what they said` : ''}.`);
-        L.push(`Message mix: ${m.counts.email} email(s), ${m.counts.call} call log(s), ${m.counts.internal} internal note(s), ${m.counts.post} post(s). ${m.counts.fromUs} from SOTI, ${m.counts.fromCustomer} from the customer${m.counts.unattributed ? `, ${m.counts.unattributed} could not be attributed` : ''}.`);
+        L.push(`Message mix: ${m.counts.email} email(s), ${m.counts.call} call log(s), ${m.counts.internal} internal note(s), ${m.counts.post} post(s). ${m.counts.fromUs} from SOTI, ${m.counts.fromCustomer} from the customer${m.counts.unattributed ? `, ${m.counts.unattributed} could not be attributed` : ''}${m.counts.automatic ? `, plus ${m.counts.automatic} automatic message(s) set aside` : ''}.`);
 
         const frtStart = m.assignedAt ? 'the transfer' : 'the case opening';
         if (m.frtMet === true) L.push(`FIRST RESPONSE: MET — ${fmtDuration(m.firstResponseMs)} after ${frtStart} (target ${R.frtHours} hours), sent by ${m.firstResponseBy || 'an agent'}.`);
@@ -830,12 +967,19 @@
         if (m.medianResponseMs !== null) L.push(`TYPICAL REPLY TIME after the first response: ${fmtDuration(m.medianResponseMs)} (median of ${m.responseTimes.length}).`);
 
         if (m.meetings.length) {
-            L.push(`MEETINGS / CALLS: ${m.meetings.length}, of which ${m.meetingsUndocumented} have NO note written up within ${R.meetingNoteHours} hours.`);
+            L.push(`MEETINGS / CALLS THAT TOOK PLACE: ${m.meetings.length}, of which ${m.meetingsUndocumented} have NO call log, internal note or written summary within ${R.meetingNoteHours} hours.`);
             for (const mt of m.meetings.slice(0, 12)) {
-                L.push(`  - ${fmtDateTime(mt.at)} (${mt.sender}): ${mt.documented ? `written up — ${mt.how}` : 'NO MEETING NOTE FOUND'}`);
+                L.push(`  - ${fmtDateTime(mt.at)} (${mt.sender}${mt.quote && mt.evidence !== 'call log' ? `: “${mt.quote}”` : ', call log'}): ${mt.documented ? `written up — ${mt.how}` : 'NO WRITE-UP FOUND'}`);
             }
         } else {
-            L.push('MEETINGS / CALLS: none found on this case.');
+            L.push('MEETINGS / CALLS THAT TOOK PLACE: none found on this case.');
+        }
+        if (asList(m.sessionsArranged).length) {
+            L.push(`SESSIONS PROPOSED OR INVITED, WITH NOTHING ON THE RECORD TO SAY THEY TOOK PLACE: ${m.sessionsArranged.length}. Not a finding on their own — do not report them as meetings that were held.`);
+            for (const a of m.sessionsArranged.slice(0, 6)) L.push(`  - ${fmtDateTime(a.at)} (${a.sender}): “${a.quote}”`);
+        }
+        if (m.counts && m.counts.automatic) {
+            L.push(`AUTOMATIC MESSAGES SET ASIDE: ${m.counts.automatic} (out-of-office replies, bounces, automatic acknowledgements). They are marked [AUTOMATIC] in the transcript. Never treat one as a customer reply, a chase, a sign of frustration, or a response from SOTI.`);
         }
         if (!m.readable) {
             L.push('WARNING: this case\'s feed could not be fully read or attributed. Do not report timing findings as certain — say what could not be established.');
@@ -1494,6 +1638,8 @@ Fill in EXACTLY the headers below, in this order, each header at the start of it
 RULES:
 - Ground every statement ONLY in the case material given with this request — it is either written out below or attached to this message as a file, and either way it is the only thing you may draw on. Never invent a date, a version, an article number, a JIRA code or a name. If something is not in the material, say "Not evident from the case".
 - The [MEASURED FACTS] block is arithmetic already done for you. Quote it, never recompute it, and never contradict it. If it says the first response was missed, it was missed.
+- Messages marked [AUTOMATIC] — out-of-office replies, bounces, automatic acknowledgements — were written by no one. Never treat one as a customer reply, a chase, a sign of frustration, an escalation, or a response from SOTI, and never mark the handling down for one.
+- A meeting is "not written up" ONLY when [MEASURED FACTS] lists it under MEETINGS / CALLS THAT TOOK PLACE with NO WRITE-UP FOUND. A session that was only proposed, requested or invited is not a meeting that was held — at most, say it is not clear from the record whether it went ahead.
 - The transcript is OLDEST FIRST. The end of it is where the case stands now.
 - The person who reported the problem is the CUSTOMER. Anyone writing on behalf of SOTI Support is the AGENT. Never swap these roles.
 - ${who ? `Everyone on this record appears under a role label (${AGENT}, Customer 1, and so on) — see WHO IS WHO ON THIS RECORD below. Write about the labels. Never use a personal name, and never guess at one.` : 'Refer to people by their role.'}
@@ -1635,6 +1781,8 @@ RULES:
 - Never invent a date, a version, an article number, a JIRA code, a name or a quote.
 - Quote and cite. When you make a claim about what happened, name the date and who wrote it, so the reviewer can go and look.
 - The [MEASURED FACTS] block is arithmetic already done from the case timestamps. Treat it as true, never recompute it, and never contradict it.
+- Messages marked [AUTOMATIC] — out-of-office replies, bounces, automatic acknowledgements — were written by no one. Never treat one as a customer reply, a chase, a sign of frustration, an escalation, or a response from SOTI, and never mark the handling down for one.
+- A meeting is "not written up" ONLY when [MEASURED FACTS] lists it under MEETINGS / CALLS THAT TOOK PLACE with NO WRITE-UP FOUND. A session that was only proposed, requested or invited is not a meeting that was held — at most, say it is not clear from the record whether it went ahead.
 - The transcript is OLDEST FIRST. The end of it is where the case stands now.
 - The person who reported the problem is the CUSTOMER. Anyone writing for SOTI Support is the AGENT. Never swap these roles.
 ${legend ? '- Everyone on this record appears under a role label. Use those labels and only those labels, and never guess at a personal name.' : ''}
@@ -2046,6 +2194,8 @@ ${lines}`;
         fmtDuration, fmtDateTime, fmtDate,
         ageDaysOf, milestoneFor,
         measureCase,
+        autoMessageWhy,
+        meetingSignal,
         buildTranscript,
         measurementBlock,
         caseFactsBlock,

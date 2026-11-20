@@ -73,6 +73,9 @@
         if (!at) return null;
         return items.find((i) => i.at === at) || null;
     }
+    /* AN AUTOMATIC MESSAGE (out of office, a bounce, "your case has been created") is nobody speaking — QaEngine's
+     * autoMessageWhy, the one rule the measurement uses too. Left out of every check below. */
+    const isAuto = (i) => !!(E() && E().autoMessageWhy && E().autoMessageWhy(i));
 
     function timelineAgent(ctx) {
         const { m, items, flag, data, rec } = ctx;
@@ -101,7 +104,7 @@
         }
         // Each customer email that followed another with nothing from SOTI between: the customer chasing.
         let lastCustomer = null;
-        for (const i of items.filter((x) => x.at)) {
+        for (const i of items.filter((x) => x.at && !isAuto(x))) {
             if (i.fromUs === false) {
                 if (lastCustomer) flag('Timeline', 'warn', 'Customer chased', `${i.sender} wrote again on ${when(i.at)} with no reply since ${when(lastCustomer.at)}.`, i.at, i.url || cl, true);
                 lastCustomer = i;
@@ -120,7 +123,7 @@
     function communicationAgent(ctx) {
         const { items, flag, data, rec } = ctx;
         const cl = caseLink(data, rec);
-        const fromCustomer = items.filter((i) => i.fromUs === false && i.body);
+        const fromCustomer = items.filter((i) => i.fromUs === false && i.body && !isAuto(i));
         const esc = fromCustomer.filter((i) => ESCALATE.test(i.body));
         for (const i of esc.slice(-2)) flag('Communication', 'fail', 'Customer asked for escalation or complained', `“${quote(i.body, ESCALATE)}” — ${i.sender}, ${when(i.at)}.`, i.at, i.url || cl, false, 8);
         const upset = fromCustomer.filter((i) => !ESCALATE.test(i.body) && FRUSTRATED.test(i.body));
@@ -183,7 +186,7 @@
         }
         // THE 3x CLOSURE PROCESS: three attempts to reach the customer, after their last reply, before closing.
         if (/\b3\s*x\b|three[\s-]*strike|3[\s-]*strike/i.test(status) && closedAt) {
-            const dated = items.filter((i) => i.at && i.at <= closedAt);
+            const dated = items.filter((i) => i.at && i.at <= closedAt && !isAuto(i));
             const lastCustomer = [...dated].reverse().find((i) => i.fromUs === false);
             const attempts = dated.filter((i) => i.fromUs === true && !i.internal && (i.kind === 'email' || i.kind === 'call') && (!lastCustomer || i.at > lastCustomer.at));
             const days = new Set(attempts.map((i) => new Date(i.at).toDateString())).size;
@@ -205,10 +208,21 @@
         if (m && notesRead && m.counts && m.counts.internal === 0 && m.itemsSeen > 2) {
             flag('Documentation', 'warn', 'No internal notes', 'Nothing on the case records what was found or tried, for the next person.', null, cl, true);
         }
+        /* ONLY A SESSION THAT TOOK PLACE can be "never written up" — see meetingSignal in qa-engine.js. The detail quotes
+         * the sentence that says it happened, so the team lead can check the flag without opening anything. */
         for (const mt of list(m && m.meetings)) {
             if (mt.documented) continue;
             const it = itemAt(items, mt.at);
-            flag('Documentation', 'fail', 'Meeting never written up', `A session around ${when(mt.at)} has no call log or notes after it.`, mt.at, (it && it.url) || cl, true);
+            const said = mt.quote ? ` ${mt.sender} wrote: “${String(mt.quote).slice(0, 160)}”.` : '';
+            flag('Documentation', 'fail', 'Meeting never written up',
+                `A session took place on or before ${when(mt.at)}.${said} No call log, internal note or written summary from SOTI within ${m.meetingNoteHours || 24} hours of it.`,
+                mt.at, (it && it.url) || cl, true);
+        }
+        for (const a of list(m && m.sessionsArranged)) {
+            const it = itemAt(items, a.at);
+            flag('Documentation', 'warn', 'Session arranged — check it went ahead',
+                `${a.sender} on ${when(a.at)}: “${String(a.quote || '').slice(0, 160)}”. Nothing on the record says it took place.`,
+                a.at, (it && it.url) || cl, true);
         }
     }
 

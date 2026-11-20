@@ -28,6 +28,26 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 /* ============================================================================
+ * THE GRAPHQL READ — the SOTI AI Analyser's (Beta 9.8.6), see salesforce/sf-graphql.js
+ * ============================================================================
+ * Every Salesforce read the panel makes over GraphQL runs through here: the panel asks, this worker finds an open
+ * Lightning tab (the one in front first) and runs the query in its page, where Salesforce's own GraphQL API lives.
+ * Read-only. Registered synchronously as the worker starts, as Chrome requires. */
+try { importScripts('salesforce/sf-graphql.js'); globalThis.SfGraphql.install(); } catch (e) { console.error('QA Tool: sf-graphql.js could not be loaded', e); }
+/* HOW LIGHTNING ASKS FOR A FEED (salesforce/sf-feed-capture.js), noted in the page's own world on every Lightning page
+ * from the start, so the panel can ask Salesforce's feed service for a case's internal notes and posts as data —
+ * nothing scrolled or clicked. It only watches; nothing it notes leaves the page. Registered once, kept across restarts. */
+(async () => {
+  try {
+    const id = 'qa-feed-capture';
+    const have = await chrome.scripting.getRegisteredContentScripts({ ids: [id] });
+    if (!have.length) {
+      await chrome.scripting.registerContentScripts([{ id, matches: ['https://*.lightning.force.com/*'], js: ['salesforce/sf-feed-capture.js'], runAt: 'document_start', world: 'MAIN', allFrames: false, persistAcrossSessions: true }]);
+    }
+  } catch (e) { console.warn('QA Tool: the feed listener could not be registered', e); }
+})();
+
+/* ============================================================================
  * THE RELAY'S CLOCK
  * ============================================================================
  * Carried over from the analyser unchanged, because the problem it solves is a

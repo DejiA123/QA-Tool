@@ -10,6 +10,60 @@ other's settings, cases or reviews.
 
 ---
 
+## What's new in 5.0.0
+
+**Cases are read straight from Salesforce, over GraphQL** — the SOTI AI Analyser's Beta 9.8.6 engine
+(`salesforce/`). No window opens and nothing scrolls: the case's emails, logged calls, internal notes,
+owner changes and closure fields come from the records themselves, through any open Salesforce tab.
+
+* **First response you can trust.** Every email's time is the record's own, and who sent it is
+  Salesforce's *Incoming* flag, not a guess from a signature. The clock starts when the case was
+  handed to its owner, read from Case History.
+* If no Salesforce tab can answer, the case is read the old way, in the background window, so a
+  run never stops. Each review says which read it came from.
+
+**The QA agents.** Four specialists read every case and point the team lead at the moments
+worth looking at: what happened, on which day, and **Open ↗**, which opens that exact email,
+post or call in Salesforce.
+
+* **Timeline**: a late or missing first response, silences while the case waited on SOTI,
+  customer chases, a message left unanswered.
+* **Communication**: a customer who sounds frustrated or asks to escalate, in their own words.
+* **Process**: the **Out of Scope closure process**. Was Duplicate Case # set to C00003333? Did
+  the agent tag the TL with a justification? Did the TL approve before the case closed? Is the
+  Quality Audits section complete? Also the 3x closure process: three attempts after the
+  customer's last reply, on separate days.
+* **Documentation**: the Problem & Resolution Summary, internal notes, and meetings written up.
+* **Fact check**: anything the write-up quotes (a case number, JIRA, link or email address)
+  that is not in the case is flagged on the card.
+
+Each review card shows **Look at this**, a "N to check" count on its header, and a **score from
+the record** beside the written score. The score starts high and drops with every problem,
+with the reasons listed.
+
+**The Agents tab.**
+
+* **Scan closed cases**: one agent's, or every EMEA agent's, closed in the last 30 days, 60 days
+  or 3 months. They are read and scored straight from Salesforce, and no Copilot is needed.
+* **Every case ranked** from the highest score to the lowest, and **Focus on these 5**: the
+  lowest five, each with its moments and a link to every one, plus **QA in full** for the
+  complete written review.
+* **Per agent**: each agent's average, lowest and highest. Click one to see their cases.
+* **Best examples** and **Examples that need work** across EMEA.
+* **From your QA reviews**: the written reviews averaged per agent, all time and for the last 30
+  days.
+
+**Soft Slate**, the Analyser's light theme, is now the default (Settings → Theme switches back to
+Dark).
+
+**The Cases header in two rows**, as in the Analyser. Row 1 holds + (Add Case), the filter box,
+Current View and refresh. Row 2 is one sliding line: the owner dropdown, the age choice (Any
+age, 30/60/90-day, Needs 30/60/90, Not yet QA'd, Already QA'd), the tiers, JIRA and Focus, then
+QA selected, 30/60/90 and ⚙. The sort is in ⚙. The select box is in the column headings.
+
+**Settings, in the Analyser's shape**: one short label per setting, switches as cards, and
+Cancel / Save.
+
 ## What's new in 4.0.1
 
 Everything that has changed since 3.0.0.
@@ -696,6 +750,9 @@ gets a coaching row.
 | `release.json` | The rest of the release (the icons), byte for byte, so a half-synced folder is never loaded. Covered by the signature |
 | `Install_QA_Tool.html` | The install guide for the team — sent to people, not put in the shared folder: a file changed there after signing marks every copy as modified. Put the shared folder's link in it first (search it for `PASTE-THE-QA-TOOL-FOLDER-LINK-HERE`) |
 | `background.js` | Opens the side panel, keeps a clock running for the relay, and looks for a new release in the shared folder |
+| `salesforce/` | The GraphQL read: the SOTI AI Analyser's Beta 9.8.6 modules (`sf-graphql.js`, `sf-case.js`, `sf-activity.js`, `sf-feed.js`, `sf-feed-capture.js`), unchanged, plus the QA Tool's own: one case in the shape the QA engine measures (`sf-qa-case.js`), and many closed cases at once for the Agents tab (`sf-qa-scan.js`) |
+| `qa-agents.js` | The QA agents — Timeline, Communication, Process (Out of Scope, 3x), Documentation — the fact check and the score from the record. Pure: no DOM, no network |
+| `theme.js` | Soft Slate or Dark. The analyser's, recolouring both stylesheets |
 | `updater.js` | Decides when the folder holds a complete, signed new release, and restarts onto it. The analyser's (Global 1.3.2) |
 | `backup.js` | Back up and restore everything the tool stores |
 | `display-size.js` | Settings → Display size, applied before the first paint |

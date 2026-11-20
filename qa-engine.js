@@ -844,6 +844,15 @@
             L.push('WARNING: THE FEED WAS STILL LOADING when this case was read, so what follows is the NEWEST part of it and not the whole case. '
                 + 'The oldest posts are the ones missing. Do not conclude that anything is absent from this case — say that the record could not be read in full.');
         }
+        /* WHAT THE QA AGENTS FOUND (qa-agents.js) — the process and documentation checks the timings above cannot see:
+         * the Out of Scope closure steps, the 3x process, the resolution summary, a customer asking to escalate. Facts
+         * the write-up must not contradict, set apart from the timings so the model can tell what each one is. */
+        const agentFlags = asList(m.flags).filter(f => f && !f.measured && f.severity !== 'info');
+        if (agentFlags.length) {
+            L.push('QA AGENT CHECKS (computed from the case record — treat as true):');
+            for (const f of agentFlags.slice(0, 16)) L.push(`  - [${f.agent}] ${f.severity === 'pass' ? 'OK' : f.severity === 'fail' ? 'FAIL' : 'CHECK'}: ${f.title}${f.when ? ` (${f.when})` : ''}. ${f.detail}`);
+        }
+        if (m.source) L.push(`Read from: ${m.source === 'graphql' ? 'the Salesforce records directly (emails, calls, history and notes, exact times and senders)' : 'the case page'}.`);
         return L.join('\n');
     }
 

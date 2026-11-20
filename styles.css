@@ -24,7 +24,7 @@
 .edition-off { display: none !important; }
 
 /* AI Settings → Display size zooms the root and sets --ui-zoom beside it (applyUiScale in
-   sidepanel.js). Zoom scales 100vw/100vh as if they were ordinary pixels, so every calc() on
+   sidepanel.js). Zoom scales calc(100vw / var(--ui-zoom, 1))/calc(100vh / var(--ui-zoom, 1)) as if they were ordinary pixels, so every calc() on
    a viewport unit divides it by --ui-zoom to stay inside the panel. */
 :root {
     color-scheme: dark;
@@ -100,18 +100,28 @@ body {
  * here that has to survive being seen out of the corner of an eye while the engineer is
  * reading Salesforce. The inset offset keeps it painted OVER the layout, so widening it
  * still costs the panel no space and moves nothing. */
-body.case-mismatch {
-    outline: 8px solid var(--danger, #ef4444);
-    outline-offset: -8px;
+/* ON TOP OF EVERYTHING (9.8.2, the maintainer: "what is the story with the white gap on the left side of the red outline
+ * border line", "THIS IS THE RED EDGE I AM TALKING ABOUT THE GAP ON THE TOP LEFT"). It was the body's own outline, and the
+ * rows at the top (the warning bar, the tabs, the NPS line) are layered above the body, so they painted over it and the edge
+ * stopped short round the top-left. It is now a frame of its own, fixed to the window over every layer, that takes no
+ * clicks and no room: unbroken on all four sides, at every width and display size. */
+body.case-mismatch::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    border: 8px solid var(--danger, #ef4444);
+    pointer-events: none;
+    z-index: 2147483000;
     animation: caseMismatchPulse 1.1s ease-in-out 0s 4;
 }
 @keyframes caseMismatchPulse {
-    0%, 100% { outline-color: rgba(239, 68, 68, .55); }
-    50%      { outline-color: rgba(239, 68, 68, 1); }
+    0%, 100% { border-color: rgba(239, 68, 68, .55); }
+    50%      { border-color: rgba(239, 68, 68, 1); }
 }
 @media (prefers-reduced-motion: reduce) {
-    body.case-mismatch { animation: none; outline-color: #ef4444; }
+    body.case-mismatch::after { animation: none; border-color: #ef4444; }
 }
+:root[data-theme="slate"] body.case-mismatch::after { border-color: #ef4444; }
 
 .case-mismatch-bar {
     flex-shrink: 0;
@@ -530,7 +540,7 @@ body.case-mismatch {
         resize: horizontal;
         overflow: auto;
         max-height: none !important;
-        transition: width .2s ease;
+        transition: none; /* opens in one frame: see the note on .panel-left below */
         border-right: 1px solid var(--border);
         border-top: none !important;
         order: 0 !important;
@@ -544,7 +554,7 @@ body.case-mismatch {
         resize: horizontal;
         overflow: auto;
         max-height: none !important;
-        transition: width .2s ease;
+        transition: none; /* opens in one frame: see the note on .panel-left below */
         border-left: 1px solid var(--border);
         border-top: none !important;
         order: 0 !important;
@@ -573,7 +583,13 @@ body.case-mismatch {
     background: var(--bg1);
     display: flex;
     flex-direction: column;
-    transition: width .2s ease;
+    /* NO WIDTH SLIDE (Beta, 2026-11-02: "if I click the case info button to expand it, there is a little
+       weird pause"). The panel used to grow from 140px to its open width over 0.2 s: its fields
+       appeared squashed at the old width first, and the chat beside it was laid out again on every
+       frame of the slide, which on a long chat and a busy laptop reads as a hitch. Measured with the
+       CPU slowed 4x, the slide was about 40% of the rendering work of opening Case Info. It now
+       opens and closes in one frame. */
+    transition: none;
     width: 100%; /* Full width in mobile view */
 }
 
@@ -703,7 +719,7 @@ body.case-mismatch {
 .pb > * { flex-shrink: 0; }
 
 .panel-left, .panel-right {
-    max-height: 80vh; /* Consistent height in sidepanel mode */
+    max-height: calc(80vh / var(--ui-zoom, 1)); /* Consistent height in sidepanel mode */
 }
 
 /* Salesforce Sync Row */
@@ -1255,7 +1271,7 @@ body.case-mismatch {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    max-height: 45vh;
+    max-height: calc(45vh / var(--ui-zoom, 1));
     overflow-y: auto;
 }
 
@@ -1283,8 +1299,8 @@ body.case-mismatch {
  * comes from.
  *
  * Only the COLLAPSED case needs a rule at all: a panel that is already open is already at that
- * width, dragged or not, and must be left exactly where the engineer put it. The width
- * transition is already on .panel-left, so it slides. One scrollbar, the panel's own — hence
+ * width, dragged or not, and must be left exactly where the engineer put it. The panel
+ * opens at that width in one frame (no slide, see .panel-left). One scrollbar, the panel's own — hence
  * max-height: none on the list, which would otherwise scroll inside a scrolling panel.
  */
 @media (min-width: 600px) {
@@ -1776,7 +1792,7 @@ body.case-mismatch {
     display: flex;
     flex-direction: column;
     gap: 2px;
-    max-height: 46vh;
+    max-height: calc(46vh / var(--ui-zoom, 1));
     overflow-y: auto;
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -1803,6 +1819,48 @@ body.case-mismatch {
     text-overflow: ellipsis;
 }
 .pick-meta { font-size: 10.5px; color: var(--txt3); }
+/* THE PICTURE IN THE ROW (Beta 9.6.2): each image on the case is shown, not only its name; a click shows it full size. */
+.pick-row.has-thumb { align-items: center; }
+.pick-thumb {
+    flex: 0 0 auto;
+    width: 120px;
+    height: 78px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg0);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    font-size: 10px;
+    color: var(--txt3);
+    cursor: zoom-in;
+}
+.pick-thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.pick-thumb.is-loading {
+    cursor: progress;
+    background: linear-gradient(90deg, var(--bg1) 0%, var(--bg3) 50%, var(--bg1) 100%);
+    background-size: 200% 100%;
+    animation: pickShimmer 1.2s linear infinite;
+}
+.pick-thumb.is-none { cursor: default; }
+@keyframes pickShimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .pick-thumb.is-loading { animation: none; } }
+.pick-zoom {
+    position: fixed;
+    inset: 0;
+    z-index: 100000;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 16px;
+    background: rgba(3, 6, 15, .9);
+    cursor: zoom-out;
+}
+.pick-zoom img { max-width: 100%; max-height: calc(100% - 44px); object-fit: contain; border-radius: 6px; box-shadow: 0 10px 40px rgba(0, 0, 0, .5); }
+.pick-zoom-cap { font-size: 11px; color: var(--txt2); text-align: center; }
 
 /* Chat Input Area */
 .chat-foot {
@@ -1953,7 +2011,7 @@ body.case-mismatch {
     padding: 6px 0;
     resize: vertical; /* Allow manual resizing */
     min-height: 32px;
-    max-height: 50vh; /* Allow it to take up to half the screen */
+    max-height: calc(50vh / var(--ui-zoom, 1)); /* Allow it to take up to half the screen */
     outline: none;
     overflow-y: auto;
 }
@@ -2142,7 +2200,7 @@ body.case-mismatch {
     padding: 20px;
     width: 95%;
     max-width: 600px;
-    max-height: 95vh;
+    max-height: calc(95vh / var(--ui-zoom, 1));
     display: flex;
     flex-direction: column;
     overflow-y: auto;
@@ -2241,7 +2299,7 @@ body.case-mismatch {
 
 .m-jira {
     max-width: 900px;
-    height: 90vh;
+    height: calc(90vh / var(--ui-zoom, 1));
 }
 .jira-textarea {
     width: 100%;
@@ -2633,7 +2691,7 @@ body.case-mismatch {
 }
 .img-view-ocr-txt {
     margin: 0;
-    max-height: 40vh;
+    max-height: calc(40vh / var(--ui-zoom, 1));
     overflow: auto;
     white-space: pre-wrap;
     word-break: break-word;
@@ -2919,7 +2977,7 @@ body.case-mismatch {
 
 .modal.m-power {
     max-width: 560px;
-    max-height: 88vh;
+    max-height: calc(88vh / var(--ui-zoom, 1));
     overflow-y: auto;
 }
 
@@ -3854,7 +3912,7 @@ input:focus-visible + .set-sw { outline: 2px solid var(--blue2); outline-offset:
     letter-spacing: 0;
 }
 .oc-tag.oc-act-green  { color: #46d17f; text-shadow: 0 0 6px rgba(70, 209, 127, .55); }
-.oc-tag.oc-act-yellow { color: #f2c14e; text-shadow: 0 0 6px rgba(242, 193, 78, .55); }
+.oc-tag.oc-act-yellow { color: #e6e60d; text-shadow: 0 0 6px rgba(230, 230, 13, .55); }
 .oc-tag.oc-act-red    { color: #f4685c; text-shadow: 0 0 6px rgba(244, 104, 92, .55); }
 /* No column on this list view. An empty ring rather than a gap: the row is a grid, and a
    missing cell would slide every tag after it one place left and put the heading strip out
@@ -3904,11 +3962,16 @@ input:focus-visible + .set-sw { outline: 2px solid var(--blue2); outline-offset:
 .oc-col-lastmsg     { flex: 0 1 var(--ocw-lastmsg, 48px); min-width: 40px; text-align: center; padding-left: 2px; padding-right: 2px; }
 /* Sized for MCMR-44187 plus its ↗ — 83px of content, measured — which is the longest thing
    this column routinely holds. */
-.oc-col-jira        { flex: 0 1 var(--ocw-jira, 86px); min-width: 44px; }
+/* THE JIRA KEY IS NEVER SQUEEZED (Beta 9.6.2, the maintainer: "is there a way for the jira not to look squeezed like that"):
+   a key and its ↗ need 82–86px, so the column is 90px and does not shrink; the owner and date columns give way first.
+   The same rule sizes the heading, so it stays over its column. */
+.oc-col-jira        { flex: 0 0 max(90px, var(--ocw-jira, 90px)); min-width: 90px; }
+.oc-tag.oc-col-jira { justify-content: center; overflow: hidden; }
 .oc-col-status      { flex: 0 1 var(--ocw-status, 88px); min-width: 44px; }
-.oc-col-owner       { flex: 0 1 var(--ocw-owner, 66px); min-width: 40px; }
+.oc-col-owner       { flex: 0 1 var(--ocw-owner, 104px); min-width: 44px; }   /* full names since Beta 9.8.4 */
 .oc-col-ownerManager { flex: 0 1 var(--ocw-ownerManager, 96px); min-width: 44px; }
 .oc-col-tempOwner   { flex: 0 1 var(--ocw-tempOwner, 86px); min-width: 44px; }
+.oc-col-escOwner    { flex: 0 1 var(--ocw-escOwner, 86px); min-width: 44px; }
 .oc-col-analysis    { flex: 0 1 var(--ocw-analysis, 120px); min-width: 44px; }
 .oc-col-account     { flex: 0 1 var(--ocw-account, 96px); min-width: 44px; }
 .oc-col-entitlement { flex: 0 1 var(--ocw-entitlement, 80px); min-width: 40px; }
@@ -4013,7 +4076,7 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
 /* Stands in for the expander chevron and the remove cross at the end of every row: two 20px
    buttons and the 6px gap between them, plus the row's 1px right border, which the strip
    does not have. */
-.oc-colhead-spacer { flex: 0 0 47px; }
+.oc-colhead-spacer { flex: 0 0 60px; }   /* what follows the last cell on a row: 6 gap + ▸ 34 (Beta 9.6.2) + 6 gap + × 20, less the strip's own 6 gap */
 
 /* THE ROW THAT WAS JUST ADDED, for a couple of seconds. The list is grouped by tier, so a
    case added at the top of the queue is frequently drawn at the bottom of the screen —
@@ -4730,21 +4793,23 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
 /* TERMS OF USE — see openTermsDialog. */
 .backdrop#mTerms { z-index: 1400; }
 .modal.m-terms { max-width: 460px; }
-.terms-body { font-size: 11.5px; line-height: 1.6; color: var(--txt2); max-height: 55vh; overflow-y: auto; }
+.terms-body { font-size: 11.5px; line-height: 1.6; color: var(--txt2); max-height: calc(55vh / var(--ui-zoom, 1)); overflow-y: auto; }
 .terms-body p { margin: 0 0 8px; }
 .terms-body b { color: var(--txt1); }
 .terms-body ul { margin: 0 0 8px; padding-left: 18px; }
 .terms-body li { margin: 3px 0; }
-/* Ownership, the integrity check and the terms, in AI Settings. */
+/* Ownership and the terms, in AI Settings. */
 .about-own { margin-top: 14px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border2); background: rgba(255, 255, 255, .03); font-size: 11px; line-height: 1.6; color: var(--txt2); }
 .about-own strong { display: block; color: var(--txt1); margin-bottom: 4px; }
 .about-integrity { margin-top: 6px; font-weight: 600; }
+.about-integrity[hidden] { display: none; }
 .about-integrity.is-ok { color: var(--green); }
 .about-integrity.is-bad { color: #ffb4a8; }
+/* A changed copy, on every screen (the Global build). Red, and not dismissable. */
+.integrity-banner { flex-shrink: 0; padding: 6px 12px; background: rgba(239, 68, 68, .14); border-bottom: 1px solid rgba(239, 68, 68, .45); color: #ffd1ca; font-size: 11px; font-weight: 600; line-height: 1.45; }
+.integrity-banner[hidden] { display: none; }
 .about-terms { margin-top: 4px; }
 .about-terms a { color: var(--blue2); }
-/* A changed copy, on every screen. Red, and not dismissable. */
-.integrity-banner { flex-shrink: 0; padding: 6px 12px; background: rgba(239, 68, 68, .14); border-bottom: 1px solid rgba(239, 68, 68, .45); color: #ffd1ca; font-size: 11px; font-weight: 600; line-height: 1.45; }
 /* How far the connection check has got. */
 .cps-progress { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .cps-progress-track { flex: 1 1 auto; height: 6px; border-radius: 999px; background: rgba(255, 255, 255, .08); overflow: hidden; }
@@ -4783,7 +4848,7 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
 
 .note-area {
     min-height: 190px;
-    max-height: 46vh;
+    max-height: calc(46vh / var(--ui-zoom, 1));
     font-size: 12.5px;
     line-height: 1.65;
     padding: 12px 13px;
@@ -4849,7 +4914,7 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
 .usage-head:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 6px; }
 
 .usage-panel {
-    max-height: 42vh;
+    max-height: calc(42vh / var(--ui-zoom, 1));
     overflow-y: auto;
     padding: 10px 11px;
     background: var(--bg2);
@@ -5040,7 +5105,7 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
     letter-spacing: -.1px;
     margin-bottom: 6px;
 }
-.bk-pick { display: flex; flex-direction: column; gap: 6px; max-height: 52vh; overflow-y: auto; }
+.bk-pick { display: flex; flex-direction: column; gap: 6px; max-height: calc(52vh / var(--ui-zoom, 1)); overflow-y: auto; }
 .bk-pick-item {
     display: flex;
     flex-direction: column;
@@ -5152,7 +5217,7 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    max-height: 22vh;
+    max-height: calc(22vh / var(--ui-zoom, 1));
     overflow-y: auto;
 }
 .acct-cc:empty { display: none; }
@@ -5241,24 +5306,24 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
 }
 
 /* Shorter than .note-area's 190px: this box has the Cc list and a subject field
-   above the message, and a modal capped at 95vh has to give that room back from
+   above the message, and a modal capped at calc(95vh / var(--ui-zoom, 1)) has to give that room back from
    somewhere. Still four or five paragraphs on screen at once. */
 .acct-body {
     min-height: 150px;
-    max-height: 34vh;
+    max-height: calc(34vh / var(--ui-zoom, 1));
 }
 
 /* ===========================================================================
    THE OUT-OF-OFFICE BOX — see #mOoo and draftOutOfOfficeEmails
    ========================================================================= */
-.modal.m-ooo { max-width: 560px; max-height: 95vh; overflow-y: auto; }
+.modal.m-ooo { max-width: 560px; max-height: calc(95vh / var(--ui-zoom, 1)); overflow-y: auto; }
 .m-ooo .mtitle { font-size: 14px; font-weight: 650; color: var(--txt1); margin-bottom: 6px; }
 .ooo-grid { display: flex; flex-direction: column; gap: 6px; }
 .ooo-grid .acct-lab { margin: 8px 0 0; }
 .ooo-dates { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .ooo-dates .finput { width: 100%; color-scheme: dark; }
 .ooo-tok { text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--txt4); margin-left: 6px; }
-.ooo-body { min-height: 160px; max-height: 30vh; }
+.ooo-body { min-height: 160px; max-height: calc(30vh / var(--ui-zoom, 1)); }
 .m-ooo .acct-cc-head { margin-top: 14px; align-items: center; }
 .ooo-all {
     background: none;
@@ -5271,7 +5336,7 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
 }
 .ooo-all:hover { color: #fff; border-color: var(--blue); }
 /* THE CASE LIST IS NEVER THE PART SQUEEZED TO MAKE ROOM.
-   The box is a flex column capped at 95vh, and this list was the only thing in it
+   The box is a flex column capped at calc(95vh / var(--ui-zoom, 1)), and this list was the only thing in it
    allowed to shrink — every field above it holds its height, the message keeps its
    160px — so in a side panel it came down to two cases of twenty-six. It now keeps
    room for seven or eight however tall the form is (the box scrolls instead), can be
@@ -5281,9 +5346,9 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
     flex-direction: column;
     gap: 2px;
     flex: 0 0 auto;
-    height: clamp(240px, 46vh, 560px);
+    height: clamp(240px, calc(46vh / var(--ui-zoom, 1)), 560px);
     min-height: 150px;
-    max-height: 85vh;
+    max-height: calc(85vh / var(--ui-zoom, 1));
     resize: vertical;
     overflow-y: auto;
     border: 1px solid var(--border);
@@ -5296,7 +5361,7 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
 /* EXPANDED: the email folds to one line and the list takes every pixel left in the box,
    with the Draft button still in view underneath it. */
 .ooo-summary { display: none; }
-.modal.m-ooo.ooo-list-max { height: 95vh; }
+.modal.m-ooo.ooo-list-max { height: calc(95vh / var(--ui-zoom, 1)); }
 .m-ooo.ooo-list-max > .mask-note,
 .m-ooo.ooo-list-max .ooo-grid { display: none; }
 .m-ooo.ooo-list-max .ooo-summary {
@@ -6029,8 +6094,8 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
 .notes-modal {
     max-width: 720px;
     width: 96%;
-    height: 88vh;
-    max-height: 88vh;
+    height: calc(88vh / var(--ui-zoom, 1));
+    max-height: calc(88vh / var(--ui-zoom, 1));
     padding: 16px;
     gap: 12px;
     overflow: hidden;          /* the BOARD scrolls, not the dialog */
@@ -6318,7 +6383,7 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
 .backdrop#mRemind { z-index: 1200; }
 .remind-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .remind-bell { font-size: 20px; }
-.remind-body { display: flex; flex-direction: column; gap: 8px; max-height: 56vh; overflow-y: auto; }
+.remind-body { display: flex; flex-direction: column; gap: 8px; max-height: calc(56vh / var(--ui-zoom, 1)); overflow-y: auto; }
 .remind-row {
     background: var(--bg3);
     border: 1px solid rgba(239, 68, 68, .35);
@@ -7085,7 +7150,7 @@ body.oc-resizing { cursor: col-resize !important; user-select: none !important; 
 
 /* ---- The error log window ---- */
 .backdrop.logs-backdrop { z-index: 1100; }
-.modal.m-logs { max-width: 640px; height: 88vh; }
+.modal.m-logs { max-width: 640px; height: calc(88vh / var(--ui-zoom, 1)); }
 .logs-note { margin-bottom: 10px; }
 .logs-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .logs-chips {
@@ -7438,7 +7503,7 @@ mark.fn-hit { background: #fde68a; color: #1f2937; border-radius: 3px; padding: 
 .jp-prod { font-size: 10.5px; font-weight: 700; color: var(--txt2); background: var(--bg1); border: 1px solid var(--border2); border-radius: 7px; padding: 3px 9px; cursor: pointer; }
 .jp-prod:hover, .jp-prod:focus-visible { border-color: rgba(34, 197, 94, .7); color: #fff; outline: none; }
 .jp-prod.on { border-color: rgba(34, 197, 94, .6); color: #bbf7d0; background: rgba(34, 197, 94, .1); }
-.jp .modal { max-height: 92vh; }
+.jp .modal { max-height: calc(92vh / var(--ui-zoom, 1)); }
 
 /* THE JIRA ON THE CASE (After A, 2026-10-21): status pill, "synced" line, Draft → Triage callout. */
 .jira-pill { flex: none; font-size: 9.5px; font-weight: 800; letter-spacing: .06em; border-radius: 999px; padding: 2px 7px; white-space: nowrap; align-self: center; }
@@ -7474,6 +7539,20 @@ mark.fn-hit { background: #fde68a; color: #1f2937; border-radius: 3px; padding: 
 .update-banner { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 12px;
     background: rgba(99, 102, 241, .12); border-bottom: 1px solid rgba(129, 140, 248, .40); font-size: 11px; color: #c7d2fe; }
 .update-banner[hidden] { display: none; }
+/* The new version that must be loaded (2026-11-18): over everything, no way past it but Reload. */
+.upd-must { position: fixed; inset: 0; z-index: 2147483000; display: flex; align-items: center; justify-content: center; padding: 16px;
+    background: rgba(8, 12, 24, .72); backdrop-filter: blur(3px); }
+.upd-must[hidden] { display: none; }
+.upd-must-card { width: 100%; max-width: 380px; background: var(--bg1); border: 1px solid rgba(129, 140, 248, .55); border-radius: 14px; padding: 22px 20px 18px;
+    text-align: center; box-shadow: 0 18px 50px rgba(0, 0, 0, .45); }
+.upd-must-ic { width: 46px; height: 46px; margin: 0 auto 10px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 800;
+    color: #fff; background: linear-gradient(135deg, #6366f1, #8b5cf6); }
+.upd-must-t { font-size: 15px; font-weight: 800; color: var(--txt1); }
+.upd-must-s { font-size: 12px; color: var(--txt2); margin-top: 6px; line-height: 1.5; }
+.upd-must-go { margin-top: 14px; width: 100%; height: 38px; border: none; border-radius: 10px; font-size: 13.5px; font-weight: 800; color: #fff; cursor: pointer;
+    background: linear-gradient(90deg, #6366f1, #8b5cf6); }
+.upd-must-go:disabled { opacity: .7; cursor: default; }
+.upd-must-n { font-size: 11px; color: var(--txt3); margin-top: 8px; line-height: 1.45; }
 .update-banner-tag { flex-shrink: 0; font-size: 9.5px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase; color: #a5b4fc; }
 .update-banner-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.4; font-weight: 600; }
 .update-banner-go { flex-shrink: 0; padding: 3px 10px; border: 1px solid rgba(129, 140, 248, .6); border-radius: 6px;
@@ -7623,7 +7702,7 @@ mark.fn-hit { background: #fde68a; color: #1f2937; border-radius: 3px; padding: 
 .cj-m[hidden] { display: none; }
 .hub-found { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .hub-found .rs-row[hidden] { display: none; }
-.jc-modal { max-width: 560px; width: calc(100% - 24px); max-height: calc(100vh - 40px); display: flex; flex-direction: column; }
+.jc-modal { max-width: 560px; width: calc(100% - 24px); max-height: calc(calc(100vh / var(--ui-zoom, 1)) - 40px); display: flex; flex-direction: column; }
 .jc-h { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .jc-x { background: none; border: none; color: var(--txt2); font-size: 20px; cursor: pointer; }
 .jc-body { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
@@ -7701,7 +7780,7 @@ textarea.jc-in { min-height: 60px; }
 .rhub-qo-btn:hover { border-color: rgba(129, 140, 248, .85) !important; }
 .rhub-qo-btn .car { opacity: .7; font-size: 9px; transition: transform .15s; }
 .rhub-qo-btn[aria-expanded="true"] .car { transform: rotate(180deg); }
-.rhub-qo-pop { position: absolute; right: 14px; width: min(320px, calc(100% - 28px)); z-index: 60; border-radius: 14px; padding: 8px; background: var(--bg1, #151a2e); border: 1px solid rgba(129, 140, 248, .35); box-shadow: 0 18px 40px rgba(0, 0, 0, .45), inset 0 0 0 1px rgba(255, 255, 255, .03); max-height: 70vh; overflow-y: auto; }
+.rhub-qo-pop { position: absolute; right: 14px; width: min(320px, calc(100% - 28px)); z-index: 60; border-radius: 14px; padding: 8px; background: var(--bg1, #151a2e); border: 1px solid rgba(129, 140, 248, .35); box-shadow: 0 18px 40px rgba(0, 0, 0, .45), inset 0 0 0 1px rgba(255, 255, 255, .03); max-height: calc(70vh / var(--ui-zoom, 1)); overflow-y: auto; }
 .rhub-qo-pop[hidden] { display: none; }
 .rqo-lab { padding: 6px 8px 4px; font-size: 9.5px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; color: var(--txt3); }
 .rqo-sep { border-top: 1px solid var(--border2); margin: 6px 4px; }
@@ -7715,3 +7794,1793 @@ textarea.jc-in { min-height: 60px; }
 .rqo-t { font-size: 11.5px; font-weight: 700; line-height: 1.25; }
 .rqo-s { font-size: 10.5px; color: var(--txt3); line-height: 1.3; }
 .rqo-s { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* 9.5.5 — the background windows button, in the panel's bottom-right corner */
+.bgp-btn { position: fixed; right: 2px; bottom: 2px; width: 18px; height: 18px; padding: 0; display: grid; place-items: center; border-radius: 6px; border: 1px solid var(--border2); background: var(--bg1, #151a2e); color: var(--txt2); opacity: .7; cursor: pointer; z-index: 9000; }
+.bgp-btn:hover, .bgp-btn:focus-visible { opacity: 1; color: var(--txt1); border-color: rgba(129, 140, 248, .7); outline: none; }
+.bgp-pop { position: fixed; right: 4px; bottom: 24px; width: min(280px, calc(calc(100vw / var(--ui-zoom, 1)) - 8px)); z-index: 9001; padding: 8px; border-radius: 12px; background: var(--bg1, #151a2e); border: 1px solid rgba(129, 140, 248, .35); box-shadow: 0 14px 34px rgba(0, 0, 0, .45); }
+.bgp-pop[hidden] { display: none; }
+.bgp-h { font-size: 9.5px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; color: var(--txt3); padding: 2px 4px 6px; }
+.bgp-none { font-size: 11px; color: var(--txt2); padding: 4px; }
+.bgp-row { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-top: 1px solid var(--border2); }
+.bgp-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.bgp-tx b { font-size: 11.5px; color: var(--txt1); }
+.bgp-tx span { font-size: 10px; color: var(--txt3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bgp-go { flex: none; padding: 4px 10px; border-radius: 7px; border: 1px solid rgba(129, 140, 248, .5); background: rgba(99, 102, 241, .18); color: var(--txt1); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+
+/* 9.5.5 — Create in JIRA: the instance from CMS, to confirm */
+.jc-inst { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.jc-inst-t { font-size: 10.5px; color: var(--txt2); line-height: 1.4; }
+.jc-inst-t.good { color: #86efac; }
+.jc-inst-b { padding: 3px 9px; border-radius: 7px; border: 1px solid var(--border2); background: transparent; color: var(--txt1); font: inherit; font-size: 10.5px; font-weight: 700; cursor: pointer; }
+.jc-inst-b.ok { border-color: rgba(52, 211, 153, .55); background: rgba(52, 211, 153, .12); }
+.jc-inst-b.alt { font-weight: 600; color: var(--txt2); }
+
+/* 9.5.5 — chat tables: whole words, and a wide table scrolls inside its answer instead of being cut off */
+.rhub-msg table { display: block; max-width: 100%; overflow-x: auto; }
+.rhub-msg td, .rhub-msg th { word-break: normal !important; overflow-wrap: break-word !important; }
+
+/* 9.5.10 — Select, the Gmail way: a tick-box on every row (its own click target), one master checkbox with ▾ */
+.oc-row .oc-sel-box { cursor: pointer; padding: 0; background: transparent; flex: none; }
+.oc-row .oc-sel-box:hover { border-color: var(--txt1); }
+.oc-row .oc-sel-box:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.oc-selecting .oc-row { cursor: default; }
+.oc-selecting .oc-row .oc-desc-toggle, .oc-selecting .oc-row .oc-row-del { visibility: visible; }
+.oc-colhead::before { content: ''; flex: 0 0 16px; }
+.oc-gsel { position: relative; display: inline-flex; align-items: center; border-radius: 6px; }
+.oc-gsel-box, .oc-gsel-caret { background: transparent; border: 0; color: var(--txt2); cursor: pointer; height: 28px; padding: 0 4px; border-radius: 6px; display: inline-grid; place-items: center; }
+.oc-gsel-box:hover, .oc-gsel-caret:hover { background: rgba(255, 255, 255, .07); }
+.oc-gsel-mark { width: 15px; height: 15px; border: 1.5px solid var(--txt2); border-radius: 3px; display: grid; place-items: center; font-size: 11px; font-weight: 800; line-height: 1; color: #fff; }
+.oc-gsel-box[data-state="all"] .oc-gsel-mark { background: var(--blue); border-color: var(--blue); }
+.oc-gsel-box[data-state="all"] .oc-gsel-mark::after { content: '✓'; }
+.oc-gsel-box[data-state="some"] .oc-gsel-mark { background: var(--blue); border-color: var(--blue); }
+.oc-gsel-box[data-state="some"] .oc-gsel-mark::after { content: '–'; }
+.oc-gsel-caret { font-size: 10px; padding: 0 3px; }
+.oc-gsel-menu { position: absolute; top: 30px; left: 0; z-index: 60; min-width: 150px; padding: 6px 0; border-radius: 8px; background: var(--bg1, #151a2e); border: 1px solid var(--border2); box-shadow: 0 12px 28px rgba(0, 0, 0, .45); display: flex; flex-direction: column; }
+.oc-gsel-menu[hidden] { display: none; }
+.oc-gsel-menu button { text-align: left; background: none; border: 0; color: var(--txt1); font: inherit; font-size: 12.5px; padding: 7px 16px; cursor: pointer; }
+.oc-gsel-menu button:hover, .oc-gsel-menu button:focus-visible { background: rgba(99, 102, 241, .16); outline: none; }
+
+/* 9.5.10 — the case-row expander, bigger and easier to hit ("make the dropdown to expand cases bigger") */
+.oc-row .oc-desc-toggle { width: 30px; height: 30px; font-size: 15px; color: var(--txt2); border-radius: 7px; }
+.oc-row .oc-desc-toggle:hover { color: var(--txt1); background: rgba(129, 140, 248, .16); }
+
+/* Click-to-sort headings */
+.oc-col-sortable { cursor: pointer; user-select: none; }
+.oc-col-sortable:hover { color: var(--accent, #2563eb); }
+.oc-col-sorted { color: var(--accent, #2563eb); font-weight: 600; }
+.oc-colhead > .oc-col-sorted { overflow: visible !important; }
+.oc-sort-ind { position: absolute; right: -1px; top: 50%; transform: translateY(-50%); font-size: 8px; pointer-events: none; }
+
+/* Edge handle that hides / brings back Case Info: bigger and in the accent colour so it can be found. */
+@media (min-width: 600px) {
+    .pl-edge {
+        left: -12px; width: 24px; height: 56px;
+        background: var(--blue, #3b82f6); border-color: var(--blue, #3b82f6);
+        color: #fff; font-size: 15px; font-weight: 700;
+        box-shadow: 0 0 0 2px rgba(99, 102, 241, .3), 0 3px 10px rgba(0, 0, 0, .45);
+    }
+    .pl-edge:hover { background: var(--blue2, #2563eb); filter: brightness(1.15); }
+    .layout.pl-hidden .pl-edge {
+        left: 0; width: 26px; height: auto; padding: 10px 0;
+        display: flex; flex-direction: column; align-items: center; gap: 6px;
+        animation: plEdgePulse 2.4s ease-in-out 3;
+    }
+    .layout.pl-hidden .pl-edge::after {
+        content: 'Case Details'; writing-mode: vertical-rl; transform: rotate(180deg);
+        font-size: 11px; font-weight: 600; letter-spacing: .3px;
+    }
+}
+@keyframes plEdgePulse {
+    0%, 100% { box-shadow: 0 0 0 2px rgba(99, 102, 241, .3), 0 3px 10px rgba(0, 0, 0, .45); }
+    50% { box-shadow: 0 0 0 6px rgba(129, 140, 248, .45), 0 3px 10px rgba(0, 0, 0, .45); }
+}
+
+/* Read-only Case Info fields: plain text blocks, not input boxes. */
+.ci-ro, .ci-ro:focus, .ci-ro:hover {
+    border-color: transparent !important; background: rgba(255, 255, 255, .03) !important;
+    box-shadow: none !important; outline: none !important; cursor: text;
+}
+select.ci-ro { -webkit-appearance: none; appearance: none; background-image: none !important; cursor: default; pointer-events: none; }
+textarea.ci-ro { resize: vertical; }
+
+/* Check JIRA (i): the searches that were run */
+.cj h4 { display: flex; align-items: center; gap: 6px; }
+.cj-info { margin-left: auto; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border2); background: transparent;
+    color: var(--txt2); font: italic 700 11px Georgia, serif; cursor: pointer; flex: 0 0 auto; }
+.cj-info:hover, .cj-info.on { background: var(--blue, #6366f1); border-color: var(--blue, #6366f1); color: #fff; }
+.cj-qlog { margin: 6px 0 8px; padding: 8px; border: 1px solid var(--border2); border-radius: 8px; background: rgba(255, 255, 255, .03); font-size: 11.5px; }
+.cj-qlog-h { font-weight: 600; margin-bottom: 6px; }
+.cj-q { padding: 6px 0; border-top: 1px solid var(--border); }
+.cj-q:first-of-type { border-top: none; }
+.cj-q-jql { display: block; margin: 3px 0; padding: 4px 6px; border-radius: 4px; background: rgba(0, 0, 0, .25); white-space: pre-wrap; word-break: break-word; font-size: 10.5px; }
+.cj-q-out { color: var(--txt2); }
+.cj-q-err { color: #f87171; }
+
+/* Request router (Beta): the line under an answer */
+.route-row { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--border2); font-size: 11px; line-height: 1.45; color: var(--txt2); display: flex; flex-direction: column; gap: 3px; }
+.route-agents { opacity: .85; }
+.route-facts.ok, .route-check2.ok { color: #4ade80; }
+.route-facts.warn, .route-check2.issues { color: #fbbf24; }
+.route-check2.running { color: var(--txt2); font-style: italic; }
+.route-check2.skipped { opacity: .75; }
+.route-check2 ul { margin: 3px 0 0 16px; padding: 0; }
+.route-check2 li { margin: 1px 0; }
+/* The second check's corrections (Beta) */
+.route-check2-box { display: flex; flex-direction: column; gap: 3px; }
+.route-act { background: none; border: 1px solid var(--border2); color: inherit; border-radius: 4px; font: inherit; font-size: 10.5px; padding: 0 6px; margin: 0 3px 0 0; cursor: pointer; line-height: 1.6; }
+.route-act:hover { background: rgba(255, 255, 255, .08); }
+.route-fixlist { margin: 0 0 0 16px; padding: 0; color: var(--txt2); }
+.route-fix { color: var(--txt2); margin-top: 1px; }
+
+/* The Cases queue: its three groups, and the notice of new temporary and escalation cases. */
+.oc-section { padding: 8px 10px 2px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--txt2); }
+.oc-notice { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-left: 3px solid var(--blue); background: var(--bg2); font-size: 12px; }
+.oc-notice[hidden] { display: none; }
+.oc-notice-close { background: none; border: none; color: var(--txt2); cursor: pointer; }
+
+/* Find in the email chain (Beta) */
+.chain-find-btn { margin-left: auto; background: none; border: 1px solid var(--border2); border-radius: 4px; padding: 0 5px; font-size: 10px; line-height: 1.6; cursor: pointer; color: inherit; }
+.chain-find { display: flex; align-items: center; gap: 4px; margin: 0 0 5px; padding: 3px; border: 1px solid var(--border2); border-radius: 6px; background: var(--bg2); }
+.chain-find[hidden] { display: none; }
+.chain-find input { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: var(--txt); font-size: 12px; padding: 2px 4px; }
+.chain-find.none input { color: #f87171; }
+.chain-find-count { font-size: 10.5px; color: var(--txt2); white-space: nowrap; }
+.chain-find button { background: none; border: none; color: var(--txt2); cursor: pointer; font-size: 11px; padding: 0 3px; }
+.chain-find button:hover { color: var(--txt); }
+
+/* "Show earlier messages" above a long chat's newest messages (Beta, PEAK CONTROL in sidepanel.js). */
+.msg-earlier { display: flex; justify-content: center; padding: 4px 0 10px; }
+.msg-earlier-btn {
+    background: var(--bg2); color: var(--txt2); border: 1px solid var(--border2); border-radius: 999px;
+    padding: 5px 14px; font-size: 11.5px; cursor: pointer;
+}
+.msg-earlier-btn:hover { color: var(--txt1); background: var(--bg3); }
+
+/* REFRESH BESIDE THE COG (Beta 9.6.2) — only while #ocTop is folded away by scrolling, so the list
+   can be refreshed without scrolling back up. The same blue as the refresh it stands in for. */
+.oc-refresh-mini { color: #fff; background: #00a1e0; border-color: transparent; }
+.oc-refresh-mini:hover { background: #0a8cc4; border-color: transparent; color: #fff; }
+.oc-refresh-mini svg { width: 12px; height: 12px; margin: 0 !important; }
+.oc-refresh-mini.spinning svg { animation: oc-refresh-spin .9s linear infinite; transform-origin: 50% 50%; }
+.oc-top:not(.oc-top-hidden) ~ .oc-listbar .oc-refresh-mini { display: none; }
+
+/* 9.6.2: the Sync From Salesforce button is gone from view; the refresh icon stays, at the right. */
+#ocSyncSplit[hidden] { display: none !important; }
+.oc-toolbar #ocRefresh { margin-left: auto !important; }
+
+/* 9.6.2: screenshots under a Create KB Article draft (kbShotsTray). */
+.kb-shots { margin-top: 8px; padding: 10px; border: 1px solid rgba(255,255,255,.12); border-radius: 10px; background: rgba(255,255,255,.03); display: flex; flex-direction: column; gap: 8px; }
+.kb-shots[hidden] { display: none; }
+.kb-shots-head { font-size: 11.5px; color: var(--text-dim, #9aa4b2); }
+.kb-shots-head b { color: var(--text, #e6e9ef); }
+.kb-shots-list { display: flex; flex-direction: column; gap: 8px; }
+.kb-shot { display: flex; gap: 10px; align-items: flex-start; padding: 8px; border-radius: 8px; background: rgba(0,0,0,.18); position: relative; }
+.kb-shot-img { width: 120px; max-height: 90px; object-fit: contain; border-radius: 6px; background: #0b1220; border: 1px solid rgba(255,255,255,.08); flex-shrink: 0; }
+.kb-shot-fields { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+.kb-shot-n { font-size: 11.5px; font-weight: 600; color: var(--text, #e6e9ef); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 22px; }
+.kb-shot-where { display: flex; gap: 6px; flex-wrap: wrap; }
+.kb-shot-where select, .kb-shot-alt { font-size: 12px; padding: 5px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,.18); background-color: var(--bg2, #1f2937); color: var(--txt1, #e5e7eb); min-width: 0; color-scheme: dark; }
+/* The open list is drawn by the browser: without its own colours it takes the page's light text on a light grey list,
+   and the choices can barely be read. Every option gets the panel's dark ground and full-strength text; the chosen
+   one is the accent. */
+.kb-shot-where select option { background-color: var(--bg2, #1f2937); color: var(--txt1, #e5e7eb); }
+.kb-shot-where select option:checked { background-color: var(--blue, #6366f1); color: #ffffff; }
+.kb-shot-where select:focus-visible, .kb-shot-alt:focus-visible { outline: 2px solid var(--blue, #6366f1); outline-offset: 1px; }
+.kb-shot-where select { flex: 1 1 140px; }
+.kb-shot-alt { width: 100%; box-sizing: border-box; }
+.kb-shot-del { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border-radius: 50%; border: none; background: rgba(255,255,255,.08); color: inherit; cursor: pointer; line-height: 1; }
+.kb-shot-del:hover { background: rgba(239,68,68,.35); }
+.kb-shots-drop { border: 1.5px dashed rgba(255,255,255,.22); border-radius: 8px; padding: 12px; text-align: center; font-size: 12px; color: var(--text-dim, #9aa4b2); outline: none; }
+.kb-shots-drop:focus, .kb-shots-drop.over { border-color: var(--blue, #5b8cff); background: rgba(91,140,255,.08); color: var(--text, #e6e9ef); }
+.kb-shots-drop .fb-btn { margin-left: 4px; }
+
+/* 9.6.2 layout A: search in the top bar, sort on the Current View row. */
+.oc-top-search { flex: 1 1 160px; min-width: 0; display: flex; gap: 6px; align-items: center; }
+.oc-top-search .oc-search { flex: 1; min-width: 0; height: 30px; }
+.oc-top-search[style*="display: none"] + #ocRefresh, .oc-top-search[style*="display:none"] + #ocRefresh { margin-left: auto !important; }
+.oc-toolbar .oc-top-search ~ #ocRefresh { margin-left: 0 !important; }
+.oc-toolbar .oc-top-search[style*="none"] ~ #ocRefresh { margin-left: auto !important; }
+.oc-viewrow { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 0 14px 10px; }
+.oc-viewrow > .oc-links { flex: 1 1 auto; min-width: 0; overflow-x: auto; margin: 0 !important; padding: 0 !important; }
+.oc-viewrow > .oc-filters { padding: 0 !important; margin: 0 0 0 auto; flex: 0 0 auto; }
+.oc-viewrow .oc-filter-row { gap: 6px; }
+.oc-viewrow .oc-sort { width: auto; min-width: 150px; flex: 0 0 auto; }
+
+.kb-shot-spot { font-size: 11px; color: var(--text-dim, #9aa4b2); line-height: 1.35; }
+.kb-shot-where select { max-width: 100%; }
+
+/* 9.6.2: Add Case is a round + (the maintainer's design); it opens the same menu. */
+.oc-toolbar .btn-add-round { width: 30px; height: 30px; min-width: 30px; padding: 0 !important; border-radius: 50% !important; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 30px; box-shadow: 0 1px 6px rgba(91, 91, 214, .35); }
+.oc-toolbar .btn-add-round svg { margin: 0 !important; }
+.oc-toolbar .btn-add-round:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.oc-toolbar .btn-add-round.is-busy svg { opacity: 0; }
+.oc-toolbar .btn-add-round.is-busy { position: relative; }
+.oc-toolbar .btn-add-round.is-busy::after { content: ""; position: absolute; inset: 7px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; animation: oc-refresh-spin .8s linear infinite; }
+
+/* THE TEMPORARY COLOUR, in one place (chip, covering card, its rows, the recent-cases tag). */
+:root { --temp-rgb: 6, 182, 212; --temp-fg: #67e8f9; --temp-solid: #22d3ee; --temp-ink: #083344; }
+/* 9.6.2: CASES I AM COVERING — option C, the maintainer's pick: one cyan card holds the whole Temporary group, with its
+   own header. The rows inside are ordinary rows (no outline, no stripes: nothing looks selected); only the case number
+   turns cyan. The tier stripe and the red "on SOTI" warning work as everywhere else.
+   CYAN, NOT TEAL (9.6.2, the maintainer: "the Enterprise pin colour and the Temporary pin colour are too similar"):
+   teal #5eead4 sat beside Enterprise's mint #7ee0b8. Cyan was the maintainer's pick from four options (pink was
+   tried and turned down). The colours are the --temp-* variables below, in one place. */
+.oc-temp-card { margin: 8px 0 10px; padding: 8px 8px 4px; border-radius: 12px; background: rgba(var(--temp-rgb), .07); border: 1px solid rgba(var(--temp-rgb), .30); display: flex; flex-direction: column; gap: 6px; }
+.oc-section.oc-section-temp { display: flex; align-items: center; gap: 8px; margin: 0; padding: 4px 4px 2px; color: var(--temp-fg); background: none; border: none; letter-spacing: .06em; }
+.oc-section-temp .oc-temp-ic { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border-radius: 50%; background: var(--temp-solid); color: var(--temp-ink); font-size: 11px; font-weight: 800; }
+.oc-section-temp .oc-temp-count { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 700; font-size: 11px; color: var(--temp-ink); background: var(--temp-solid); border-radius: 999px; padding: 1px 8px; }
+.oc-temp-card .oc-group { padding-left: 4px; }
+.oc-row.oc-temp { background: #0f1a24; }
+.oc-row.oc-temp .oc-num { color: var(--temp-fg); }
+.oc-row.oc-temp.needs-soti { background: rgba(239, 68, 68, .10); }
+.oc-row.oc-temp.needs-soti .oc-num { color: #ff9a8b; }
+.oc-chip.oc-chip-temp { color: var(--temp-fg); }
+.oc-chip.oc-chip-temp.active { background: rgba(var(--temp-rgb), .20); border-color: rgba(var(--temp-rgb), .55); color: #fff; }
+
+/* 9.6.2: RECENT CASES on the Cases button (recentCasesMenu). */
+.tab-item.tab-pinned { max-width: 200px; }
+.tab-cases-caret { flex-shrink: 0; width: 18px; height: 18px; margin-left: -2px; margin-right: -4px; padding: 0; border: none; border-radius: 5px; background: transparent; color: inherit; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; opacity: .75; }
+.tab-cases-caret:hover, .tab-cases-caret[aria-expanded="true"] { opacity: 1; background: rgba(255, 255, 255, .14); }
+.tab-cases-caret:focus-visible { outline: 2px solid var(--blue2, #818cf8); outline-offset: 1px; opacity: 1; }
+.tab-cases-caret[aria-expanded="true"] svg { transform: rotate(180deg); }
+.recent-menu { position: fixed; z-index: 10050; max-height: min(calc(70vh / var(--ui-zoom, 1)), 520px); overflow-y: auto; padding: 6px; border-radius: 12px; background: var(--bg1, #111827); border: 1px solid var(--border, rgba(255,255,255,.12)); box-shadow: 0 14px 40px rgba(0, 0, 0, .45), 0 2px 8px rgba(0, 0, 0, .3); animation: recent-in .12s ease-out; }
+.recent-menu[hidden] { display: none; }
+@keyframes recent-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .recent-menu { animation: none; } }
+.recent-head { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px 8px; border-bottom: 1px solid var(--border, rgba(255,255,255,.1)); margin-bottom: 4px; }
+.recent-title { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--txt1, #e5e7eb); }
+.recent-sub { font-size: 11px; color: var(--txt2, #9aa4b2); }
+.recent-empty { padding: 14px 10px; font-size: 12px; color: var(--txt2, #9aa4b2); }
+.recent-item { display: flex; flex-direction: column; gap: 3px; width: 100%; text-align: left; padding: 8px 10px 8px 11px; margin: 2px 0; border: 1px solid transparent; border-left: 3px solid var(--txt4, #4b5563); border-radius: 8px; background: transparent; color: var(--txt1, #e5e7eb); font: inherit; cursor: pointer; }
+.recent-item:hover, .recent-item:focus-visible { background: rgba(255, 255, 255, .06); border-color: var(--border, rgba(255,255,255,.14)); outline: none; }
+.recent-item.tier-enterprise { border-left-color: rgba(34, 197, 94, .8); }
+.recent-item.tier-premium { border-left-color: rgba(160, 110, 240, .85); }
+.recent-item.tier-standard { border-left-color: rgba(80, 130, 230, .85); }
+.recent-item.is-temp { background: rgba(var(--temp-rgb), .07); }
+.recent-item.is-here { box-shadow: inset 0 0 0 1px var(--blue2, #818cf8); }
+.recent-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.recent-num { font-size: 12px; font-weight: 700; color: var(--blue2, #a5b4fc); }
+.recent-item.is-temp .recent-num { color: var(--temp-fg); }
+.recent-item.needs-soti .recent-num { color: #ff9a8b; }
+.recent-tag { font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; white-space: nowrap; }
+.recent-temp { color: var(--temp-ink); background: var(--temp-solid); }
+.recent-soti { color: #fecaca; background: rgba(239, 68, 68, .25); }
+.recent-sev { font-size: 9.5px; font-weight: 800; padding: 1px 6px; border-radius: 5px; border: 1px solid currentColor; }
+.recent-sev.sev-h { color: #fca5a5; } .recent-sev.sev-m { color: #fcd34d; } .recent-sev.sev-l { color: #93c5fd; }
+.recent-when { margin-left: auto; font-size: 10.5px; color: var(--txt2, #9aa4b2); white-space: nowrap; }
+.recent-item.is-here .recent-when { color: var(--blue2, #a5b4fc); font-weight: 600; }
+.recent-subject { font-size: 12px; color: var(--txt2, #c3c9d4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 9.6.2: EVERY dropdown's open list is readable — dark ground, full-strength text — unless it styles its own options. */
+select { color-scheme: dark; }
+select option, select optgroup { background-color: var(--bg2, #1f2937); color: var(--txt1, #e5e7eb); }
+
+/* AI SETTINGS: THE × AND CANCEL/SAVE ALWAYS ON SCREEN (9.6.2). The dialog is a long scroll (provider, relay, feed,
+   display size, refresh, language, JIRA, usage…), and Save sat at the very end of it — at Display size 120% about three
+   screens down. The title row now sticks to the top of the box and the Cancel/Save row to its bottom, on the box's own
+   background, so both stay put while the settings scroll between them. The negative offsets equal the box's 20px
+   padding, so the bars sit flush with its edges. */
+.modal.m-settings > .mhdr {
+    position: sticky; top: -20px; z-index: 3;
+    margin: -20px -20px 18px !important; padding: 16px 20px 12px;
+    background: var(--bg1); border-bottom: 1px solid var(--border2);
+}
+.modal.m-settings > .mact {
+    position: sticky; bottom: -20px; z-index: 3;
+    margin: 20px -20px -20px !important; padding: 12px 20px 14px;
+    background: var(--bg1); border-top: 1px solid var(--border2);
+}
+
+/* THE ERROR LOG, IN DETAIL (9.6.2): the part of the tool, what it means and what to do (always shown), where and when,
+   the steps just before it, and the technical details folded away. */
+.logs-area { flex-shrink: 0; padding: 1px 7px; border-radius: 999px; font-size: 9.5px; font-weight: 700; background: rgba(129, 140, 248, .14); color: #c7d2fe; }
+.logs-help { margin-top: 7px; padding: 7px 9px; border-radius: 7px; background: rgba(99, 102, 241, .08); border: 1px solid rgba(129, 140, 248, .22); display: flex; flex-direction: column; gap: 4px; }
+.logs-help.is-unknown { background: rgba(148, 163, 184, .07); border-color: var(--border); }
+.logs-help-row { font-size: 10.5px; line-height: 1.5; color: var(--txt2); }
+.logs-help-row b { color: var(--txt1); font-weight: 700; margin-right: 2px; }
+.logs-facts { margin-top: 7px; display: flex; flex-direction: column; gap: 3px; }
+.logs-fact { display: flex; gap: 8px; font-size: 10px; line-height: 1.5; min-width: 0; }
+.logs-fact-k { flex: 0 0 72px; color: var(--txt3); font-weight: 600; }
+.logs-fact-v { color: var(--txt2); min-width: 0; overflow-wrap: anywhere; }
+.logs-steps { margin: 0; padding-left: 16px; color: var(--txt2); min-width: 0; }
+.logs-steps li { overflow-wrap: anywhere; }
+.logs-step-t { color: var(--txt3); font-variant-numeric: tabular-nums; }
+.logs-acts { display: flex; justify-content: flex-end; margin-top: 4px; }
+.logs-copy1 { font-size: 10px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--border2); background: var(--bg1); color: var(--txt2); cursor: pointer; }
+.logs-copy1:hover { color: var(--txt1); border-color: var(--blue); }
+.logs-row .logs-more { margin-top: 6px; }
+
+/* JIRA AND THE SOTI NETWORK (9.6.2): one pill in the Resources Hub's header says, before anybody asks, whether JIRA can
+   be reached from here; a line over the composer says what that means while it cannot. See paintJiraNet. */
+.rhub-net { margin-left: 8px; padding: 1px 9px; border-radius: 999px; font-size: 10px; font-weight: 700; line-height: 1.6; cursor: pointer; vertical-align: middle; border: 1px solid transparent; background: none; font-family: inherit; }
+.rhub-net[hidden] { display: none; }
+.rhub-net.is-on { color: #86efac; background: rgba(34, 197, 94, .1); border-color: rgba(34, 197, 94, .3); }
+.rhub-net.is-on::before { content: '●'; margin-right: 5px; font-size: 8px; vertical-align: 1px; }
+.rhub-net.is-off { color: #fcd34d; background: rgba(245, 158, 11, .12); border-color: rgba(245, 158, 11, .4); }
+.rhub-net.is-off::before { content: '●'; margin-right: 5px; font-size: 8px; vertical-align: 1px; }
+.rhub-net-hint { margin: 6px 2px 0; padding: 6px 10px; border-radius: 8px; font-size: 10.5px; line-height: 1.5; color: #fde68a; background: rgba(245, 158, 11, .08); border: 1px solid rgba(245, 158, 11, .28); }
+.rhub-net-hint[hidden] { display: none; }
+.jt-net { margin: 4px 0 8px; font-size: 10px; line-height: 1.5; color: #fde68a; }
+
+/* ONE WINDOW AT A TIME (onePanelAtATime): shown only where the browser would not let an older panel close itself. */
+.one-panel-cover { position: fixed; inset: 0; z-index: 20000; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(5, 8, 18, .92); }
+.one-panel-box { max-width: 340px; text-align: center; display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.one-panel-t { font-size: 14px; font-weight: 700; color: var(--txt1); }
+.one-panel-s { font-size: 12px; line-height: 1.6; color: var(--txt2); }
+.one-panel-b { background: var(--blue); color: #fff; border: none; margin-top: 4px; }
+
+/* ===========================================================================
+ * LAYOUT A1 (9.6.2, the maintainer's pick): the Cases header in two rows.
+ *   Row 1 (.oc-toolbar): Add · filter box · Current View (every list and saved filter, one click each) · sort · refresh.
+ *   Row 2 (.oc-listbar): the chips on one sliding line · Out of office · (refresh while folded) · ⚙.
+ *   The select box sits at the start of the column headings, over the rows' tick-boxes.
+ * Nothing is removed: every control is where it was a row up or down. */
+.oc-toolbar { flex-wrap: nowrap; padding-bottom: 10px; }
+.oc-toolbar #ocTopSearch { flex: 1 1 200px; min-width: 200px; }
+.oc-toolbar > .oc-links { flex: 0 1 auto; min-width: 0; margin: 0 !important; padding: 0 !important; }
+.oc-toolbar > .oc-links .oc-links-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.oc-toolbar > .oc-filters { flex: 0 0 auto; margin: 0 !important; padding: 0 !important; }
+.oc-toolbar .oc-filter-row { gap: 6px; }
+.oc-toolbar .oc-sort { width: auto; min-width: 128px; max-width: 170px; height: 30px; }
+.oc-toolbar #ocRefresh { margin-left: 0 !important; flex: 0 0 auto; }
+
+.oc-listbar { padding: 0 14px 8px; gap: 10px; }
+.oc-listbar .oc-lb-left { flex: 1 1 auto; min-width: 0; }
+.oc-listbar .oc-lb-right { flex: 0 0 auto; }
+.oc-listbar #ocFilters2 { flex: 1 1 auto; min-width: 0; margin: 0 !important; padding: 0 !important; }
+.oc-listbar #ocChips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: 2px 1px; }
+.oc-listbar #ocChips::-webkit-scrollbar { display: none; }
+.oc-listbar #ocChips > .oc-chip { flex: 0 0 auto; white-space: nowrap; }
+#ocChips.fade-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent); }
+#ocChips.fade-l { -webkit-mask-image: linear-gradient(to right, transparent, #000 22px); mask-image: linear-gradient(to right, transparent, #000 22px); }
+#ocChips.fade-l.fade-r { -webkit-mask-image: linear-gradient(to right, transparent, #000 22px, #000 calc(100% - 26px), transparent); mask-image: linear-gradient(to right, transparent, #000 22px, #000 calc(100% - 26px), transparent); }
+/* Selecting: the chips step aside for "N selected" and the bin, Gmail's way. */
+.oc-view.oc-selecting .oc-listbar #ocFilters2 { display: none !important; }
+/* Out of office as an icon (its words are its tooltip and its aria-label). */
+.oc-lb-right #ocOoo { width: 26px; padding: 0; justify-content: center; }
+.oc-lb-right #ocOoo .oc-ooo-lbl { display: none; }
+
+/* The select box over the tick-boxes: the 35px before "Case" is the rows' tick-box gutter, so nothing moves. */
+.oc-colhead { position: relative; }
+.oc-colhead > .oc-gsel { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); height: 18px; display: flex; align-items: center; z-index: 2; }
+.oc-colhead > .oc-gsel .oc-gsel-box { width: 16px; height: 16px; min-width: 16px; padding: 0; }
+.oc-colhead > .oc-gsel .oc-gsel-caret { width: 8px; min-width: 8px; height: 16px; padding: 0; font-size: 8px; }
+.oc-colhead > .oc-gsel .oc-gsel-menu { top: calc(100% + 4px); left: 0; }
+/* A1 ON ANY WIDTH: ONE ROW (9.6.2, the maintainer: "let it be like image 1, only one row, not two"). The filter box
+   takes only the room the views leave (flex-basis 0), so on a narrower panel it is the box that gets smaller — down to
+   140px — and only then do the views slide sideways behind their ▾, the view being shown always in sight. The views
+   keep at least 150px, which is the lit view and the ▾. Only a panel too small for both (under 380px) puts the views
+   on a line of their own (ocToolbarFit). */
+.oc-toolbar #ocTopSearch { flex: 1 1 0; min-width: 140px; }
+.oc-toolbar > .oc-links { flex: 0 1 auto; min-width: 150px; }
+.oc-toolbar.is-narrow { flex-wrap: wrap; row-gap: 8px; }
+.oc-toolbar.is-narrow > .oc-links { order: 10; flex: 1 1 100%; }
+.oc-toolbar.is-narrow #ocTopSearch { flex: 1 1 0; min-width: 110px; }
+
+/* OUT OF OFFICE (9.6.2): the Gmail-style select at the head of the case list, and WHOSE CASES above the filter box. */
+#mOoo .acct-cc-head { align-items: center; justify-content: flex-start; }
+#mOoo .acct-cc-head .acct-cc-count { margin-right: auto; }
+.ooo-gsel { flex: 0 0 auto; margin-left: -4px; }
+.ooo-gsel .oc-gsel-box, .ooo-gsel .oc-gsel-caret { height: 24px; }
+.ooo-views { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; min-width: 0; }
+.ooo-view-chips { display: flex; gap: 6px; flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; padding: 2px 1px; }
+.ooo-view-chips::-webkit-scrollbar { display: none; }
+.ooo-view-chips > .oc-view-chip { flex: 0 0 auto; }
+.ooo-owner { flex: 0 1 190px; min-width: 120px; width: auto; height: 30px; padding-top: 0; padding-bottom: 0; font-size: 12px; }
+.ooo-owner[hidden] { display: none; }
+.ooo-gsel .oc-gsel-menu { min-width: 190px; top: 28px; }
+.ooo-gsel .oc-gsel-menu button { white-space: nowrap; }
+
+/* JIRA AND THE VPN ON A CASE (paintJiraNetCase): the JIRA Actions heading, and the line beside Create in JIRA. */
+.qa-net-tag { margin-left: 8px; padding: 1px 8px; border-radius: 999px; font-size: 9.5px; font-weight: 700; letter-spacing: 0; text-transform: none; color: #fcd34d; background: rgba(245, 158, 11, .12); border: 1px solid rgba(245, 158, 11, .4); white-space: nowrap; }
+.qa-net-tag[hidden] { display: none; }
+.jira-net-note { margin-top: 10px; padding: 7px 10px; border-radius: 8px; font-size: 11px; line-height: 1.5; color: #fde68a; background: rgba(245, 158, 11, .08); border: 1px solid rgba(245, 158, 11, .3); }
+.jira-net-note[hidden] { display: none; }
+#qaCheckJira .qa-net-tag { margin-left: 8px; vertical-align: 1px; }
+.cms-net-note { margin-top: 8px; padding: 6px 9px; border-radius: 8px; font-size: 11px; line-height: 1.5; color: #fde68a; background: rgba(245, 158, 11, .08); border: 1px solid rgba(245, 158, 11, .3); }
+.rqo-net { margin-left: 8px; font-size: 9.5px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--txt3); }
+.rqo-net.is-off { padding: 1px 8px; border-radius: 999px; font-weight: 700; color: #fcd34d; background: rgba(245, 158, 11, .12); border: 1px solid rgba(245, 158, 11, .4); }
+
+/* OMNI-CHANNEL IN THE HEADER (omniCheck): green signed in, amber busy/away, red offline. */
+.omni-pill { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; padding: 2px 10px; border-radius: 999px; font-size: 10.5px; font-weight: 700; cursor: pointer; border: 1px solid var(--border2); background: var(--bg2); color: var(--txt2); white-space: nowrap; font-family: inherit; }
+.omni-pill[hidden] { display: none; }
+.omni-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--txt3); flex: 0 0 auto; }
+.omni-pill.is-on { color: #86efac; border-color: rgba(34, 197, 94, .35); background: rgba(34, 197, 94, .08); }
+.omni-pill.is-on .omni-dot { background: #22c55e; }
+.omni-pill.is-away { color: #fcd34d; border-color: rgba(245, 158, 11, .4); background: rgba(245, 158, 11, .1); }
+.omni-pill.is-away .omni-dot { background: #f59e0b; }
+.omni-pill.is-off { color: #fca5a5; border-color: rgba(239, 68, 68, .45); background: rgba(239, 68, 68, .12); }
+.omni-pill.is-off .omni-dot { background: #ef4444; }
+
+/* THE HEADER NEVER OVERLAPS (9.6.2: the Omni pill was drawn over the wordmark on a narrow panel). The wordmark and the
+   version shorten with "…" instead of running under the pills; the pills never shrink; and on a narrow header the pills
+   show only their dot and their name ("● Omni"), the status being in the colour and the tooltip. */
+.topbar { container-type: inline-size; container-name: topbar; gap: 8px; }
+.topbar .tl-wrap { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.topbar .tl, .topbar .logo-block { min-width: 0; overflow: hidden; }
+.topbar .logo-name { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.topbar .logo-ver { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar .tc { flex: 0 0 auto; min-width: 0; }
+.topbar .omni-pill { flex: 0 0 auto; }
+@container topbar (max-width: 640px) {
+    .omni-pill .omni-v { display: none; }
+    .omni-pill { padding: 2px 8px; margin-left: 4px; }
+}
+@container topbar (max-width: 430px) {
+    .topbar .fb-btn { padding-left: 8px; padding-right: 8px; font-size: 0; gap: 0; }
+    .topbar .fb-btn svg { margin: 0; }
+}
+
+/* RECENT CASES → Clear (9.6.2). */
+.recent-head { flex-direction: row !important; align-items: center; justify-content: space-between; }
+.recent-clear { border: 1px solid var(--border2, rgba(255,255,255,.16)); background: transparent; color: var(--txt2, #9aa4b2); font: inherit; font-size: 10.5px; font-weight: 600; padding: 2px 10px; border-radius: 999px; cursor: pointer; }
+.recent-clear:hover { color: var(--txt1, #e5e7eb); border-color: var(--blue2, #818cf8); }
+
+/* MEETING NOTES POPUP (openMeetingNotes): at the top of the conversation, the same card as before. */
+.backdrop.mn-pop { align-items: flex-start; padding-top: calc(70px / var(--ui-zoom, 1)); }
+.modal.m-notespop { max-width: 600px; width: calc(100% - 24px); padding: 0; background: transparent; border: none; box-shadow: none; overflow: visible; position: relative; }
+.modal.m-notespop { max-height: calc(100vh / var(--ui-zoom, 1) - 90px); overflow-y: auto; }
+.modal.m-notespop > .mn-block { margin: 0; width: 100%; max-width: none; flex-shrink: 0; background-color: var(--bg1); box-shadow: 0 24px 60px rgba(0, 0, 0, .55); }
+.mn-pop-x { position: absolute; top: 10px; right: 12px; z-index: 3; width: 28px; height: 28px; border-radius: 50%; background: rgba(255, 255, 255, .06) !important; border: 1px solid var(--border2) !important; color: var(--txt2); font-size: 18px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.mn-pop-x:hover { color: var(--txt1); }
+.modal.m-notespop .mn-top { padding-right: 44px; }
+
+/* YOUR STATUS (9.6.2, option C): one button beside Feedback, and what it opens. */
+.st-wrap { position: relative; display: inline-flex; }
+.st-btn { position: relative; width: 32px; height: 30px; padding: 0 !important; display: inline-flex; align-items: center; justify-content: center; }
+.st-dot { position: absolute; right: 4px; bottom: 4px; width: 9px; height: 9px; border-radius: 50%; background: #6b7280; box-shadow: 0 0 0 2px var(--bg1); }
+.st-btn.is-on .st-dot { background: #22c55e; }
+.st-btn.is-away .st-dot { background: #f59e0b; }
+.st-btn.is-off .st-dot { background: #ef4444; }
+.st-pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; width: 250px; max-width: calc(100vw / var(--ui-zoom, 1) - 24px); padding: 10px 12px; border-radius: 10px; background: var(--bg1); border: 1px solid var(--border2); box-shadow: 0 14px 36px rgba(0, 0, 0, .5); font-size: 12px; color: var(--txt1); text-align: left; }
+.st-pop[hidden] { display: none; }
+.st-h { display: flex; align-items: center; justify-content: space-between; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--txt2); margin-bottom: 6px; }
+.st-refresh { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border-radius: 6px; border: 1px solid var(--border2); background: var(--bg2); color: var(--txt2); cursor: pointer; }
+.st-refresh:hover { color: var(--txt1); }
+.st-refresh.spin svg { animation: stSpin .8s linear infinite; }
+@keyframes stSpin { to { transform: rotate(360deg); } }
+.st-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+.st-d { width: 8px; height: 8px; border-radius: 50%; background: #6b7280; flex-shrink: 0; }
+.st-d.is-on { background: #22c55e; } .st-d.is-away { background: #f59e0b; } .st-d.is-off { background: #ef4444; }
+.st-n { font-weight: 700; }
+.st-v { margin-left: auto; font-weight: 700; color: var(--txt2); text-align: right; }
+.st-v.is-on { color: #86efac; } .st-v.is-away { color: #fcd34d; } .st-v.is-off { color: #fca5a5; }
+.st-v button { font: inherit; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border2); background: var(--bg2); color: var(--txt1); cursor: pointer; }
+.st-foot { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 10.5px; line-height: 1.5; color: var(--txt2); }
+.st-foot a { color: var(--accent, #818cf8); cursor: pointer; text-decoration: underline; }
+
+/* ⋮ → Signed in to CMS (9.6.2): a green dot once CMS is signed in for the day. */
+.cms-in-dot { display: inline-block; width: 8px; height: 8px; margin-left: 8px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 3px rgba(34, 197, 94, .18); }
+.cms-in-dot[hidden] { display: none; }
+#btnCmsSignIn.is-in { color: #86efac; }
+
+/* Meeting Notes pin (9.6.2). */
+.mn-pin { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin-left: 6px; padding: 0; border-radius: 50%; border: 1px solid var(--border2); background: rgba(255, 255, 255, .04); color: var(--txt2); cursor: pointer; flex-shrink: 0; }
+.mn-pin:hover { color: var(--txt1); }
+.mn-pin[aria-pressed="true"] { color: #c4b5fd; border-color: rgba(139, 92, 246, .55); background: rgba(139, 92, 246, .16); }
+.home-panel.mn-pinned { margin-bottom: 12px; }
+.home-panel.mn-pinned .mn-block { animation: mnPinIn .25s ease-out; }
+@keyframes mnPinIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+
+/* ============================================================
+   QUICK OPTIONS: A CARD PER GROUP (G3) AND A SOFT BOTTOM (B2)
+   9.6.2, the maintainer chose G3 + B2 from the mockup: "the colouring of the sub-tab titles can be confusing … they
+   look very similar" and "add a little border at the bottom … right now it is too sharp".
+   ============================================================
+   G3: each group is its own rounded card in its own colour — Favourites amber, JIRA Actions blue, Case Actions
+   violet — with a tinted header strip, so where a group starts and ends, and which group an action is in, shows at a
+   glance. A folded group is just its strip. B2: the panel ends in rounded corners with a soft border and shadow, and
+   a list that scrolls fades out at the bottom instead of being cut; the fade goes when the end is reached (.at-end,
+   set by qaFadeEdge in sidepanel.js) or when nothing scrolls. */
+.qa-groups { gap: 10px; }
+.qa-grp { --qg: #6366f1; --qg-t: #c7d2fe; }
+.qa-grp.qa-grp-fav  { --qg: #f59e0b; --qg-t: #fcd34d; }
+.qa-grp.qa-grp-jira { --qg: #3b82f6; --qg-t: #93c5fd; }
+.qa-grp.qa-grp-case { --qg: #a855f7; --qg-t: #d8b4fe; }
+.qa-grp {
+    border: 1px solid color-mix(in srgb, var(--qg) 38%, transparent);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--qg) 5%, transparent);
+    padding: 0 7px 7px;
+    overflow: hidden;
+}
+.qa-grp + .qa-grp:not([hidden]) { border-top: 1px solid color-mix(in srgb, var(--qg) 38%, transparent); padding-top: 0; }
+.qa-grp-h {
+    margin: 0 -7px;
+    width: calc(100% + 14px);
+    padding: 8px 12px;
+    border-radius: 0;
+    background: color-mix(in srgb, var(--qg) 17%, transparent);
+    color: var(--qg-t);
+    font-size: 11px;
+    letter-spacing: .7px;
+}
+.qa-grp-h:hover { color: #fff; background: color-mix(in srgb, var(--qg) 25%, transparent); }
+.qa-grp-b { margin-top: 7px; }
+.qa-grp-b[hidden] { display: none; }
+.qa-grp-n { background: color-mix(in srgb, var(--qg) 32%, transparent); color: #fff; }
+.qa-grp-chev { color: var(--qg-t); }
+.qa-grp-fav .qa-grp-i { color: var(--qg-t); }
+/* A folded group: the strip alone, no empty padding under it. */
+.qa-grp.is-folded { padding-bottom: 0; }
+
+/* B2 */
+.panel-left .qa-panel {
+    margin: 0 6px 10px;
+    border: 1px solid rgba(129, 140, 248, .30);
+    border-top: 0;
+    border-radius: 0 0 14px 14px;
+    overflow: hidden;
+    box-shadow: 0 10px 22px rgba(0, 0, 0, .35);
+}
+.qa-pb:not(.at-end) {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 34px), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 34px), transparent);
+}
+
+/* THE SYNC'S OWN BAR (9.6.2, makeSyncBar): where the toast sits, above the message box. */
+.sync-bar { position: fixed; left: 50%; bottom: calc(86px / var(--ui-zoom, 1)); transform: translateX(-50%) translateY(14px); z-index: 1900;
+    width: min(88%, 420px); padding: 9px 12px 8px; border-radius: 12px; background: var(--bg1); border: 1px solid rgba(129, 140, 248, .45);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, .45); opacity: 0; pointer-events: none; transition: opacity .25s, transform .25s; font-size: 11.5px; }
+.sync-bar.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.sb-top { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.sb-lbl { flex: 1; min-width: 0; color: var(--txt1); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb-pct { color: #a5b4fc; font-weight: 700; font-variant-numeric: tabular-nums; }
+.sb-track { height: 5px; border-radius: 999px; background: rgba(255, 255, 255, .07); overflow: hidden; }
+.sb-fill { height: 100%; width: 0; border-radius: 999px; background: linear-gradient(90deg, #6366f1, #8b5cf6); transition: width .12s linear; }
+.sb-steps { display: flex; gap: 12px; margin-top: 6px; font-size: 10px; color: var(--txt3); }
+.sb-steps span::before { content: '○'; margin-right: 4px; }
+.sb-steps span.now { color: #c7d2fe; } .sb-steps span.now::before { content: '●'; display: inline-block; color: #818cf8; animation: sbPulse 1s ease-in-out infinite; }
+@keyframes sbPulse { 50% { opacity: .3; } }
+/* Stop on the bar (2026-11-12, the one bar of the blue refresh). The bar itself lets clicks through (pointer-events:
+   none, so it never blocks what is under it); its Stop takes them. */
+.sync-bar .sb-stop { pointer-events: auto; flex-shrink: 0; align-self: center; padding: 1px 10px; border-radius: 999px; border: 1px solid var(--border2, var(--border));
+    background: var(--bg2); color: var(--txt2); font: inherit; font-size: 10.5px; font-weight: 600; line-height: 1.6; cursor: pointer; }
+.sync-bar .sb-stop:hover { border-color: #818cf8; color: var(--txt1); }
+.sync-bar .sb-stop:disabled { opacity: .6; cursor: default; }
+.sb-steps span.done { color: #86efac; } .sb-steps span.done::before { content: '✓'; }
+.sb-steps span.stop { color: var(--txt2); } .sb-steps span.stop::before { content: '–'; }
+.sync-bar.is-s { border-color: rgba(34, 197, 94, .55); } .sync-bar.is-s .sb-lbl { color: #86efac; } .sync-bar.is-s .sb-fill { background: #22c55e; }
+.sync-bar.is-w { border-color: rgba(245, 158, 11, .6); } .sync-bar.is-w .sb-lbl { color: #fcd34d; white-space: normal; } .sync-bar.is-w .sb-fill { background: #f59e0b; }
+.sync-bar.is-e { border-color: rgba(239, 68, 68, .6); } .sync-bar.is-e .sb-lbl { color: #fca5a5; white-space: normal; } .sync-bar.is-e .sb-fill { background: #ef4444; }
+.sync-bar.is-i .sb-lbl { color: #c7d2fe; white-space: normal; }
+
+/* ===========================================================================
+   CASE INFO AND QUICK OPTIONS IN A DRAWER OVER THE CHAT (Beta 9.6.2, option C) — #mainLayout.pl-drawer, see
+   wireCaseDrawer. The sidebar is drawn over the chat, flush to the left under the case strip, --pl-drawer-h of the
+   height (60% unless dragged) and scrolling inside; the chat keeps the whole width at every size of the panel.
+   =========================================================================== */
+.layout.pl-drawer { position: relative; }
+.layout.pl-drawer .panel-left,
+.layout.pl-drawer .panel-left.collapsed,
+.layout.pl-drawer .panel-left.collapsed.qa-open {
+    position: absolute !important;
+    left: 0; top: 0;
+    z-index: 40;
+    width: min(300px, 100%) !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    /* AS TALL AS WHAT IS IN IT, up to --pl-drawer-h (60%, or as dragged) (the maintainer, 2026-11-07: "no need for the
+       blank field"): with Case Info and Quick Options both folded it is their two bars and nothing under them. */
+    height: auto !important;
+    max-height: var(--pl-drawer-h, 60%) !important;
+    flex: none !important;
+    resize: none !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    border-top: none !important;
+    border-right: 1px solid rgba(129, 140, 248, .35) !important;
+    border-bottom: 1px solid rgba(129, 140, 248, .35) !important;
+    border-radius: 0 0 12px 0;
+    box-shadow: 18px 0 40px rgba(0, 0, 0, .5);
+}
+.layout.pl-drawer .panel-left .qa-pb { max-height: none; }
+.layout.pl-drawer.pl-hidden .panel-left { display: none !important; }
+/* The chat is never hidden or narrowed for it (the narrow layout used to give an open Case Info the whole screen). */
+#mainLayout.pl-drawer .chat-wrap { display: flex !important; flex: 1 !important; min-width: 0 !important; }
+/* The grip at its foot. */
+.layout.pl-drawer .pl-grip {
+    position: sticky; bottom: 0; margin-top: auto; flex: 0 0 auto; z-index: 2;
+    display: flex; align-items: center; justify-content: center; height: 18px; cursor: ns-resize; touch-action: none;
+    background: linear-gradient(180deg, rgba(18, 26, 49, 0), #121a31 60%);
+}
+.layout.pl-drawer .pl-grip i { width: 38px; height: 4px; border-radius: 4px; background: rgba(148, 163, 184, .6); }
+.layout.pl-drawer .pl-grip:hover i { background: #a5b4fc; }
+.pl-grip { display: none; }
+.layout.pl-drawer .pl-grip { display: flex; }
+/* Both halves folded: two bars, no grip under them. */
+.layout.pl-drawer .panel-left.collapsed:not(.qa-open) .pl-grip { display: none; }
+/* The handle: ◂ on the drawer's right edge while it is open; the tab on the left edge while it is shut. */
+.layout.pl-drawer .pl-edge-wrap {
+    display: block !important; position: absolute; top: 0; left: min(300px, 100%); width: 0;
+    height: var(--pl-drawer-now, var(--pl-drawer-h, 60%)); z-index: 45;
+}
+.layout.pl-drawer .pl-edge {
+    /* JUST UNDER THE NPS STRIP, shut or open (the maintainer, 2026-11-07: "JUST BELOW THE NPS SECTION, SO THE BUTTON IS
+       NOT IN THE MIDDLE"): open, it sits just outside the drawer's edge at the same height, clear of the ▶ at the end of
+       the Case Info heading. */
+    position: absolute; top: 8px; left: 0; transform: none;
+    width: 24px; height: 56px; padding: 0; border-radius: 0 5px 5px 0; border-left: none !important; cursor: pointer;
+    background: var(--blue, #3b82f6); border: 1px solid var(--blue, #3b82f6); color: #fff; font-size: 15px; font-weight: 700;
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, .3), 0 3px 10px rgba(0, 0, 0, .45);
+}
+.layout.pl-drawer.pl-hidden .pl-edge-wrap { left: 0; }
+/* SHUT: the same small handle as on the drawer's edge, at the left edge, pointing out (the maintainer, 2026-11-07: "IT
+   SHOULD JUST BE THE NORMAL LOOK") — no words written down it, no gradient, no pulse. */
+.layout.pl-drawer.pl-hidden .pl-edge {
+    top: 8px; left: 0; transform: none;
+    width: 24px; height: 56px; padding: 0; display: block;
+    border-radius: 0 5px 5px 0; border-left: none;
+    background: var(--blue, #3b82f6); border-color: var(--blue, #3b82f6);
+    /* It pulses when the drawer shuts, as the handle always did (the maintainer: "This used to animate"). */
+    animation: plEdgePulse 2.4s ease-in-out 3;
+}
+.layout.pl-drawer.pl-hidden .pl-edge::after { content: none; }
+/* A narrow side panel: the drawer is the panel's full width, at the same height, with its ◂ inside its right edge. */
+@media (max-width: 599px) {
+    .layout.pl-drawer .panel-left,
+    .layout.pl-drawer .panel-left.collapsed,
+    .layout.pl-drawer .panel-left.collapsed.qa-open { width: 100% !important; border-right: none !important; border-radius: 0 0 12px 12px; }
+    /* Open across the whole width, there is no edge to sit outside: the ◂ hangs just under the drawer, at its right. */
+    .layout.pl-drawer:not(.pl-hidden) .pl-edge-wrap { left: calc(100% - 52px); }
+    .layout.pl-drawer:not(.pl-hidden) .pl-edge { top: 100%; width: 40px; height: 24px; border-radius: 0 0 6px 6px; border-left: 1px solid var(--blue, #3b82f6) !important; border-top: none; }
+}
+
+/* RESOURCES HUB ⚡ QUICK OPTIONS, LIKE A CASE'S (Beta 9.6.2): the button on the left of the hub's header, its menu under
+   it on the left, on the drawer's ground, holding the case's own group cards and rows (rhubQuickOpen). */
+.rhub-head { justify-content: flex-start; }
+.rhub-head .stats-title { flex: 1 1 auto; }
+.rhub-qo-pop { left: 14px; right: auto; width: min(300px, calc(100% - 28px)); padding: 8px 6px;
+    background: linear-gradient(180deg, #16203b 0%, #121a31 100%); border-radius: 0 0 12px 12px; }
+.rqo-groups { display: flex; flex-direction: column; gap: 10px; }
+.qa-grp.qa-grp-pulse { --qg: #6366f1; --qg-t: #c7d2fe; }
+.rhub-qo-pop .qa-extra-row { display: flex; gap: 4px; margin-bottom: 5px; }
+.rhub-qo-pop .qa-extra-row:last-child { margin-bottom: 0; }
+.rhub-qo-pop .qa-drop-item { flex: 1 1 auto; min-width: 0; }
+.rhub-qo-pop .qa-drop-item:disabled { opacity: .5; cursor: default; }
+.rhub-qo-pop .qa-grp-h { display: flex; align-items: center; gap: 7px; border: 0; cursor: pointer; font-weight: 800; text-transform: uppercase; text-align: left; font-family: inherit; }
+.rhub-qo-pop .qa-grp-t { flex: 1 1 auto; }
+.rhub-qo-pop .qa-grp-n { font-size: 10px; padding: 1px 7px; border-radius: 999px; }
+.rhub-qo-pop .rqo-net { text-transform: none; }
+/* THE CHEVRON, NOT SQUEEZED (the maintainer: "the drop down icon beside quick options look squeesed"): a drawn chevron
+   at full size, with room around it, instead of a 9px ▾ character. */
+.rhub-qo-btn { gap: 7px; padding-right: 10px !important; }
+.rhub-qo-btn .car { width: 13px; height: 13px; flex: none; opacity: .85; font-size: inherit; transition: transform .15s; }
+.rhub-qo-pop .rqo-net-row { margin: 0 0 6px; }
+.rhub-qo-pop .rqo-net-row .rqo-net { margin-left: 0; display: inline-block; }
+.rhub-qo-pop .rqo-net-row:has(.rqo-net:empty) { display: none; }
+
+/* THE CASE ROW'S EXPANDER, BIG (Beta 9.6.2, the maintainer: "much bigger so it stands out and agents would love to press
+   it"): a 34px tinted button holding a drawn chevron, which turns to point down while the row's description is open. */
+.oc-row .oc-desc-toggle {
+    width: 34px; height: 34px; display: inline-grid; place-items: center;
+    border-radius: 10px; color: #c7d2fe;
+    background: linear-gradient(135deg, rgba(99, 102, 241, .30), rgba(14, 165, 233, .16));
+    border: 1px solid rgba(129, 140, 248, .55);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .3);
+    transition: background .15s, border-color .15s, color .15s, transform .1s;
+}
+.oc-row .oc-desc-toggle svg { width: 20px; height: 20px; transition: transform .18s ease; }
+.oc-row .oc-desc-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
+.oc-row .oc-desc-toggle:hover { color: #fff; border-color: rgba(165, 180, 252, .95); background: linear-gradient(135deg, rgba(99, 102, 241, .55), rgba(14, 165, 233, .3)); }
+.oc-row .oc-desc-toggle:active { transform: scale(.94); }
+@media (prefers-reduced-motion: reduce) { .oc-row .oc-desc-toggle svg { transition: none; } }
+
+/* THE CASE'S NAME ON A LINE OF ITS OWN (Beta 9.6.2, option B): the first line is the number and every column, as before
+   (the Case column holds the spare width, with the same two variables the Subject column had, so its heading's edge
+   resizes it); the name runs the whole width of the row under them, wrapping as far as it needs, never cut. */
+.oc-namecell {
+    flex: var(--ocw-subject-grow, 1) 1 var(--ocw-subject, 0px);
+    min-width: var(--ocw-casenum, 72px);   /* a case number at 12px bold is 67px: never clipped */
+    display: flex; align-items: center; overflow: hidden;
+}
+.oc-numline { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.oc-line1 { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; }
+.oc-row-main.oc-name-below { flex-direction: column; align-items: stretch; justify-content: center; gap: 3px; padding-top: 6px; padding-bottom: 6px; }
+.oc-row-main.oc-name-below > .oc-line1 { flex: none; }
+/* THE NAME ON ITS OWN LINE, plain (the maintainer 2026-11-07: "can the outline thing around the subject be removed, too much
+   is going on"): no panel, no accent edge — just the case's name under its number, the whole width, never cut. */
+.oc-row-main > .oc-subject.oc-subject-below {
+    flex: none; max-width: 100%; min-width: 0; box-sizing: border-box;
+    white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere;
+    line-height: 1.3; font-size: 12px; color: #e2e8f0;
+}
+.oc-colhead-num.oc-colhead-name { flex: var(--ocw-subject-grow, 1) 1 var(--ocw-subject, 0px); min-width: var(--ocw-casenum, 72px); }
+
+/* A NAME LONGER THAN ITS COLUMN ENDS IN "…" INSIDE ITS PILL (Beta 9.6.2, the maintainer: "Why is the circle thing around
+   Ayodeji Augustine not all around the name its like half"). The text used to run on past the pill's right edge, so the
+   border stopped short of it; now the pill keeps both rounded ends and the whole name is in its tooltip, as before. */
+.oc-line1 .oc-tag.oc-col-owner, .oc-line1 .oc-tag.oc-col-ownerManager, .oc-line1 .oc-tag.oc-col-tempOwner,
+.oc-line1 .oc-tag.oc-col-escOwner, .oc-line1 .oc-tag.oc-col-status, .oc-line1 .oc-tag.oc-col-analysis,
+.oc-line1 .oc-tag.oc-col-account, .oc-line1 .oc-tag.oc-col-contact, .oc-line1 .oc-tag.oc-col-entitlement {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* THE BOTTOM OF AN OPEN CASE IS ALWAYS IN VIEW (Beta 9.6.2, the maintainer: "make the bottom part of the dropdown of the
+   case thing be always visible, because at the moment you have to scroll all the way down"). The panel used to scroll as
+   one: a long description pushed the tags, the "I last reached out" line and Sync again / Close case below the fold. Now
+   only the description scrolls, inside the panel, and everything under it stays put. The panel itself scrolls only if the
+   parts under the description are taller than the panel on their own — never cut off. */
+.oc-desc { display: flex; flex-direction: column; max-height: 360px; overflow-y: auto; }
+.oc-desc > * { flex: none; }
+.oc-desc > .oc-desc-body { flex: 1 1 auto; min-height: 48px; overflow-y: auto; padding-right: 4px; }
+
+/* SOFT SLATE EXCEPTIONS (theme.js takes these exactly as written; they never apply in Dark).
+   The Cases tab's count on the ACTIVE tab (the maintainer: "The number should not be black, maybe white is better for
+   visibility"): its well is a see-through white over the tab's solid purple, and the recolouring, which reads one rule at
+   a time, took it for white text on the page and made it black. In Soft Slate it is white in its light well, as in Dark. */
+:root[data-theme="slate"] .tab-item.tab-pinned.active .tab-cases-count { background: rgba(255, 255, 255, .22); color: #fff; }
+
+/* THE PICKER'S CHECK FOR REPEATED PICTURES (9.7.0): one quiet line under the note, while the pictures are compared and
+   then saying how many were the same picture sent again (askForAttachments, pickFingerprint). */
+.pick-status { margin: -4px 0 10px; font-size: 11px; line-height: 1.45; color: var(--blue2, #a5b4fc); }
+.pick-status[hidden] { display: none; }
+
+/* LIKELY SIGNATURES, FOLDED AT THE END OF THE PICKER (9.7.0, pickLooksLikeSignature): one quiet heading that opens them. */
+.pick-sig { margin-top: 6px; border-top: 1px dashed var(--border); padding-top: 6px; }
+.pick-sig-head { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 6px 8px; border-radius: 6px;
+    font: inherit; font-size: 11px; color: var(--txt3); cursor: pointer; }
+.pick-sig-head:hover { background: rgba(255, 255, 255, .05); color: var(--txt2); }
+.pick-sig-head:focus-visible { outline: 2px solid var(--blue2, #818cf8); outline-offset: 1px; }
+
+/* THE TIME LINE OVER AN ANSWER (9.7.0, answerWhenEl): when the Quick Option was pressed or the message sent. One small
+   grey line above the bubble, so the bubble, its Copy and its buttons are where they always were. */
+.msg.has-when { flex-direction: column; gap: 0; align-items: flex-start; }
+.msg-when { font-size: 10px; line-height: 1.3; color: var(--txt3); margin: 0 0 3px 2px; letter-spacing: .01em; user-select: text; }
+
+/* STICKY NOTES ABOVE THE MESSAGE BOX (Beta 9.7.0, the maintainer's mockup): Favourites, JIRA Actions and Case Actions as
+   notes on the row over the message box; a click raises one into a sheet over the chat. Dark here; Soft Slate below,
+   taken exactly as written (theme.js). The column's own Quick Options are not shown while they are. */
+html.sn-on #qaPanel { display: none !important; }
+/* NOT SHOWN UNTIL IT IS KNOWN WHICH ONE IS WANTED (2026-11-16, the maintainer: "when you open SOTI AI Analyser it shows the
+ * old ui quick options thing for a second"). `sn-on` is set by sidepanel.js, the last script on the page, so the old Quick
+ * Options panel used to paint until then. It waits now; wireQaNotes sets `sn-decided` once it has chosen. */
+html:not(.sn-decided) #qaPanel { display: none !important; }
+.sn-dock { position: relative; z-index: 6; margin: 0 14px; }
+.sn-dock[hidden], .sn-dock.edition-off { display: none !important; }
+.sn-row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; padding: 4px 0 0; }
+.sn { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px 8px 8px; border-radius: 10px 10px 0 0;
+    font: 700 11.5px/1 inherit; font-family: inherit; letter-spacing: .02em; cursor: pointer; border: 1px solid var(--border); border-bottom: none;
+    background: var(--bg2); color: var(--txt1); box-shadow: 0 -2px 8px rgba(0, 0, 0, .25); transform: translateY(3px); transition: transform .15s; }
+.sn::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 4px; border-radius: 10px 10px 0 0; background: var(--sn-c); }
+.sn:hover, .sn.on { transform: translateY(0); }
+.sn:focus-visible { outline: 2px solid var(--blue2, #818cf8); outline-offset: 1px; }
+.sn.dragging { z-index: 2; transition: none; opacity: .92; box-shadow: 0 6px 18px rgba(0, 0, 0, .35); }
+.sn-grip { opacity: .45; font-size: 10px; letter-spacing: -2px; margin-right: 1px; cursor: grab; touch-action: none; padding: 2px 1px; }
+.sn.dragging .sn-grip { cursor: grabbing; }
+.sn-n { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: rgba(255, 255, 255, .12); }
+.sn-ch { opacity: .55; font-size: 10px; }
+.sn-fav  { --sn-c: #d97706; color: #fcd34d; background: #2a2414; }
+.sn-jira { --sn-c: #2563eb; color: #93c5fd; background: #14203a; }
+.sn-case { --sn-c: #0d9488; color: #5eead4; background: #10292a; }
+.sn-sheet { position: absolute; left: 0; right: 0; bottom: 100%; max-height: calc(58vh / var(--ui-zoom, 1)); overflow: auto; padding: 12px 12px 10px;
+    border-radius: 12px 12px 0 0; border: 1px solid var(--border); border-bottom: none; background: var(--bg2);
+    box-shadow: 0 -10px 30px rgba(0, 0, 0, .35); }
+.sn-sheet::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 5px; border-radius: 12px 12px 0 0; background: var(--sn-c); }
+.sn-sheet.sn-fav { --sn-c: #d97706; } .sn-sheet.sn-jira { --sn-c: #2563eb; } .sn-sheet.sn-case { --sn-c: #0d9488; }
+.sn-sheet-h { display: flex; align-items: center; justify-content: space-between; margin: 2px 0 8px; font-weight: 800; font-size: 12px; letter-spacing: .05em; text-transform: uppercase; color: var(--txt1); }
+.sn-low { background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--txt2); font: inherit; font-size: 11px; letter-spacing: 0; text-transform: none; padding: 3px 8px; cursor: pointer; }
+.sn-sheet .qa-grp, .sn-sheet .qa-grp[hidden] { display: block !important; margin: 0; }
+.sn-sheet .qa-grp > .qa-grp-h { display: none !important; }
+.sn-sheet .qa-grp-b, .sn-sheet .qa-grp-b[hidden] { display: block !important; }
+:root[data-theme="slate"] .sn { border-color: rgba(15, 23, 42, .10); box-shadow: 0 -2px 8px rgba(15, 23, 42, .08); }
+:root[data-theme="slate"] .sn-fav  { color: #78350f; background: #fef3c7; }
+:root[data-theme="slate"] .sn-jira { color: #1e3a8a; background: #dbeafe; }
+:root[data-theme="slate"] .sn-case { color: #134e4a; background: #ccfbf1; }
+:root[data-theme="slate"] .sn-n { background: rgba(255, 255, 255, .6); }
+:root[data-theme="slate"] .sn-sheet { border-color: rgba(15, 23, 42, .12); box-shadow: 0 -10px 30px rgba(15, 23, 42, .18); }
+:root[data-theme="slate"] .sn-sheet.sn-fav  { background: #fef3c7; }
+:root[data-theme="slate"] .sn-sheet.sn-jira { background: #dbeafe; }
+:root[data-theme="slate"] .sn-sheet.sn-case { background: #ccfbf1; }
+:root[data-theme="slate"] .sn-sheet-h { color: #0f172a; }
+
+/* THE LIGHT BULB (9.7.0, wireThemeBulb): out in Dark, lit amber in Soft Slate. */
+.theme-bulb { width: 32px; height: 32px; padding: 0; display: inline-grid; place-items: center; color: var(--txt2); }
+.theme-bulb .bulb-glass { transition: fill .15s; }
+.theme-bulb.is-lit { color: #b45309; }
+.theme-bulb.is-lit .bulb-glass { fill: #fde68a; }
+:root[data-theme="slate"] .theme-bulb.is-lit { color: #b45309; background: #fef3c7; border-color: #fcd34d; }
+
+/* THE JIRA WINDOW'S COPY AS AN ICON (9.7.0). */
+.jira-copy-ic { display: inline-grid; place-items: center; width: 34px; padding: 0; }
+
+/* THE CASE ROW'S EXPANDER IN SOFT SLATE, LIGHTER (Beta 9.7.0, 2026-11-09, the maintainer: "the lavender colour of the
+   dropdown button is too thick, make it lighter"): a pale lilac tile with a soft border and a violet chevron, instead
+   of the recoloured dark-mode gradient. Taken as written by theme.js, since it names the slate theme. */
+:root[data-theme="slate"] .oc-row .oc-desc-toggle {
+    color: #7c3aed; background: #f7f5ff; border-color: rgba(167, 139, 250, .42);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, .06);
+}
+:root[data-theme="slate"] .oc-row .oc-desc-toggle:hover { color: #6d28d9; background: #efebff; border-color: rgba(139, 92, 246, .6); }
+:root[data-theme="slate"] .oc-row .oc-desc-toggle[aria-expanded="true"] { background: #f1edff; border-color: rgba(139, 92, 246, .55); }
+
+/* WHAT'S NEW (Beta 9.7.0 / Global 1.4.1): the window a new version opens with, once. See showWhatsNew() in sidepanel.js. */
+.modal.m-whatsnew { max-width: 470px; }
+.wn-sub { font-size: 11px; color: var(--txt3, var(--txt2)); margin-top: 2px; }
+.wn-body { font-size: 12px; line-height: 1.55; color: var(--txt2); max-height: calc(58vh / var(--ui-zoom, 1)); overflow-y: auto; padding-right: 4px; }
+.wn-body ul { margin: 0; padding-left: 18px; }
+.wn-body li { margin: 0 0 7px; }
+.wn-body li b { color: var(--txt1); }
+.wn-body .wn-group { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--blue); margin: 10px 0 5px; }
+.wn-body .wn-group:first-child { margin-top: 2px; }
+
+/* STICKY NOTES, SMALLER AND ON THE MESSAGE BOX (2026-11-10, the maintainer: "the stick notes should be near the chat box,
+   like at the line the top line of the chat box", "half the length", "the window that opens doesnt need to be the same
+   colour of the sticky note"). The dock is in the Meeting Notes arrow's row, so the notes stand on the box's top line;
+   each note is its icon, name and count on one line, never wrapped; the raised sheet is plain, with the note's colour
+   only as the strip on its top edge. */
+html.sn-on .notes-jump-row { align-items: flex-end; margin-bottom: 0; }
+.notes-jump-row .sn-dock { flex: 1 1 auto; min-width: 0; margin: 0 8px 0 2px; }
+.sn-row { flex-wrap: nowrap; gap: 6px; padding: 0; }
+.sn { flex: 0 1 auto; min-width: 0; gap: 5px; padding: 6px 8px 5px 8px; font-size: 10.5px; border-radius: 8px 8px 0 0; transform: translateY(1px);
+    box-shadow: 0 -1px 4px rgba(0, 0, 0, .18); touch-action: none; }
+.sn::before { height: 3px; border-radius: 8px 8px 0 0; }
+.sn:hover, .sn.on { transform: translateY(-2px); }
+.sn-lb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sn-ic { flex-shrink: 0; font-size: 11px; }
+.sn-n { flex-shrink: 0; font-size: 9.5px; padding: 1px 6px; }
+.sn.dragging { cursor: grabbing; }
+.sn-sheet { left: -2px; right: -40px; background: var(--bg1); }
+.sn-sheet::before { height: 4px; }
+:root[data-theme="slate"] .sn { box-shadow: 0 -1px 4px rgba(15, 23, 42, .07); }
+:root[data-theme="slate"] .sn-sheet.sn-fav, :root[data-theme="slate"] .sn-sheet.sn-jira, :root[data-theme="slate"] .sn-sheet.sn-case { background: #ffffff; }
+.sn-sheet .qa-grp, .sn-sheet .qa-grp[hidden] { background: transparent !important; border: none !important; box-shadow: none !important; padding: 0 !important; }
+
+/* THE ACCOUNT BEFORE (Beta 9.8.0): the strip under the NPS bar, the card in Case Info and the window. See ACCOUNT HISTORY
+   in sidepanel.js. Violet, so it is not read as the NPS strip's warning orange. */
+.hx-strip { flex-shrink: 0; display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px; font-size: 10.5px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; color: var(--txt1);
+    background: color-mix(in srgb, #8b5cf6 9%, var(--bg0)); border-bottom: 1px solid color-mix(in srgb, #8b5cf6 40%, var(--border)); }
+.hx-strip[hidden] { display: none !important; }
+.hx-k { flex-shrink: 0; color: #a78bfa; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; }
+.hx-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--txt2); }
+.hx-t b { color: var(--txt1); }
+.hx-t .hx-num { font-family: var(--mono, ui-monospace, monospace); color: var(--blue); font-weight: 700; }
+.hx-go { margin-left: auto; flex-shrink: 0; border: 1px solid color-mix(in srgb, #8b5cf6 45%, var(--border)); background: var(--bg0); color: #a78bfa;
+    border-radius: 999px; padding: 2px 10px; font: inherit; font-weight: 700; cursor: pointer; }
+.hx-go:hover { border-color: #8b5cf6; }
+.hx-card { margin: 4px 0 10px; padding: 9px 11px; border-radius: 10px; border: 1px solid color-mix(in srgb, #8b5cf6 40%, var(--border));
+    background: color-mix(in srgb, #8b5cf6 6%, var(--bg0)); font-size: 11.5px; color: var(--txt2); line-height: 1.45; }
+.hx-card[hidden] { display: none !important; }
+.hx-card b { color: var(--txt1); }
+.hx-top { display: flex; align-items: center; justify-content: space-between; font-weight: 700; color: #a78bfa; font-size: 10.5px; letter-spacing: .5px;
+    text-transform: uppercase; margin-bottom: 3px; }
+.hx-again { border: none; background: none; color: inherit; font-size: 13px; cursor: pointer; padding: 0 2px; opacity: .8; }
+.hx-again:disabled { opacity: .35; cursor: default; }
+.hx-muted { color: var(--txt3); }
+.hx-btn { margin-top: 7px; border: 1px solid color-mix(in srgb, #8b5cf6 45%, var(--border)); background: var(--bg0); color: #a78bfa; border-radius: 8px;
+    padding: 4px 10px; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.hx-btn[hidden] { display: none; }
+.modal.hx-modal { max-width: 520px; }
+/* THE BUTTONS ARE ALWAYS IN VIEW (2026-11-12, the maintainer: "Let the close button for the previous cases window be always
+   visible, i shouldnt need to scroll down"). The window no longer scrolls as a whole: its title, search box and the
+   Check again / Close row stay put, and only the middle (the summary and both lists) scrolls, in one place. The lists lose
+   their own scroll boxes inside it, so there is never a scroll inside a scroll. */
+.modal.hx-modal { overflow: hidden; }
+.modal.hx-modal > .cps-head, .modal.hx-modal > .hx-search, .modal.hx-modal > .hx-foot { flex-shrink: 0; }
+.hx-modal .hx-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-right: -6px; padding-right: 6px; }
+.hx-modal .hx-body .hx-list { max-height: none; overflow: visible; }
+.hx-modal .hx-foot { margin-top: 10px !important; padding-top: 10px; border-top: 1px solid var(--border); }
+.hx-sum { font-size: 11.5px; color: var(--txt2); margin: 2px 0 10px; line-height: 1.5; }
+.hx-sum b { color: var(--txt1); }
+.hx-list { max-height: calc(44vh / var(--ui-zoom, 1)); overflow-y: auto; }
+.hx-row { display: block; width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; border: 1px solid var(--border);
+    border-radius: 10px; padding: 8px 10px; margin: 0 0 7px; background: var(--bg0); }
+.hx-row:hover { border-color: color-mix(in srgb, #8b5cf6 55%, var(--border)); }
+.hx-row .l1 { display: flex; align-items: baseline; gap: 8px; font-size: 11.5px; }
+.hx-row .num { font-family: var(--mono, ui-monospace, monospace); font-weight: 700; color: var(--blue); }
+.hx-row .dt { color: var(--txt3); font-size: 10.5px; }
+.hx-row .st { margin-left: auto; font-size: 10px; font-weight: 700; border-radius: 999px; padding: 1px 8px; white-space: nowrap;
+    background: color-mix(in srgb, var(--txt3) 14%, transparent); color: var(--txt3); }
+.hx-row .st.open { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.hx-row .sub { font-size: 12px; color: var(--txt1); margin: 3px 0 4px; font-weight: 600; overflow-wrap: anywhere; }
+.hx-row .why { display: flex; flex-wrap: wrap; gap: 5px; }
+.hx-row .why span { font-size: 10px; border-radius: 6px; padding: 1px 6px; background: color-mix(in srgb, var(--blue) 10%, transparent); color: var(--txt2); }
+.hx-row .why span.lv { font-weight: 800; color: #fff; background: #7c3aed; }
+.hx-row .why span.lv.sim { background: color-mix(in srgb, #8b5cf6 22%, transparent); color: #a78bfa; }
+.hx-row.slim { padding: 6px 10px; margin-bottom: 5px; }
+.hx-row.slim .sub { margin: 2px 0 0; font-weight: 500; font-size: 11.5px; }
+.hx-all { margin-top: 6px; }
+.hx-all > summary { cursor: pointer; font-size: 11.5px; font-weight: 700; color: var(--blue); margin: 4px 0 8px; }
+.hx-filter { width: 100%; margin: 0 0 8px; }
+:root[data-theme="slate"] .hx-k, :root[data-theme="slate"] .hx-top, :root[data-theme="slate"] .hx-go, :root[data-theme="slate"] .hx-btn { color: #6d28d9; }
+:root[data-theme="slate"] .hx-strip { background: #f5f3ff; border-bottom-color: #ddd6fe; }
+:root[data-theme="slate"] .hx-card { background: #faf8ff; border-color: #ddd6fe; }
+:root[data-theme="slate"] .hx-go, :root[data-theme="slate"] .hx-btn { background: #ffffff; border-color: #c4b5fd; }
+:root[data-theme="slate"] .hx-row .why span.lv.sim { background: #ede9fe; color: #6d28d9; }
+
+/* THE SHEET'S HANDLE (Beta 9.8.0): a short bar in place of "▾ Lower". */
+.sn-low { display: inline-grid; place-items: center; width: 46px; height: 22px; padding: 0; border: none; background: none; border-radius: 8px; }
+.sn-low:hover, .sn-low:focus-visible { background: color-mix(in srgb, var(--txt3) 12%, transparent); }
+.sn-grab { display: block; width: 32px; height: 5px; border-radius: 999px; background: var(--txt3); opacity: .55; transition: opacity .15s; }
+.sn-low:hover .sn-grab, .sn-low:focus-visible .sn-grab { opacity: .9; }
+:root[data-theme="slate"] .sn-grab { background: #94a3b8; }
+
+/* RECENT CASES: THE CUSTOMER (Beta 9.8.0): the account and the contact, a quiet third line. */
+.recent-who { display: block; margin-top: 2px; font-size: 11px; color: var(--txt3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent-who::before { content: '🏢 '; }
+
+/* ONE CONTROL FOR CASE INFO ON THE WIDE LAYOUT (Beta 9.8.0): no ▼ on the header, which no longer folds the column; the
+   edge handle hides and shows it (see ciEdgeOnly in sidepanel.js). Below 600px the header still does. */
+@media (min-width: 600px) {
+    html.ci-edge-only #iconL { display: none !important; }
+    html.ci-edge-only #toggleL { cursor: default; }
+}
+
+/* RECENT CHATS IN THE RESOURCES HUB (Beta 9.8.0): the column on the left, drawn as Case Info is (the same deep navy and
+   header bar, recoloured the same way in Soft Slate), with the edge handle on a wide panel. See RECENT CHATS in
+   sidepanel.js. Below 600px it sits on top and its header folds it. */
+.rhub-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.rhub-body > .rhub-chat-wrap { min-width: 0; }
+.rhub-side { display: flex; flex-direction: column; min-height: 0; margin: 0 14px 8px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+    background: linear-gradient(180deg, #16203b 0%, #121a31 100%); }
+.rhub-side.edition-off { display: none !important; }
+.rhub-side-h { display: flex; align-items: center; gap: 6px; width: 100%; padding: 9px 12px; border: none; background: #1c2848; color: var(--txt1);
+    font: inherit; font-size: 11.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; text-align: left; cursor: pointer; }
+.rhub-side-h:hover { background: #22305a; }
+.rhub-side-t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rhub-side-n { flex-shrink: 0; font-size: 10px; padding: 1px 7px; border-radius: 999px; background: rgba(255, 255, 255, .12); letter-spacing: 0; }
+.rhub-side-n:empty { display: none; }
+.rhub-side-chev { flex-shrink: 0; font-size: 10px; }
+.rhub-side-b { overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; max-height: calc(34vh / var(--ui-zoom, 1)); }
+.rhub-side.is-folded .rhub-side-b { display: none; }
+.rhub-rc { display: flex; flex-direction: column; gap: 3px; width: 100%; text-align: left; padding: 8px 10px; border: 1px solid var(--border);
+    border-left: 3px solid #6366f1; border-radius: 9px; background: rgba(255, 255, 255, .03); color: var(--txt1); font: inherit; cursor: pointer; }
+.rhub-rc:hover, .rhub-rc:focus-visible { border-color: rgba(129, 140, 248, .7); outline: none; }
+.rhub-rc.is-here { border-color: #6366f1; background: rgba(99, 102, 241, .14); }
+.rhub-rc-t { font-size: 12px; font-weight: 600; line-height: 1.35; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.rhub-rc-m { font-size: 10.5px; color: var(--txt3); }
+.rhub-rc.is-here .rhub-rc-m { color: #818cf8; font-weight: 700; }
+.rhub-rc-empty { font-size: 11.5px; color: var(--txt3); line-height: 1.5; padding: 6px 4px; }
+@media (min-width: 600px) {
+    .rhub-body { flex-direction: row; }
+    .rhub-side { flex: 0 0 240px; width: 240px; margin: 0 0 12px 14px; }
+    .rhub-side-b { flex: 1; max-height: none; }
+    .rhub-side.is-folded .rhub-side-b { display: flex; }
+    .rhub-side-h { cursor: default; }
+    .rhub-side-h:hover { background: #1c2848; }
+    .rhub-side-chev { display: none; }
+    .rhub-body.side-hidden .rhub-side { display: none; }
+    .rhub-edge-wrap.edition-off { display: none !important; }
+    .rhub-body .rhub-edge { left: -12px; }
+    .rhub-body.side-hidden .rhub-edge { left: 0; width: 26px; height: auto; padding: 10px 0; border-radius: 0 5px 5px 0;
+        display: flex; flex-direction: column; align-items: center; gap: 6px; }
+    .rhub-body.side-hidden .rhub-edge::after { content: 'Recent chats'; writing-mode: vertical-rl; transform: rotate(180deg);
+        font-size: 11px; font-weight: 600; letter-spacing: .3px; }
+    .rhub-body:not(.side-hidden) .rhub-chat-wrap { margin-left: 18px; }
+}
+
+/* HUB STICKY NOTES (Beta 9.8.0): the hub's Quick Options as notes on its message box's top line, as on a case. */
+html.rhub-sn-on #rhubQuickBtn { display: none !important; }
+.rhub-notes { position: relative; z-index: 6; margin: 0 0 -8px; padding: 0 2px; }
+.rhub-notes.edition-off { display: none !important; }
+.rhub-notes .sn-dock { margin: 0; }
+.rhub-notes .sn-sheet { left: -2px; right: -2px; }
+.sn-pulse { --sn-c: #0284c7; color: #7dd3fc; background: #102436; }
+.sn-sheet.sn-pulse { --sn-c: #0284c7; } .sn-sheet.sn-jira { --sn-c: #2563eb; }
+:root[data-theme="slate"] .sn-pulse { color: #075985; background: #e0f2fe; }
+:root[data-theme="slate"] .sn-sheet.sn-pulse { background: #ffffff; }
+
+/* THE OPEN CASE'S TAB (Beta 9.8.0): the case number, its × and, on a rest, a card with the customer and the description. */
+.tab-item.tab-case { gap: 6px; padding-right: 4px; }
+.tab-case .tab-case-num { font-family: var(--mono, ui-monospace, monospace); font-weight: 700; letter-spacing: .02em; }
+.tab-case-x { display: inline-grid; place-items: center; width: 18px; height: 18px; margin-left: 2px; padding: 0; border: none; border-radius: 50%;
+    background: transparent; color: inherit; font-size: 14px; line-height: 1; opacity: .6; cursor: pointer; }
+.tab-case-x:hover, .tab-case-x:focus-visible { opacity: 1; background: rgba(255, 255, 255, .16); outline: none; }
+:root[data-theme="slate"] .tab-case-x:hover { background: rgba(15, 23, 42, .08); }
+:root[data-theme="slate"] .tab-item.tab-case.active .tab-case-x:hover { background: rgba(255, 255, 255, .22); }
+.case-tab-card { position: fixed; z-index: 400; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border2, var(--border)); background: var(--bg1);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, .35); font-size: 12px; line-height: 1.45; color: var(--txt2); pointer-events: none; }
+.case-tab-card[hidden] { display: none; }
+.ctc-num { font-family: var(--mono, ui-monospace, monospace); font-weight: 800; color: var(--blue); font-size: 12px; }
+.ctc-sub { font-weight: 700; color: var(--txt1); margin-top: 2px; }
+.ctc-who { margin-top: 4px; color: var(--txt2); }
+.ctc-desc { margin-top: 6px; color: var(--txt3); display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+:root[data-theme="slate"] .case-tab-card { background: #ffffff; border-color: rgba(15, 23, 42, .12); box-shadow: 0 12px 30px rgba(15, 23, 42, .16); }
+
+/* THE ATTENTION GRABBER (Beta 9.8.0, option B of the mockups; the maintainer: "I WANT PEOPLES ATTENTION ON THE SEVERITY AND
+   IF A CASE IS WAITING ON SOTI RESPONSE … AT THE MOMENT A LOT IS JUMPING OUT AT YOU WITH THE COLOURS"). On the Cases list
+   only two things keep colour:
+     · SEVERITY, as a thick stripe down the row's left edge (Critical dark red, High red, Medium amber; Low none), with its
+       letter tinted to match;
+     · ON SOTI, as a red outline round the row, a light red ground, a red case number and the "● ON SOTI" pill
+       (the pill is hidden in both builds since 2026-11-11, edition switch 'cases:sotiPill').
+   Everything else is quiet: the tier stripe and headings grey, the JIRA and age chips plain, the Temporary card a plain
+   outline (its label keeps its cyan), the case numbers dark. The filter pills above the list are unchanged. Dark and Soft
+   Slate each have their own values, written out (the slate ones are taken as written by theme.js).
+   Off in Global ('cases:attention'). */
+html.oc-attn .oc-soti-pill { display: inline-flex; align-items: center; margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: #dc2626;
+    color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .04em; line-height: 1.5; white-space: nowrap; vertical-align: middle; }
+/* the quiet base — Dark */
+html.oc-attn:not([data-theme="slate"]) .oc-view .oc-tag.sev-jira { color: #cbd5e1 !important; background: rgba(255, 255, 255, .04) !important; border-color: rgba(255, 255, 255, .14) !important; }
+html.oc-attn:not([data-theme="slate"]) .oc-view .oc-num { color: #e2e8f0 !important; }
+html.oc-attn:not([data-theme="slate"]) .oc-view .oc-group { color: #94a3b8 !important; }
+html.oc-attn:not([data-theme="slate"]) .oc-view .oc-temp-card { background: transparent !important; border-color: rgba(255, 255, 255, .12) !important; }
+html.oc-attn:not([data-theme="slate"]) .oc-view .oc-row.oc-temp { background: var(--bg1) !important; }
+/* the quiet base — Soft Slate */
+html.oc-attn[data-theme="slate"] .oc-view .oc-tag.sev-jira { color: #475569 !important; background: #f8fafc !important; border-color: #e2e8f0 !important; }
+html.oc-attn[data-theme="slate"] .oc-view .oc-num { color: #1e293b !important; }
+html.oc-attn[data-theme="slate"] .oc-view .oc-group { color: #94a3b8 !important; }
+html.oc-attn[data-theme="slate"] .oc-view .oc-temp-card { background: transparent !important; border-color: #e2e8f0 !important; }
+html.oc-attn[data-theme="slate"] .oc-view .oc-row.oc-temp { background: #ffffff !important; }
+/* severity: its letter (the severity stripe was taken out again on 2026-11-10: "remove that strip thing in the Cases view",
+   "revert the strip colour thing back to how it was before" — each row keeps its thin tier-coloured stripe, as before) */
+html.oc-attn:not([data-theme="slate"]) .oc-view .oc-tag.sev-crit, html.oc-attn:not([data-theme="slate"]) .oc-view .oc-tag.sev-high { color: #fca5a5 !important; background: rgba(239, 68, 68, .14) !important; border-color: rgba(239, 68, 68, .55) !important; font-weight: 800; }
+html.oc-attn:not([data-theme="slate"]) .oc-view .oc-tag.sev-med { color: #fcd34d !important; background: rgba(245, 158, 11, .12) !important; border-color: rgba(245, 158, 11, .5) !important; font-weight: 800; }
+html.oc-attn:not([data-theme="slate"]) .oc-view .oc-tag.sev-low { color: #94a3b8 !important; background: transparent !important; border-color: rgba(255, 255, 255, .14) !important; }
+html.oc-attn[data-theme="slate"] .oc-view .oc-tag.sev-crit, html.oc-attn[data-theme="slate"] .oc-view .oc-tag.sev-high { color: #b91c1c !important; background: #fef2f2 !important; border-color: #fca5a5 !important; font-weight: 800; }
+html.oc-attn[data-theme="slate"] .oc-view .oc-tag.sev-med { color: #92400e !important; background: #fffbeb !important; border-color: #fcd34d !important; font-weight: 800; }
+html.oc-attn[data-theme="slate"] .oc-view .oc-tag.sev-low { color: #94a3b8 !important; background: transparent !important; border-color: #e2e8f0 !important; }
+/* on SOTI: the outline, the ground and the number (the severity stripe stays on its left edge) */
+html.oc-attn:not([data-theme="slate"]) .oc-view .oc-row.needs-soti { background: rgba(239, 68, 68, .10) !important; box-shadow: inset 0 0 0 2px #ef4444 !important; }
+html.oc-attn:not([data-theme="slate"]) .oc-view .oc-row.needs-soti .oc-num { color: #fca5a5 !important; }
+html.oc-attn[data-theme="slate"] .oc-view .oc-row.needs-soti { background: #fff5f5 !important; box-shadow: inset 0 0 0 2px #ef4444 !important; }
+html.oc-attn[data-theme="slate"] .oc-view .oc-row.needs-soti .oc-num { color: #b91c1c !important; }
+
+/* THE CASE'S SERVER, READ FROM CMS (Beta 9.8.0): the card under Cloud Server (Asset). */
+.cms-card { margin: 4px 0 10px; padding: 9px 11px; border-radius: 10px; border: 1px solid color-mix(in srgb, #0ea5e9 40%, var(--border));
+    background: color-mix(in srgb, #0ea5e9 6%, var(--bg0)); font-size: 11.5px; color: var(--txt2); line-height: 1.45; }
+.cms-card[hidden], .cms-card.edition-off { display: none !important; }
+.cms-top { display: flex; align-items: center; justify-content: space-between; font-weight: 700; color: #38bdf8; font-size: 10.5px; letter-spacing: .5px;
+    text-transform: uppercase; margin-bottom: 3px; }
+.cms-again { border: none; background: none; color: inherit; font-size: 13px; cursor: pointer; padding: 0 2px; opacity: .8; }
+.cms-again:disabled { opacity: .35; cursor: default; }
+.cms-l { margin: 1px 0; overflow-wrap: anywhere; }
+.cms-main { font-weight: 700; color: var(--txt1); }
+.cms-bad { color: #f87171; font-weight: 600; }
+.cms-good { color: #34d399; }
+.cms-muted { color: var(--txt3); font-size: 10.5px; margin-top: 3px; }
+.cms-btn { margin-top: 7px; border: 1px solid color-mix(in srgb, #0ea5e9 45%, var(--border)); background: var(--bg0); color: #38bdf8; border-radius: 8px;
+    padding: 4px 10px; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.cms-btn[hidden] { display: none; }
+:root[data-theme="slate"] .cms-card { background: #f0f9ff; border-color: #bae6fd; }
+:root[data-theme="slate"] .cms-top, :root[data-theme="slate"] .cms-btn { color: #0369a1; }
+:root[data-theme="slate"] .cms-btn { background: #ffffff; border-color: #7dd3fc; }
+:root[data-theme="slate"] .cms-bad { color: #b91c1c; }
+:root[data-theme="slate"] .cms-good { color: #047857; }
+/* CMS alerts and comments (2026-11-18) */
+.cms-warn { color: #fbbf24; font-weight: 600; }
+:root[data-theme="slate"] .cms-warn { color: #b45309; }
+.cms-sub { font-size: 10.5px; opacity: .85; padding-left: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* THE ACCOUNT'S EARLIER CASES, BESIDE THE PANEL, NOT OVER IT (Beta 9.8.0, the maintainer: "Let it be possible to interact
+   with the Case details panel on the left side even though the pop up is there"). The window sits on the right with no
+   dimming, and clicks around it reach the panel behind: Case Info stays usable while it is open. Close or Esc shuts it. */
+#mHistory.backdrop { background: transparent !important; backdrop-filter: none !important; pointer-events: none; }
+#mHistory.backdrop > .modal { pointer-events: auto; box-shadow: 0 18px 50px rgba(0, 0, 0, .45); }
+@media (min-width: 600px) {
+    #mHistory.backdrop { justify-content: flex-end; align-items: flex-start; padding: 64px 16px 16px; }
+    #mHistory.backdrop > .modal { width: min(520px, calc(100% - 320px)); max-height: calc(100vh - 80px); overflow-y: auto; }
+}
+:root[data-theme="slate"] #mHistory.backdrop > .modal { box-shadow: 0 18px 50px rgba(15, 23, 42, .22); border: 1px solid rgba(15, 23, 42, .12); }
+/* the Translate button, at the top right of the window */
+#mHistory .cps-head { align-items: center; }
+.hx-tr { margin-left: auto; flex-shrink: 0; border: 1px solid var(--border); background: var(--bg0); color: var(--txt2); border-radius: 999px;
+    padding: 3px 10px; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.hx-tr:hover { border-color: var(--blue); color: var(--txt1); }
+.hx-tr:disabled { opacity: .6; cursor: default; }
+.hx-trd { margin-left: 6px; font-size: 9.5px; font-weight: 700; color: var(--txt3); text-transform: uppercase; letter-spacing: .04em; }
+
+/* WHAT'S NEW (Beta 9.8.0): every earlier version, folded; the tick that says it was read; above any other window. */
+#mWhatsNew.backdrop { z-index: 2100; }
+.wn-body .wn-earlier { margin-top: 16px; color: var(--txt3); }
+.wn-old { border-top: 1px solid var(--border); padding: 5px 0; }
+.wn-old > summary { cursor: pointer; font-weight: 700; color: var(--txt1); font-size: 11.5px; }
+.wn-old > ul { margin: 6px 0 4px; }
+.wn-ack { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; font-weight: 700; color: var(--txt1); cursor: pointer; }
+.wn-ack[hidden], .wn-ack-hint[hidden] { display: none; }
+.wn-ack input { width: 16px; height: 16px; }
+.wn-ack input:disabled + span { color: var(--txt3); }
+.wn-ack-hint { font-size: 10.5px; color: var(--txt3); margin: 3px 0 0 24px; }
+#wnOk:disabled { opacity: .45; cursor: not-allowed; }
+
+/* THE TEMPORARY CASES IN LINE WITH MY CASES (Beta 9.8.1, the maintainer: "THE CASES THAT ARE IN THE TEMPORARY SECTION ARE NOT
+   IN ALIGNMENT WITH THE CASES THAT ARE IN THE MY CASES SECTION"): with the attention grabber on, the Temporary block is no
+   longer a padded card, so its rows start and end where every other row does; its cyan heading stays. */
+html.oc-attn .oc-view .oc-temp-card { padding: 0 !important; border: none !important; background: transparent !important; border-radius: 0; gap: 6px; }
+html.oc-attn .oc-view .oc-temp-card .oc-section-temp { padding: 4px 0 2px; }
+
+/* ONE NAME: CASE DETAILS (Beta 9.8.1, the maintainer: "REMAME THE WORD CASE INFO, LET THAT BE WRITING AS CASE DETAILS, AND
+   REMOVE THE CASE DETAILS WORDING THAT IS BELOW THE SYNC FROM SALESFORCE … CASE INFO AND CASE DETAILS ARE THE SAME THING").
+   The panel's heading says Case Details; the heading that said it again inside the panel is not shown (the element stays,
+   for the code that looks it up). */
+#toggleCaseDetails { display: none !important; }
+
+/* CASE DETAILS STAYS THE LEFT COLUMN ON A NARROW PANEL TOO (Beta 9.8.1, the maintainer: "IT SHOULD STILL LOOK LIKE IMAGE 1,
+   THE CASE INFO PANEL ON THE LEFT SIDE, IT SHOULD BE LIKE THAT EVEN ON THE SMALL VIEW … FOR KEEPING A CONSISTENT VIEW").
+   Below 600px the column used to stack on top and, open, hide the chat. With html.ci-column (wireCiColumn in sidepanel.js,
+   'case:columnAlways', off in Global) the narrow panel is laid out as the wide one is: the column on the left at up to 300px
+   (a little under half of a 400px side panel), the chat beside it, and the edge handle on the border between them. */
+@media (max-width: 599px) {
+    html.ci-column .layout { flex-direction: row; }
+    html.ci-column .panel-left,
+    html.ci-column .panel-left:not(.collapsed) {
+        --panel-w: clamp(170px, 46%, 300px);
+        width: var(--panel-w) !important;
+        min-width: 150px;
+        max-width: 300px;
+        flex: 0 0 auto !important;
+        height: auto !important;
+        overflow: auto;
+        max-height: none !important;
+        border-right: 1px solid var(--border);
+        border-top: none !important;
+        order: 0 !important;
+    }
+    html.ci-column .panel-left.collapsed.qa-open { overflow-y: auto !important; overflow-x: hidden; }
+    html.ci-column .panel-left.qa-open .qa-pb { max-height: none; }
+    html.ci-column .layout:has(.panel-left:not(.collapsed)) .chat-wrap { display: flex !important; }
+    html.ci-column .chat-wrap { flex: 1; min-width: 0; order: 0 !important; }
+    html.ci-column #iconL { display: none !important; }
+    html.ci-column #toggleL { cursor: default; }
+    html.ci-column .pl-edge-wrap { display: block; position: relative; flex: 0 0 0; width: 0; z-index: 30; order: 0 !important; }
+    html.ci-column .pl-edge {
+        position: absolute; top: 50%; transform: translateY(-50%); padding: 0; line-height: 1; cursor: pointer;
+        left: -12px; width: 24px; height: 56px; border-radius: 5px; border: 1px solid var(--blue, #3b82f6);
+        background: var(--blue, #3b82f6); color: #fff; font-size: 15px; font-weight: 700;
+        box-shadow: 0 0 0 2px rgba(99, 102, 241, .3), 0 3px 10px rgba(0, 0, 0, .45);
+    }
+    html.ci-column .pl-edge:hover { background: var(--blue2, #2563eb); filter: brightness(1.15); }
+    html.ci-column .pl-edge:focus-visible { outline: 2px solid var(--blue2); outline-offset: 1px; }
+    html.ci-column .layout.pl-hidden .panel-left { display: none !important; }
+    html.ci-column .layout.pl-hidden .pl-edge {
+        left: 0; width: 26px; height: auto; padding: 10px 0; border-radius: 0 5px 5px 0;
+        display: flex; flex-direction: column; align-items: center; gap: 6px;
+        animation: plEdgePulse 2.4s ease-in-out 3;
+    }
+    html.ci-column .layout.pl-hidden .pl-edge::after {
+        content: 'Case Details'; writing-mode: vertical-rl; transform: rotate(180deg);
+        font-size: 11px; font-weight: 600; letter-spacing: .3px;
+    }
+}
+/* With the column beside it, a narrow panel's chat is about 220px wide: too little for each note's name, which was cut to
+   an ellipsis. There the notes are their icon and count only (the name stays in the tooltip). */
+.notes-jump-row .sn-dock { container-type: inline-size; container-name: sndock; }
+@container sndock (max-width: 330px) {
+    .sn-lb { display: none; }
+}
+
+/* THE RSS FEED IN SOFT SLATE (Beta 9.8.1, the maintainer: "make the colour contrast thing in the RSS feed better, it is not
+   readable"). The newsletter is a printed page, not part of the panel's chrome, so Soft Slate leaves its colours alone:
+   the masthead keeps its deep indigo with white type, each story stays a white page with the document's own colours on it
+   (theme.js no longer recolours style="" inside .fn-paper), and the ribbons keep white type on their colour. */
+:root[data-theme="slate"] .fn-mast { color: #fff; background: radial-gradient(120% 140% at 0% 0%, #4f46e5 0%, #1e3a8a 55%, #0f172a 100%); box-shadow: 0 6px 20px rgba(30, 58, 138, .22); }
+:root[data-theme="slate"] .fn-mast::after { background: rgba(255, 255, 255, .07); }
+:root[data-theme="slate"] .fn-mast-k { color: #c7d2fe; }
+:root[data-theme="slate"] .fn-mast-h { color: #fff; }
+:root[data-theme="slate"] .fn-mast-m { color: #dbeafe; }
+:root[data-theme="slate"] .fn-mast-m b { color: #fff; }
+:root[data-theme="slate"] .fn-story { background: #ffffff; box-shadow: 0 1px 3px rgba(15, 23, 42, .10), 0 4px 14px rgba(15, 23, 42, .08); border: 1px solid rgba(15, 23, 42, .08); }
+:root[data-theme="slate"] .fn-paper { color: #000000; }
+:root[data-theme="slate"] .fn-paper a { color: #1d4ed8; }
+:root[data-theme="slate"] .fn-rib { color: #ffffff; }
+:root[data-theme="slate"] .fn-rib.imp { background: #b91c1c; }
+:root[data-theme="slate"] .fn-rib.new { background: #4f46e5; }
+:root[data-theme="slate"] .fn-rib.pin { background: #0e7490; }
+:root[data-theme="slate"] .fn-rib.plain { background: #334155; }
+:root[data-theme="slate"] .fn-foot { background: #f1f5f9; border-top: 1px solid #e2e8f0; color: #334155; }
+:root[data-theme="slate"] .fn-sub-new { color: #4338ca; }
+:root[data-theme="slate"] .fn-chip.imp { color: #b91c1c; border-color: rgba(185, 28, 28, .45); background: #fef2f2; }
+
+/* THE RESOURCES HUB'S RECENT CHATS STAY THE LEFT COLUMN ON A NARROW PANEL TOO (Beta 9.8.1, the maintainer: "make the
+   resources hub side panel be consistent like the sidepanel consistency in the case even when the view is small"). The
+   same switch as Case Details (html.ci-column): below 600px the hub is laid out as the wide one, the column a little
+   under half the panel, the chat beside it, and the edge handle on the border between them. */
+@media (max-width: 599px) {
+    html.ci-column .rhub-body { flex-direction: row; }
+    html.ci-column .rhub-side { flex: 0 0 auto; width: clamp(150px, 40%, 240px); margin: 0 0 12px 10px; }
+    html.ci-column .rhub-side-b { flex: 1; max-height: none; }
+    html.ci-column .rhub-side.is-folded .rhub-side-b { display: flex; }
+    html.ci-column .rhub-side-h { cursor: default; }
+    html.ci-column .rhub-side-h:hover { background: #1c2848; }
+    html.ci-column .rhub-side-chev { display: none; }
+    html.ci-column .rhub-body.side-hidden .rhub-side { display: none; }
+    html.ci-column .rhub-edge-wrap.edition-off { display: none !important; }
+    html.ci-column .rhub-body .rhub-edge { left: -12px; }
+    html.ci-column .rhub-body.side-hidden .rhub-edge { left: 0; width: 26px; height: auto; padding: 10px 0; border-radius: 0 5px 5px 0;
+        display: flex; flex-direction: column; align-items: center; gap: 6px; }
+    html.ci-column .rhub-body.side-hidden .rhub-edge::after { content: 'Recent chats'; writing-mode: vertical-rl; transform: rotate(180deg);
+        font-size: 11px; font-weight: 600; letter-spacing: .3px; }
+    html.ci-column .rhub-body > .rhub-chat-wrap { flex: 1 1 auto; min-width: 0; margin-left: 18px; margin-right: 10px; }
+    html.ci-column .rhub-body.side-hidden > .rhub-chat-wrap { margin-left: 30px; }
+}
+
+/* THE PLACEHOLDER IN AN ANSWER BEING WRITTEN IS A SMALL LOADING BAR, NOT A DOT (Beta 9.8.1, the maintainer: "there
+   shouldn't be a dot in the chat window thing, there should a loading bar"). A short track with a segment sliding along
+   it, in the panel's indigo; still for anyone who has asked for less motion. */
+.thinking-dot {
+    position: relative;
+    width: 96px;
+    height: 5px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(99, 102, 241, .18);
+    animation: none;
+    margin: 4px 0;
+}
+.thinking-dot::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 40%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--blue), var(--blue2));
+    animation: thinkingBar 1.2s ease-in-out infinite;
+}
+@keyframes thinkingBar {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(250%); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .thinking-dot::after { animation: none; width: 100%; opacity: .6; }
+}
+
+/* NOTHING IN THE CHAT UNTIL THE ANSWER STARTS (Beta 9.8.1, the maintainer: "there is no need to show the timeline and the
+   loading thing in the chat window yet, since the loading bar at the bottom is already showing"). While an answer row holds
+   only its placeholder, the row (with its time line) is not shown: the strip over the message box says it is being
+   written. The first words of the answer bring the row and its time line in together. A row with a progress message in it
+   ("Reading the email chain…") still shows, as it has something to say. */
+.msg.assistant:has(> .mb > .thinking-dot:only-child),
+.msg.assistant:has(> .mb > p:only-child > .thinking-dot:only-child) { display: none; }
+
+/* THE LAST COMPLETED ACTIVITY DOT, THE SECOND ATTENTION GRABBER (Beta 9.8.1, the maintainer: "i mentioned before that the
+   severity was also the other thing i want the users attention on but that was a mistake, i was meant to say 'The last
+   completed activity (salesforce dot)'", and of the mockups: "I LIKE B THE BIGGER DOT THAT GLOWS"). With the attention
+   look on (html.oc-attn, 'cases:attention'), Salesforce's own dot in its column is drawn as a circle: red (overdue) large,
+   with a glow; yellow (falling behind) large; green (current) small. Severity goes quiet grey, as it no longer competes
+   for the eye. ON SOTI (the red outline and pill) is unchanged.
+   YELLOW IS SALESFORCE'S FLAG YELLOW (2026-11-11, the maintainer: "let the orange for the last completed activity be change
+   to yellow, let it match the colour in image 2", the yellow flag): #e6e60d, the flag's face, with a thin #c4bf34 ring (its
+   shaded edge) so it holds on a white row. It was amber (#f59e0b; #fbbf24 in Dark). */
+html.oc-attn .oc-view .oc-tag.oc-act-dot { font-size: 0 !important; width: 22px !important; min-width: 22px !important; display: inline-flex !important;
+    align-items: center; justify-content: center; text-shadow: none !important; }
+html.oc-attn .oc-view .oc-tag.oc-act-dot::before { content: ''; display: block; width: 14px; height: 14px; border-radius: 50%; }
+html.oc-attn .oc-view .oc-tag.oc-act-green::before { width: 9px; height: 9px; background: #22c55e; }
+html.oc-attn .oc-view .oc-tag.oc-act-yellow::before { background: #e6e60d; box-shadow: inset 0 0 0 1px #c4bf34, 0 0 0 3px rgba(230, 230, 13, .28); }
+html.oc-attn .oc-view .oc-tag.oc-act-red::before { background: #dc2626; box-shadow: 0 0 0 4px rgba(220, 38, 38, .22), 0 0 10px rgba(220, 38, 38, .55); }
+html.oc-attn .oc-view .oc-tag.oc-act-none::before { width: 8px; height: 8px; border: 1.5px solid currentColor; box-sizing: border-box; }
+html.oc-attn:not([data-theme="slate"]) .oc-view .oc-tag.oc-act-red::before { background: #ef4444; box-shadow: 0 0 0 4px rgba(239, 68, 68, .28), 0 0 12px rgba(239, 68, 68, .7); }
+html.oc-attn:not([data-theme="slate"]) .oc-view .oc-tag.oc-act-yellow::before { background: #e6e60d; box-shadow: inset 0 0 0 1px #c4bf34, 0 0 0 3px rgba(230, 230, 13, .28); }
+html.oc-attn:not([data-theme="slate"]) .oc-view .oc-tag.oc-act-green::before { background: #4ade80; }
+html.oc-attn[data-theme="slate"] .oc-view .oc-row .oc-tag.oc-col-severity:is(.sev-crit, .sev-high, .sev-med, .sev-low) { background: transparent !important; border-color: rgba(15, 23, 42, .16) !important; color: #64748b !important; box-shadow: none !important; font-weight: 700 !important; }
+html.oc-attn:not([data-theme="slate"]) .oc-view .oc-row .oc-tag.oc-col-severity:is(.sev-crit, .sev-high, .sev-med, .sev-low) { background: transparent !important; border-color: rgba(255, 255, 255, .14) !important; color: #94a3b8 !important; box-shadow: none !important; font-weight: 700 !important; }
+/* Soft Slate, as written (the recolouring would turn the glow grey). */
+html.oc-attn[data-theme="slate"] .oc-view .oc-tag.oc-act-red::before { background: #dc2626; box-shadow: 0 0 0 4px rgba(220, 38, 38, .22), 0 0 10px rgba(220, 38, 38, .55); }
+html.oc-attn[data-theme="slate"] .oc-view .oc-tag.oc-act-yellow::before { background: #e6e60d; box-shadow: inset 0 0 0 1px #c4bf34, 0 0 0 3px rgba(230, 230, 13, .28); }
+html.oc-attn[data-theme="slate"] .oc-view .oc-tag.oc-act-green::before { background: #22c55e; }
+
+/* SIMILAR PAST CASES, ON THE NPS LINE (Beta 9.8.1): the chip after the case number. See renderAccountHistory. */
+.nps-sim { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 9px; border-radius: 999px; font: inherit; font-size: 11px;
+    font-weight: 600; letter-spacing: 0; white-space: nowrap; cursor: pointer; border: 1px solid rgba(167, 139, 250, .5); background: rgba(139, 92, 246, .14); color: #ddd6fe; }
+.nps-sim[hidden], .nps-sim-sep[hidden] { display: none !important; }
+.nps-sim b { font-weight: 800; color: #ede9fe; }
+.nps-sim .sim-ic { font-weight: 800; }
+.nps-sim .sim-num { font-family: var(--mono, ui-monospace, Menlo, Consolas, monospace); font-weight: 700; color: #c4b5fd; }
+.nps-sim .sim-go { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; background: #7c3aed; color: #fff; font-weight: 700; font-size: 10.5px; }
+/* "See them ›", not "Seethem›" (9.8.2): in a flex box the spaces at the ends of "See", " them" and " ›" are dropped, so
+   the gap puts them back. "See ›" on a narrow panel is one piece of text and keeps its own space. */
+.nps-sim .sim-go { gap: .3em; }
+.nps-sim:hover .sim-go { background: #6d28d9; }
+.nps-sim:focus-visible { outline: 2px solid var(--blue2); outline-offset: 2px; }
+.nps-sim.is-quiet { border-color: transparent; background: transparent; color: var(--txt3); font-weight: 500; padding-left: 0; }
+.nps-sim.is-quiet:not(:disabled):hover { color: var(--txt1); text-decoration: underline; text-underline-offset: 2px; }
+.nps-sim.is-quiet .sim-go-q { color: #a78bfa; font-weight: 700; }
+.nps-sim:disabled { cursor: default; }
+:root[data-theme="slate"] .nps-sim:not(.is-quiet) { border-color: #c4b5fd; background: #f5f3ff; color: #5b21b6; }
+:root[data-theme="slate"] .nps-sim:not(.is-quiet) b { color: #4c1d95; }
+:root[data-theme="slate"] .nps-sim .sim-num { color: #6d28d9; }
+:root[data-theme="slate"] .nps-sim .sim-go { background: #7c3aed; color: #ffffff; }
+:root[data-theme="slate"] .nps-sim:hover .sim-go { background: #6d28d9; }
+:root[data-theme="slate"] .nps-sim.is-quiet { color: #64748b; }
+:root[data-theme="slate"] .nps-sim.is-quiet:not(:disabled):hover { color: #0f172a; }
+:root[data-theme="slate"] .nps-sim.is-quiet .sim-go-q { color: #6d28d9; }
+/* The window's small "how a match is found" line. */
+.hx-how { margin-top: 6px; font-size: 11px; color: var(--txt3); line-height: 1.45; }
+/* A narrow panel: the averages say "90d" / "365d" (full names in their tooltips) and the chip drops its details, so the
+   NPS scores, the case number and the chip stay on the one line. */
+@media (max-width: 599px) {
+    .nps-bar.has-sim .nps-item-k[data-short] { font-size: 0; }
+    .nps-bar.has-sim .nps-item-k[data-short]::before { content: attr(data-short); font-size: 10px; }
+    .nps-bar.has-sim .nps-sim .sim-w, .nps-bar.has-sim .nps-sim .sim-more { display: none; }
+}
+/* The search box at the top of the Similar past cases window, and the piece of text a search found its words in. */
+.hx-search { width: 100%; margin: 2px 0 10px; }
+.hx-snip { margin-top: 4px; font-size: 11px; line-height: 1.45; color: var(--txt3); overflow-wrap: anywhere; }
+
+/* NO OUTLINE ROUND THE WHAT'S NEW LIST (Beta 9.8.2, the maintainer: "no need for the black outline"). The list is given
+   focus when the window opens so the arrow keys scroll it; the browser's focus ring round it is not wanted. */
+.wn-body:focus, .wn-body:focus-visible { outline: none; }
+
+/* ACCOUNT HEALTH (Beta 9.8.2, option C): the account's Account Health card from Salesforce, under Account Name in Case
+   Details — score and rating, history by month, time period, AI Summary (three lines, More › for the rest). */
+.ah-fld[hidden], .ah-fld.edition-off { display: none !important; }
+.ah-lbl { display: flex; align-items: center; justify-content: space-between; }
+.ah-again { border: none; background: none; color: inherit; font-size: 12px; cursor: pointer; padding: 0 2px; opacity: .8; }
+.ah-again:disabled { opacity: .35; cursor: default; }
+.ah-card { --ah: #fbbf24; border: 1px solid var(--border); border-radius: 10px; background: var(--bg0); padding: 9px 10px;
+    font-size: 11px; color: var(--txt2); line-height: 1.45; }
+.ah-card.ah-good { --ah: #34d399; }
+.ah-card.ah-mid { --ah: #fbbf24; }
+.ah-card.ah-bad { --ah: #f87171; }
+.ah-card.ah-none { --ah: #e2e8f0; }
+.ah-top { display: flex; align-items: center; gap: 10px; }
+.ah-num { flex-shrink: 0; min-width: 58px; }
+.ah-big { font-size: 26px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; color: var(--ah); }
+.ah-rate { margin-top: 3px; font-size: 11px; font-weight: 700; color: var(--ah); }
+.ah-chart { flex: 1; min-width: 0; }
+.ah-chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.ah-chart .ah-line { stroke: #f5b400; fill: none; stroke-width: 2.2; }
+/* The line in the rating's colour, as the Salesforce card draws it (2026-11-12): green for Healthy, red for At Risk, amber
+   for Monitor. */
+.ah-card.ah-good .ah-chart .ah-line, .ah-card.ah-bad .ah-chart .ah-line { stroke: var(--ah); }
+.ah-chart .ah-pt { fill: #3b82f6; }
+.ah-chart .ah-axis { stroke: #64748b; fill: none; }
+.ah-chart text { fill: #94a3b8; font-size: 10px; font-family: inherit; }
+.ah-chart text.ah-now { fill: #60a5fa; font-weight: 700; }
+.ah-period { margin-top: 6px; font-size: 10.5px; color: var(--txt3); }
+.ah-period b { color: var(--txt1); font-weight: 700; }
+.ah-sumk { margin-top: 6px; font-weight: 700; color: var(--txt1); font-size: 11px; }
+.ah-sum { margin-top: 2px; white-space: pre-line; overflow-wrap: anywhere; }
+.ah-sum.is-folded { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+/* The measures' notes, one a line, when no summary of the whole account is stored (see renderAccountHealth). */
+.ah-sum.ah-measures { white-space: normal; }
+.ah-sum.ah-measures.is-folded { display: block; max-height: 4.4em; overflow: hidden; }
+.ah-sum.ah-measures b { color: var(--txt1); font-weight: 700; }
+.ah-more { margin-top: 2px; border: none; background: none; padding: 0; font: inherit; font-size: 10.5px; font-weight: 700; color: #a78bfa; cursor: pointer; }
+.ah-more[hidden] { display: none; }
+.ah-card.is-quiet { border-style: dashed; background: transparent; padding: 6px 10px; color: var(--txt3); }
+.ah-card.is-quiet button { border: none; background: none; padding: 0; font: inherit; font-weight: 700; color: #a78bfa; cursor: pointer; }
+:root[data-theme="slate"] .ah-card { background: #ffffff; border-color: #e2e8f0; color: #334155; }
+:root[data-theme="slate"] .ah-card.ah-good { --ah: #15803d; }
+:root[data-theme="slate"] .ah-card.ah-mid { --ah: #e59e00; }
+:root[data-theme="slate"] .ah-card.ah-bad { --ah: #b91c1c; }
+:root[data-theme="slate"] .ah-card.ah-none { --ah: #0f172a; }
+:root[data-theme="slate"] .ah-chart .ah-pt { fill: #1b5fc1; }
+:root[data-theme="slate"] .ah-chart .ah-axis { stroke: #94a3b8; }
+:root[data-theme="slate"] .ah-chart text { fill: #475569; }
+:root[data-theme="slate"] .ah-chart text.ah-now { fill: #1b5fc1; }
+:root[data-theme="slate"] .ah-period { color: #475569; }
+:root[data-theme="slate"] .ah-period b, :root[data-theme="slate"] .ah-sumk { color: #0f172a; }
+:root[data-theme="slate"] .ah-more, :root[data-theme="slate"] .ah-card.is-quiet button { color: #4f46e5; }
+:root[data-theme="slate"] .ah-card.is-quiet { background: transparent; color: #64748b; border-color: #cbd5e1; }
+
+/* ===========================================================================
+ * THE ACCOUNT TAB (Beta 9.8.3; hidden in Global by 'tab:account'). Drawn by avRender in sidepanel.js.
+ * Cards in one column at panel width, two from 900px; colours from the theme's own variables, so Dark and Soft Slate
+ * both read. Risk: red High, amber Medium, green Low.
+ * ========================================================================= */
+.acct-view.edition-off { display: none !important; }
+.acct-case-in { width: 112px; height: 26px; padding: 0 8px; border-radius: var(--r6); border: 1px solid var(--border2); background: var(--bg1); color: var(--txt1); font-size: 11px; font-family: var(--mono); }
+.acct-case-in:focus { outline: none; border-color: var(--blue2); }
+.acct-view .stats-acts { flex-wrap: wrap; justify-content: flex-end; }
+.stats-btn[disabled] { opacity: .5; cursor: default; }
+.av-body { flex: 1; overflow-y: auto; padding: 4px 12px 18px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start; }
+@media (min-width: 900px) { .av-body { grid-template-columns: repeat(2, minmax(0, 1fr)); } .av-body .av-hero, .av-body .av-plan, .av-body .av-foot, .av-body .av-empty { grid-column: 1 / -1; } }
+.av-empty { grid-column: 1 / -1; margin-top: 30px; text-align: center; color: var(--txt2); font-size: 12px; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.av-empty-t { font-size: 13px; font-weight: 700; color: var(--txt1); }
+.av-hero { padding: 4px 2px 0; }
+.av-hero-name { font-size: 16px; font-weight: 800; letter-spacing: .2px; }
+.av-hero-name .av-link { color: var(--txt1); }
+.av-hero-meta { font-size: 11px; color: var(--txt2); margin-top: 2px; line-height: 1.6; }
+.av-card { background: var(--bg1); border: 1px solid var(--border2); border-radius: var(--r10); min-width: 0; }
+.av-card-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 12px 0; }
+.av-card-t { font-size: 11px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase; color: var(--txt2); display: flex; align-items: center; gap: 6px; }
+.av-card-b { padding: 8px 12px 11px; font-size: 12px; color: var(--txt1); min-width: 0; }
+.av-count { font-size: 10px; font-weight: 800; padding: 0 6px; border-radius: 9px; background: var(--bg3); color: var(--txt1); letter-spacing: 0; }
+.av-icon { border: none; background: none; color: var(--txt3); cursor: pointer; font-size: 13px; padding: 0 2px; }
+.av-icon:hover { color: var(--txt1); }
+.av-link { color: var(--blue2); text-decoration: none; }
+.av-link:hover { text-decoration: underline; }
+.av-quiet { color: var(--txt3); font-size: 11px; }
+.av-note { margin-top: 8px; padding: 6px 8px; border-radius: var(--r6); background: rgba(245, 158, 11, .10); border: 1px solid rgba(245, 158, 11, .28); color: var(--txt1); font-size: 11px; }
+.av-sub-h { margin: 10px 0 5px; font-size: 10.5px; font-weight: 800; color: var(--txt2); text-transform: uppercase; letter-spacing: .5px; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.av-sub-h .av-quiet { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.av-more { border: none; background: none; color: var(--blue2); font-size: 11px; font-weight: 600; cursor: pointer; padding: 4px 0; margin-right: 10px; }
+.av-more:hover { text-decoration: underline; }
+.av-acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.av-acts a.stats-btn { display: inline-flex; align-items: center; text-decoration: none; }
+/* Standpoint */
+.av-risk { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.av-risk-lvl { font-size: 12px; font-weight: 800; padding: 3px 10px; border-radius: 12px; letter-spacing: .3px; }
+.av-risk-high .av-risk-lvl { background: rgba(239, 68, 68, .16); color: var(--red); border: 1px solid rgba(239, 68, 68, .45); }
+.av-risk-medium .av-risk-lvl { background: rgba(245, 158, 11, .14); color: var(--warn); border: 1px solid rgba(245, 158, 11, .45); }
+.av-risk-low .av-risk-lvl { background: rgba(34, 197, 94, .13); color: var(--green); border: 1px solid rgba(34, 197, 94, .42); }
+.av-better { font-size: 11px; font-weight: 700; color: #fff; background: var(--red); padding: 2px 9px; border-radius: 12px; }
+.av-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+@media (max-width: 460px) { .av-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.av-tile { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--r8); padding: 7px 8px; min-width: 0; }
+.av-tile-v { font-size: 17px; font-weight: 800; line-height: 1.2; }
+.av-tile-k { font-size: 10px; font-weight: 700; color: var(--txt2); text-transform: uppercase; letter-spacing: .4px; }
+.av-tile-s { font-size: 10px; color: var(--txt3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.av-tile.is-bad .av-tile-v { color: var(--red); }
+.av-tile.is-mid .av-tile-v { color: var(--warn); }
+.av-tile.is-good .av-tile-v { color: var(--green); }
+.av-why { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.av-why li { position: relative; padding-left: 14px; font-size: 11.5px; line-height: 1.45; }
+.av-why li::before { content: ''; position: absolute; left: 2px; top: 6px; width: 6px; height: 6px; border-radius: 50%; }
+.av-why li.is-risk::before { background: var(--red); }
+.av-why li.is-good::before { background: var(--green); }
+/* Cases */
+.av-case { padding: 6px 0; border-top: 1px solid var(--border); min-width: 0; }
+.av-card-b > .av-case:first-child, .av-card-b > .av-quiet + .av-case { border-top: none; }
+.av-case.is-closed { opacity: .82; }
+.av-case-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; }
+.av-case-num { font-family: var(--mono); font-weight: 700; font-size: 11px; }
+.av-case-st { color: var(--txt2); }
+.av-case-age { margin-left: auto; color: var(--txt3); font-size: 10.5px; }
+.av-case-sub { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.av-case-meta { font-size: 10.5px; color: var(--txt3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.av-prio, .av-esc, .av-sim, .av-jira { font-size: 9.5px; font-weight: 800; padding: 0 6px; border-radius: 8px; line-height: 16px; }
+.av-p1 { background: rgba(239, 68, 68, .18); color: var(--red); }
+.av-p2 { background: rgba(245, 158, 11, .18); color: var(--warn); }
+.av-p3, .av-p4, .av-p9 { background: var(--bg3); color: var(--txt2); }
+.av-esc { background: var(--red); color: #fff; }
+.av-sim { background: rgba(129, 140, 248, .16); color: var(--blue2); text-transform: capitalize; }
+.av-jira { background: var(--bg3); color: var(--txt1); font-family: var(--mono); }
+/* Grouping */
+.av-grp { width: 100%; border-collapse: collapse; font-size: 11px; table-layout: fixed; }
+.av-grp th { text-align: left; font-size: 9.5px; color: var(--txt3); text-transform: uppercase; letter-spacing: .4px; font-weight: 700; padding: 2px 4px; }
+.av-grp td { padding: 3px 4px; border-top: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.av-grp th:nth-child(n+2), .av-grp td:nth-child(n+2) { width: 52px; text-align: right; }
+.av-grp th:last-child, .av-grp td:last-child { width: 86px; }
+.av-open-n { color: var(--warn); font-weight: 800; }
+.av-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.av-chip { font-size: 10.5px; padding: 1px 8px; border-radius: 10px; background: var(--bg2); border: 1px solid var(--border2); color: var(--txt1); cursor: default; }
+button.av-chip { cursor: pointer; }
+.av-chip.is-on { border-color: var(--blue2); color: var(--blue2); }
+.av-chip b { color: var(--txt2); margin-left: 2px; }
+/* Contact, NPS */
+.av-person-n { font-size: 13px; font-weight: 700; }
+.av-person-m { font-size: 11px; color: var(--txt2); }
+.av-npsrow { display: flex; flex-wrap: wrap; gap: 4px; }
+.av-nps { min-width: 22px; height: 22px; padding: 0 4px; border-radius: 6px; font-size: 11px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; cursor: default; }
+.av-nps-promoter { background: rgba(34, 197, 94, .18); color: var(--green); }
+.av-nps-passive { background: rgba(245, 158, 11, .18); color: var(--warn); }
+.av-nps-detractor { background: rgba(239, 68, 68, .18); color: var(--red); }
+.av-nps-none { background: var(--bg2); color: var(--txt3); }
+.av-said { margin-top: 6px; font-size: 11.5px; font-style: italic; color: var(--txt2); }
+/* Account Health */
+.av-ah { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.av-ah-score { font-size: 22px; font-weight: 800; }
+.av-ah-st { font-size: 12px; font-weight: 700; }
+.av-ah-score.ah-bad, .av-ah-st.ah-bad { color: var(--red); }
+.av-ah-score.ah-mid, .av-ah-st.ah-mid { color: var(--warn); }
+.av-ah-score.ah-good, .av-ah-st.ah-good { color: var(--green); }
+.av-ah-sum { margin-top: 6px; font-size: 11.5px; line-height: 1.5; color: var(--txt1); display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; }
+.av-ah-sum.is-open { display: block; -webkit-line-clamp: unset; }
+.av-ah-meas { margin-top: 6px; font-size: 11px; display: flex; flex-direction: column; gap: 3px; }
+/* Business Unit Profile, account fields */
+.av-dl { display: grid; grid-template-columns: minmax(96px, 38%) minmax(0, 1fr); gap: 3px 10px; margin: 0; font-size: 11.5px; }
+.av-dl dt { color: var(--txt2); font-size: 11px; }
+.av-dl dd { margin: 0; word-break: break-word; }
+/* THE ACCOUNT TAB, 2026-11-16: the careful-closing banner, the problems, who is in charge, the escalations, a clear "no survey". */
+.av-warn { grid-column: 1 / -1; border-radius: var(--r10); padding: 9px 12px 10px; border: 1px solid rgba(245, 158, 11, .45); background: rgba(245, 158, 11, .10); }
+.av-warn.is-bad { border-color: rgba(239, 68, 68, .55); background: rgba(239, 68, 68, .10); }
+.av-warn.is-calm { border-color: var(--border2); background: var(--bg1); }
+.av-warn-t { font-size: 12.5px; font-weight: 800; color: var(--warn); }
+.av-warn.is-bad .av-warn-t { color: var(--red); }
+.av-warn.is-calm .av-warn-t { color: var(--txt1); }
+.av-warn-s { font-size: 11.5px; color: var(--txt1); margin-top: 3px; line-height: 1.45; }
+.av-warn .av-acts { margin-top: 7px; }
+.av-prob-sub { font-size: 12.5px; font-weight: 700; line-height: 1.35; margin-bottom: 2px; }
+.av-prob-sub .av-link { color: var(--txt1); }
+.av-prob-sub .av-link:hover { color: var(--blue2); }
+.av-case-meta { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; white-space: normal; margin-top: 2px; }
+.av-owner { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 800; color: var(--blue2); background: rgba(99, 102, 241, .14); border: 1px solid rgba(129, 140, 248, .40); border-radius: 10px; padding: 0 8px; line-height: 18px; white-space: nowrap; }
+.av-owner.is-none { color: var(--txt3); background: var(--bg2); border-color: var(--border2); font-weight: 600; }
+.av-who { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 4px 0; border-top: 1px solid var(--border); font-size: 12px; }
+.av-who-role { flex: none; width: 150px; font-size: 10.5px; font-weight: 700; color: var(--txt2); text-transform: uppercase; letter-spacing: .3px; }
+.av-who-name { font-weight: 700; }
+.av-who-mail { font-size: 11px; }
+.av-who.is-lead { background: rgba(99, 102, 241, .08); border: 1px solid rgba(129, 140, 248, .30); border-radius: var(--r6); padding: 6px 8px; margin-bottom: 4px; }
+.av-who.is-lead .av-who-role { color: var(--blue2); }
+.av-who.is-lead .av-who-name { font-size: 13px; }
+.av-who.is-missing .av-who-name { color: var(--warn); font-weight: 600; font-size: 12px; }
+.av-who-note { margin-top: 4px; }
+@media (max-width: 460px) { .av-who-role { width: 100%; } }
+.av-esc-list { display: flex; flex-direction: column; gap: 4px; }
+.av-esc-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11.5px; padding: 4px 6px; border-radius: var(--r6); background: rgba(239, 68, 68, .08); border: 1px solid rgba(239, 68, 68, .30); }
+.av-esc-sub { flex: 1; min-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.av-esc-none { font-size: 11.5px; font-weight: 700; color: var(--green); padding: 4px 0 6px; }
+.av-esc-none.is-unknown { color: var(--txt3); font-weight: 500; }
+.av-nosurvey { font-size: 11.5px; line-height: 1.45; padding: 7px 9px; border-radius: var(--r6); background: var(--bg2); border: 1px dashed var(--border2); color: var(--txt1); }
+.av-nosurvey b { color: var(--warn); }
+.av-key dt { font-weight: 700; color: var(--txt2); }
+.av-trend li::before { background: var(--warn); }
+.av-f-cc > span:last-child { width: auto; flex: 1; font-size: 11.5px; color: var(--txt1); }
+.av-grp td.av-grp-cases { font-family: var(--mono); font-size: 10.5px; color: var(--txt2); }
+.av-grp th:nth-child(3), .av-grp td.av-grp-cases { width: auto; text-align: left; }
+@media (min-width: 900px) { .av-body .av-problems, .av-body .av-whocard { grid-column: 1 / -1; } }
+.av-card.av-flash { box-shadow: 0 0 0 2px var(--blue2); transition: box-shadow .3s; }
+.av-rtype { font-size: 9.5px; font-weight: 800; padding: 0 6px; border-radius: 8px; line-height: 16px; background: var(--bg3); color: var(--txt2); border: 1px dashed var(--border2); }
+.av-sup-note { margin-bottom: 2px; }
+/* Account NPS in full (2026-11-18) */
+@media (min-width: 900px) { .av-body .av-npscard { grid-column: 1 / -1; } }
+.av-npsbar { display: flex; height: 18px; border-radius: 9px; overflow: hidden; margin: 10px 0 4px; font-size: 10px; font-weight: 800; color: #fff; }
+.av-npsbar span { display: flex; align-items: center; justify-content: center; min-width: 18px; }
+.av-npsbar-pro { background: var(--green); } .av-npsbar-pas { background: var(--warn); } .av-npsbar-det { background: var(--red); }
+.av-npst th:nth-child(n+2), .av-npst td:nth-child(n+2) { width: 74px; }
+.av-npst th:last-child, .av-npst td:last-child { width: 130px; }
+.av-nps-t-good { color: var(--green); font-weight: 800; } .av-nps-t-mid { color: var(--warn); font-weight: 800; } .av-nps-t-bad { color: var(--red); font-weight: 800; }
+.av-said-row { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; border-top: 1px solid var(--border); }
+.av-said-row.is-det .av-said-t { color: var(--red); }
+.av-said-t { font-size: 11.5px; font-style: italic; line-height: 1.45; }
+.av-nps-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-top: 1px solid var(--border); font-size: 11.5px; min-width: 0; }
+.av-nps-d { width: 86px; flex: none; color: var(--txt2); }
+.av-nps-c { flex: none; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.av-nps-m { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--txt3); font-style: italic; }
+/* Plan & internal email (Escalate account since 2026-11-16) */
+.av-plan { border-color: rgba(129, 140, 248, .38); }
+.av-plan-go { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.av-seg { margin: 0 !important; padding: 0 !important; }
+.av-plan-out { margin-top: 10px; font-size: 12px; line-height: 1.55; max-height: 220px; overflow: hidden; position: relative; }
+.av-plan-out.is-open { max-height: none; }
+.av-plan-out:not(.is-open)::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 40px; background: linear-gradient(transparent, var(--bg1)); }
+.av-email { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--border); }
+.av-f { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.av-f span { width: 52px; flex: none; font-size: 11px; color: var(--txt2); }
+.av-f input { flex: 1; min-width: 0; height: 28px; padding: 0 8px; border-radius: var(--r6); border: 1px solid var(--border2); background: var(--bg2); color: var(--txt1); font-size: 12px; }
+.av-mail-body { width: 100%; box-sizing: border-box; resize: vertical; min-height: 160px; padding: 8px; border-radius: var(--r6); border: 1px solid var(--border2); background: var(--bg2); color: var(--txt1); font-size: 12px; line-height: 1.5; font-family: var(--font); }
+.av-f input:focus, .av-mail-body:focus { outline: none; border-color: var(--blue2); }
+.av-foot { grid-column: 1 / -1; text-align: center; font-size: 10.5px; color: var(--txt3); padding-top: 2px; }
+.av-seg .stats-tab { flex: 0 0 auto; padding: 0 12px; overflow: visible; }
+.av-card .av-plan-out p, .av-card .av-plan-out ul, .av-card .av-plan-out ol { margin: 4px 0; }
+/* Case Details: the Account tab beside Account Name, and the draft link under a Waiting on SOTI status (Beta 9.8.3). */
+.acct-name-row { display: flex; gap: 6px; align-items: stretch; }
+.acct-name-row .finput { flex: 1; min-width: 0; }
+.acct-open-btn { flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 0 9px; border-radius: var(--r6); border: 1px solid rgba(129, 140, 248, .38); background: rgba(99, 102, 241, .14); color: var(--blue2); font-size: 11px; font-weight: 700; cursor: pointer; }
+.acct-open-btn:hover { background: rgba(99, 102, 241, .26); border-color: rgba(129, 140, 248, .6); }
+.acct-open-btn.edition-off { display: none !important; }
+.cs-draft-link { display: inline-flex; align-items: center; gap: 4px; margin-top: 5px; padding: 0; border: none; background: none; color: var(--blue2); font-size: 11.5px; font-weight: 700; cursor: pointer; text-align: left; }
+.cs-draft-link:hover { text-decoration: underline; }
+.cs-draft-link[hidden], .cs-draft-link.edition-off { display: none !important; }
+.acct-name-row { container-type: inline-size; }
+@container (max-width: 260px) { .acct-open-btn span { display: none; } .acct-open-btn { padding: 0 8px; } }
+/* Case Details: the classification block, Close case, and the confirmation screen (Beta 9.8.3). */
+.cls-fld[hidden], .cls-fld.edition-off, .cs-close-btn[hidden], .cs-close-btn.edition-off { display: none !important; }
+.cls-head { display: flex; align-items: center; gap: 6px; }
+.cls-head .flbl { margin: 0; }
+.cls-state { font-size: 10px; font-weight: 700; color: var(--txt3); margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cls-state.is-ok { color: var(--green); }
+.cls-state.is-todo { color: var(--warn); }
+.cls-row { display: flex; flex-direction: column; gap: 2px; margin-top: 7px; }
+.cls-lbl { font-size: 10px; font-weight: 700; color: var(--txt2); letter-spacing: .3px; }
+.cls-sel.is-todo { border-color: color-mix(in srgb, var(--warn) 60%, var(--border2)); }
+.cls-note { font-size: 10.5px; color: var(--txt3); line-height: 1.35; }
+.cls-note.is-ok { color: var(--green); }
+.cls-note.is-todo { color: var(--warn); }
+/* A Topic or Sub-Topic Salesforce needs and nobody has chosen (2026-11-16). */
+.cls-note.is-need { color: var(--red); font-weight: 700; }
+.cls-sel.is-need { border-color: color-mix(in srgb, var(--red) 70%, var(--border2)); }
+.cls-put { margin-top: 9px; width: 100%; height: 28px; border-radius: var(--r6); border: 1px solid rgba(129, 140, 248, .45); background: rgba(99, 102, 241, .16); color: var(--blue2); font-size: 11.5px; font-weight: 700; cursor: pointer; }
+.cls-put:hover:not(:disabled) { background: rgba(99, 102, 241, .28); }
+.cls-put:disabled { opacity: .5; cursor: default; }
+.cs-close-btn { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; margin-top: 7px; height: 28px; border-radius: var(--r6); border: 1px solid rgba(34, 197, 94, .45); background: rgba(34, 197, 94, .12); color: var(--green); font-size: 11.5px; font-weight: 700; cursor: pointer; }
+.cs-close-btn:hover { background: rgba(34, 197, 94, .22); }
+.cw-modal { max-width: 520px; width: calc(100vw - 32px); max-height: calc(100vh - 40px); display: flex; flex-direction: column; }
+.cw-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.cw-head .mcls { background: none; border: none; color: var(--txt2); font-size: 20px; cursor: pointer; }
+.cw-intro { font-size: 12px; color: var(--txt2); line-height: 1.5; margin-bottom: 8px; }
+.cw-body { overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 2px; min-height: 0; }
+.cw-row { display: flex; flex-direction: column; gap: 3px; }
+.cw-lbl { font-size: 11px; font-weight: 700; color: var(--txt1); }
+.cw-help { font-weight: 500; color: var(--txt3); }
+.cw-ctl { width: 100%; box-sizing: border-box; }
+textarea.cw-ctl { resize: vertical; min-height: 70px; font-size: 12px; line-height: 1.45; }
+.cw-fixed { font-size: 12.5px; font-weight: 700; color: var(--warn); padding: 4px 0; }
+.cw-now { font-size: 10.5px; color: var(--txt3); }
+.cw-status { font-size: 11.5px; line-height: 1.45; margin-top: 10px; min-height: 0; }
+.cw-status:empty { display: none; }
+.cw-status.is-busy { color: var(--blue2); }
+.cw-status.is-bad { color: var(--red); padding: 7px 9px; border-radius: var(--r6); background: rgba(239, 68, 68, .1); border: 1px solid rgba(239, 68, 68, .35); }
+.cw-acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; flex-wrap: wrap; }
+.cw-go { background: var(--blue) !important; color: #fff !important; border: none !important; }
+.cw-go:disabled, #mCaseWriteFill:disabled { opacity: .55; cursor: default; }
+/* THE WELCOME BLOCK IS NOT SHOWN ANY MORE (2026-11-13, the maintainer: "no need to show this anymore remove it"): the hexagon,
+   "SOTI AI Analyser", "Powered by Microsoft 365 Copilot …" and How to get started, over an empty chat. The element stays
+   (switchCase and send() still set its display), so nothing that refers to it breaks; an empty chat is simply empty. */
+#welcome { display: none !important; }
+/* ACCOUNT HEALTH ON THE NPS LINE (Beta 9.8.3, option A): "HEALTH 79.3 Monitor" like the NPS figures, and the card it opens. */
+.nps-ah, .nps-ah-sep { flex-shrink: 0; }
+.nps-ah[hidden], .nps-ah-sep[hidden], .nps-ah.edition-off, .nps-ah-sep.edition-off { display: none !important; }
+.nps-ah { display: inline-flex; align-items: baseline; gap: 5px; padding: 0; border: 0; background: none; font: inherit; color: var(--txt1); cursor: pointer; }
+.nps-ah .nps-bar-key { font-size: 10px; }
+.nps-ah-v { font-weight: 800; font-size: 11px; font-variant-numeric: tabular-nums; }
+.nps-ah-st { font-weight: 700; }
+.nps-ah.ah-good .nps-ah-v, .nps-ah.ah-good .nps-ah-st { color: var(--green); }
+.nps-ah.ah-mid .nps-ah-v, .nps-ah.ah-mid .nps-ah-st { color: var(--warn); }
+.nps-ah.ah-bad .nps-ah-v, .nps-ah.ah-bad .nps-ah-st { color: var(--red); }
+.nps-ah.is-quiet .nps-ah-st { color: var(--txt3); font-weight: 600; }
+.nps-ah:hover .nps-ah-st { text-decoration: underline; text-underline-offset: 2px; }
+.nps-ah:focus-visible { outline: 2px solid var(--blue2); outline-offset: 3px; border-radius: 3px; }
+.nps-ah-pop { position: fixed; z-index: 1800; background: var(--bg1); border: 1px solid var(--border2); border-radius: 10px; box-shadow: 0 12px 32px rgba(0, 0, 0, .45); padding: 10px 11px 11px; display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 120px); overflow-y: auto; }
+.nps-ah-pop[hidden] { display: none !important; }
+.nps-ah-pop-h { display: flex; align-items: center; gap: 6px; }
+.nps-ah-pop-t { font-size: 10.5px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase; color: var(--txt2); }
+.nps-ah-pop-meta { margin-left: auto; font-size: 10.5px; color: var(--txt3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nps-ah-pop-x { border: none; background: none; color: var(--txt2); font-size: 17px; line-height: 1; cursor: pointer; padding: 0 2px; }
+.nps-ah-pop-x:hover { color: var(--txt1); }
+.nps-ah-pop-go { align-self: flex-start; border: none; background: none; padding: 0; color: var(--blue2); font-size: 11.5px; font-weight: 700; cursor: pointer; }
+.nps-ah-pop-go:hover { text-decoration: underline; }
+.nps-ah-pop-go.edition-off { display: none !important; }
+.nps-ah-pop-h { flex-wrap: wrap; row-gap: 2px; }
+.nps-ah-pop-t { white-space: nowrap; margin-right: auto; }
+.nps-ah-pop-meta { order: 9; flex-basis: 100%; margin-left: 0; white-space: normal; }
+/* THE NPS LINE NEVER OVERLAPS (Beta 9.8.3): the averages keep their width (they used to shrink under the next item), and a
+   narrow line says less, a step at a time (fitNpsBar in sidepanel.js). */
+.nps-bar-vals { flex-shrink: 0; }
+.nps-bar.fit-1 .nps-item-k[data-short] { font-size: 0; }
+.nps-bar.fit-1 .nps-item-k[data-short]::before { content: attr(data-short); font-size: 10px; }
+.nps-bar.fit-1 .nps-ah-st { display: none; }
+.nps-bar.fit-1 .nps-sim .sim-w, .nps-bar.fit-1 .nps-sim .sim-more { display: none; }
+.nps-bar.fit-2 > .nps-bar-key, .nps-bar.fit-2 .nps-case-lab { display: none; }
+.nps-bar.fit-3 .nps-ah .nps-bar-key, .nps-bar.fit-3 .nps-sim .sim-go { display: none; }
+/* THE MAIL BUTTON BESIDE CASE STATUS (Beta 9.8.3): shown only while the case is Waiting on SOTI response, the same shape
+   as the Account button beside Account Name. */
+.status-row { display: flex; gap: 6px; align-items: stretch; }
+.status-row .fsel { flex: 1; min-width: 0; }
+.cs-draft-btn { padding: 0 9px; }
+.cs-draft-btn[hidden], .cs-draft-btn.edition-off { display: none !important; }
+/* TOASTS AT THE TOP (Beta 9.8.3, the maintainer: "TOAST NOTIFICATIONS SHOULD NEVER COVER THE CHAT BOX"): under the tab row
+   and the NPS line (toast() sets `top` from them), sliding down into place, and never over the message box at the bottom. */
+.toast { top: 120px; bottom: auto; transform: translateX(-50%) translateY(-14px); box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
+.toast.show { transform: translateX(-50%) translateY(0); }
+/* THE CASE'S EMAIL ATTACHMENTS BUTTON above the message box (Beta 9.8.3): the same pill as the attachments strip, in the
+   accent colour, so "there are more files on this case" is seen. The jump arrow keeps the right edge. */
+.case-files-btn { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; padding: 3px 9px; border-radius: 999px; border: 1px solid rgba(129, 140, 248, .45);
+    background: rgba(99, 102, 241, .14); color: var(--blue2); font: inherit; font-size: 10.5px; font-weight: 700; line-height: 1.5; cursor: pointer; white-space: nowrap; }
+.case-files-btn:hover { background: rgba(99, 102, 241, .26); border-color: rgba(129, 140, 248, .65); }
+.case-files-btn:focus-visible { outline: 2px solid var(--blue2); outline-offset: 2px; }
+.case-files-btn[hidden] { display: none !important; }
+.attach-strip { margin-right: 6px; }
+#btnJumpNotes { margin-left: auto; }
+
+/* CLOUD SERVER (ASSET) AND ITS CMS SERVER, AS ONE FIELD (Beta 9.8.4, the maintainer: "Let the CMS server section ui thing
+   be consistent with the cloud asset thing let it look as one rather than separately"). The serial and its ↗ make the
+   top bar, the CMS details hang under it in the same border, radius and fill, so the box reads as one field. */
+#fldCmsAsset.cms-joined { gap: 4px; }
+#fldCmsAsset.cms-joined .fld-row { gap: 0; }
+#fldCmsAsset.cms-joined .fld-row .finput { border-radius: var(--r4) var(--r4) 0 0; }
+#fldCmsAsset.cms-joined.cms-has-open .fld-row .finput { border-top-right-radius: 0; }
+#fldCmsAsset.cms-joined .fld-open { border-radius: 0 var(--r4) 0 0; border-left: none; background: var(--bg3); }
+#fldCmsAsset.cms-joined .cms-card { margin: -1px 0 0; padding: 8px 10px 9px; border-radius: 0 0 var(--r4) var(--r4);
+    border: 1px solid var(--border); border-top-style: dashed; background: var(--bg3); font-size: 11px; }
+#fldCmsAsset.cms-joined:has(#cmsAsset.filled) .fld-open,
+#fldCmsAsset.cms-joined:has(#cmsAsset.filled) .cms-card { border-color: var(--green); background: rgba(34, 197, 94, 0.03); }
+#fldCmsAsset.cms-joined:has(#cmsAsset.empty) .fld-open,
+#fldCmsAsset.cms-joined:has(#cmsAsset.empty) .cms-card { border-color: var(--red); }
+#fldCmsAsset.cms-joined:has(#cmsAsset.filled) .cms-card,
+#fldCmsAsset.cms-joined:has(#cmsAsset.empty) .cms-card { border-top-color: color-mix(in srgb, currentColor 18%, transparent); }
+#fldCmsAsset.cms-joined .cms-top { color: var(--txt3); font-size: 9.5px; letter-spacing: .6px; margin-bottom: 2px; }
+#fldCmsAsset.cms-joined .cms-again { color: var(--blue2); }
+#fldCmsAsset.cms-joined .cms-btn { margin-top: 6px; border-color: var(--border); background: var(--bg2); color: var(--blue2); border-radius: var(--r4); }
+#fldCmsAsset.cms-joined .cms-btn:hover { border-color: var(--blue2); }
+:root[data-theme="slate"] #fldCmsAsset.cms-joined .cms-top { color: #64748b; }
+:root[data-theme="slate"] #fldCmsAsset.cms-joined .cms-btn,
+:root[data-theme="slate"] #fldCmsAsset.cms-joined .cms-again { color: #2563eb; }
+:root[data-theme="slate"] #fldCmsAsset.cms-joined .cms-btn { background: #ffffff; border-color: #cbd5e1; }
+
+/* THE WAITING ON SOTI BUTTON (Beta 9.8.4): the red rows' own chip, in their red, beside Focus. */
+.oc-chip.oc-chip-soti { color: #f87171; display: inline-flex; align-items: center; gap: 5px; }
+.oc-chip.oc-chip-soti .oc-soti-dot { width: 7px; height: 7px; border-radius: 50%; background: #ef4444; flex-shrink: 0; }
+.oc-chip.oc-chip-soti.active { background: rgba(239, 68, 68, .20); border-color: rgba(239, 68, 68, .6); color: #fff; }
+.oc-chip.oc-chip-soti.active .oc-soti-dot { background: #fff; box-shadow: none; }
+/* Like the chips beside it until it is pressed: only its words and dot are red (the maintainer: "LET IT MATCH THE OTHER BUTTONS"). */
+:root[data-theme="slate"] .oc-chip.oc-chip-soti:not(.active) { color: #b91c1c; }
+:root[data-theme="slate"] .oc-chip.oc-chip-soti .oc-soti-dot { box-shadow: none; }
+:root[data-theme="slate"] .oc-chip.oc-chip-soti.active { background: #dc2626; border-color: #dc2626; color: #fff; }
+
+/* THE GROUPS ON THE CASES LIST (Beta 9.8.4): a heading folds its group, moves with ↑ ↓, and drags. */
+.oc-section.oc-sec-ctl { display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; border-radius: 8px;
+    margin: 4px 4px 0; padding: 6px 8px 4px; transition: background .15s, box-shadow .15s; outline: none; }
+.oc-section.oc-sec-ctl:hover { background: color-mix(in srgb, var(--txt2) 8%, transparent); }
+.oc-section.oc-sec-ctl:focus-visible { box-shadow: 0 0 0 2px var(--accent, #818cf8); }
+.oc-sec-chev { display: inline-flex; width: 14px; justify-content: center; font-size: 10px; transition: transform .18s ease; opacity: .8; }
+.oc-sec-ctl.is-folded .oc-sec-chev { transform: rotate(-90deg); }
+.oc-sec-n { text-transform: none; letter-spacing: 0; font-weight: 700; font-size: 10.5px; color: var(--txt2); background: color-mix(in srgb, var(--txt2) 14%, transparent);
+    border-radius: 999px; padding: 0 7px; line-height: 17px; }
+.oc-sec-tools { margin-left: auto; display: inline-flex; gap: 3px; opacity: 0; transition: opacity .15s; }
+.oc-sec-ctl:hover .oc-sec-tools, .oc-sec-ctl:focus-within .oc-sec-tools, .oc-sec-ctl:focus-visible .oc-sec-tools { opacity: 1; }
+@media (hover: none) { .oc-sec-tools { opacity: 1; } }
+.oc-section-temp .oc-sec-tools { margin-left: auto; }
+.oc-section-temp .oc-sec-tools + .oc-temp-count { margin-left: 4px; }
+.oc-sec-mv { width: 22px; height: 20px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg2); color: var(--txt2); font-size: 11px; line-height: 1;
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.oc-sec-mv:hover:not(:disabled) { border-color: var(--blue2, #60a5fa); color: var(--blue2, #60a5fa); }
+.oc-sec-mv:disabled { opacity: .35; cursor: default; }
+.oc-sec-ctl.is-dragging { opacity: .45; }
+.oc-sec-ctl.drop-before { box-shadow: inset 0 3px 0 var(--blue2, #60a5fa); }
+.oc-sec-ctl.drop-after { box-shadow: inset 0 -3px 0 var(--blue2, #60a5fa); }
+.oc-sec-ctl.oc-sec-moved { animation: ocSecMoved 1.1s ease; }
+@keyframes ocSecMoved { 0%, 40% { background: color-mix(in srgb, var(--blue2, #60a5fa) 22%, transparent); } 100% { background: transparent; } }
+.oc-temp-card:has(> .oc-sec-ctl.is-folded) { padding-bottom: 8px; }
+.oc-row.oc-row-unfold { animation: ocRowUnfold .2s ease-out; }
+@keyframes ocRowUnfold { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .oc-row.oc-row-unfold, .oc-sec-ctl.oc-sec-moved { animation: none; } .oc-sec-chev { transition: none; } }
+
+/* ⚙ → ☰ Groups */
+.oc-grp-body { display: flex; flex-direction: column; gap: 3px; }
+.oc-grp-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 8px; border: 1px solid transparent; background: var(--bg2); }
+.oc-grp-row.is-hidden { opacity: .6; }
+.oc-grp-row.is-dragging { opacity: .4; }
+.oc-grp-row.drop-before { box-shadow: inset 0 3px 0 var(--blue2, #60a5fa); }
+.oc-grp-row.drop-after { box-shadow: inset 0 -3px 0 var(--blue2, #60a5fa); }
+.oc-grp-grip { cursor: grab; color: var(--txt3); font-size: 11px; letter-spacing: -2px; padding: 0 2px; }
+.oc-grp-show { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; cursor: pointer; }
+.oc-grp-show input { margin: 0; flex-shrink: 0; }
+.oc-grp-t { font-size: 11.5px; color: var(--txt1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oc-grp-n { font-size: 10.5px; font-weight: 700; color: var(--txt2); background: color-mix(in srgb, var(--txt2) 14%, transparent); border-radius: 999px; padding: 0 7px; line-height: 17px; }
+.oc-grp-btn { min-width: 24px; height: 22px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg1); color: var(--txt2); font-size: 11px; cursor: pointer; padding: 0 6px; }
+.oc-grp-btn:hover:not(:disabled) { border-color: var(--blue2, #60a5fa); color: var(--blue2, #60a5fa); }
+.oc-grp-btn:disabled { opacity: .35; cursor: default; }
+.oc-grp-fold { min-width: 54px; }
+.oc-grp-fold.is-folded { color: var(--blue2, #60a5fa); }
+.oc-grp-foot { gap: 6px; }
+:root[data-theme="slate"] .oc-grp-row { background: #f8fafc; border-color: #e2e8f0; }
+:root[data-theme="slate"] .oc-grp-btn, :root[data-theme="slate"] .oc-sec-mv { background: #ffffff; border-color: #cbd5e1; color: #475569; }
+
+/* THE ARROWS ON THE FILTER CHIPS (Beta 9.8.4): at each end with more chips past it, gliding the row on when clicked. */
+.oc-chips-host { position: relative; }
+.oc-chips-arrow { position: absolute; top: 50%; width: 22px; height: 22px; margin-top: -11px; border-radius: 50%; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center; cursor: pointer; z-index: 2;
+    border: 1px solid var(--border); background: var(--bg1); color: var(--txt2); box-shadow: 0 1px 4px rgba(0, 0, 0, .25);
+    opacity: 0; pointer-events: none; transform: scale(.85); transition: opacity .18s ease, transform .18s ease, color .15s, border-color .15s; }
+.oc-chips-arrow.l { left: -2px; }
+.oc-chips-arrow.r { right: -2px; }
+.oc-chips-host.more-l .oc-chips-arrow.l, .oc-chips-host.more-r .oc-chips-arrow.r { opacity: 1; pointer-events: auto; transform: scale(1); }
+.oc-chips-arrow:hover { color: var(--blue2, #60a5fa); border-color: var(--blue2, #60a5fa); }
+.oc-chips-arrow:active { transform: scale(.92); }
+.oc-chips-host.more-r .oc-chips-arrow.r svg { animation: ocChipsNudge 1.6s ease-in-out 2; }
+@keyframes ocChipsNudge { 0%, 100% { transform: none; } 50% { transform: translateX(2px); } }
+@media (prefers-reduced-motion: reduce) { .oc-chips-arrow { transition: none; } .oc-chips-host.more-r .oc-chips-arrow.r svg { animation: none; } }
+:root[data-theme="slate"] .oc-chips-arrow { background: #ffffff; border-color: #cbd5e1; color: #475569; box-shadow: 0 1px 4px rgba(15, 23, 42, .15); }
+:root[data-theme="slate"] .oc-chips-arrow:hover { color: #2563eb; border-color: #93c5fd; }
+
+/* CASE SUMMARY + NEXT STEPS ON SEVERAL CASES (Beta 9.8.6, 2026-11-19): the picker, the review window and the bar at the top
+   of the panel while it writes. Built on the Out of office window's pieces (.m-ooo, .ooo-case, .ooo-cases). */
+.bs-opts { display: grid; grid-template-columns: 1fr 1.6fr; gap: 8px; margin: 4px 0 2px; }
+.bs-opts.bs-opts-one { grid-template-columns: 1fr; }
+.bs-opts .acct-lab { margin: 6px 0 4px; display: block; }
+.bs-opts .fsel { width: 100%; }
+.bs-picks { display: inline-flex; gap: 4px; flex-wrap: wrap; margin-left: 6px; }
+.m-bulksum .acct-cc-head { flex-wrap: wrap; row-gap: 4px; }
+.bs-time { font-size: 11px; color: var(--txt3); margin-top: 6px; min-height: 14px; }
+.bs-has { font-size: 10px; font-weight: 600; color: #a5b4fc; background: rgba(99, 102, 241, .14); border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
+.bs-pending { display: flex; align-items: center; gap: 8px; justify-content: space-between; font-size: 12px; color: var(--txt2);
+    background: rgba(99, 102, 241, .12); border: 1px solid rgba(99, 102, 241, .35); border-radius: 8px; padding: 7px 10px; margin: 2px 0 6px; }
+.bs-pending[hidden] { display: none; }
+.modal.m-bulksum-review { max-width: 680px; }
+.bsr-list { display: flex; flex-direction: column; gap: 8px; max-height: calc(62vh / var(--ui-zoom, 1)); overflow-y: auto; padding: 2px; }
+.bsr-card { border: 1px solid var(--border); border-radius: 10px; background: var(--bg2); padding: 8px 10px; }
+.bsr-card.is-posted { opacity: .72; border-color: rgba(34, 197, 94, .45); }
+.bsr-card.is-posting { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue) inset; }
+.bsr-card.is-failed { border-style: dashed; }
+.bsr-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.bsr-head input[type=checkbox] { flex: 0 0 auto; width: 15px; height: 15px; accent-color: var(--blue); }
+.bsr-num { flex: 0 0 auto; background: none; border: none; padding: 0; font: inherit; font-size: 12px; font-weight: 700; color: #a5b4fc; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.bsr-subj { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--txt2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bsr-state { flex: 0 0 auto; font-size: 10px; font-weight: 600; color: var(--txt3); white-space: nowrap; }
+.bsr-card.is-posted .bsr-state { color: #4ade80; }
+.bsr-card.is-failed .bsr-state, .bsr-why { color: #fbbf24; }
+.bsr-why { font-size: 11px; margin: 6px 0 0 23px; }
+.bsr-text { display: block; width: 100%; box-sizing: border-box; margin-top: 8px; min-height: 120px; font-size: 12px; line-height: 1.45; resize: vertical; }
+.bulk-sum-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 9000; display: flex; align-items: center; gap: 10px;
+    padding: 7px 12px; background: #1e1b4b; color: #e0e7ff; font-size: 12px; box-shadow: 0 2px 10px rgba(0, 0, 0, .35); }
+.bulk-sum-bar .bsb-t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bulk-sum-bar .bsb-track { flex: 0 0 70px; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, .15); overflow: hidden; }
+.bulk-sum-bar .bsb-fill { display: block; height: 100%; width: 0; background: #818cf8; transition: width .4s ease; }
+.bulk-sum-bar .bsb-stop { flex: 0 0 auto; background: rgba(239, 68, 68, .2); color: #fecaca; border: 1px solid rgba(239, 68, 68, .5); border-radius: 6px; font-size: 11px; padding: 2px 10px; cursor: pointer; }
+@media (max-width: 420px) { .bs-opts { grid-template-columns: 1fr; } }
+:root[data-theme="slate"] .bsr-num, :root[data-theme="slate"] .bs-has { color: #4338ca; }
+:root[data-theme="slate"] .bsr-card.is-posted .bsr-state { color: #15803d; }
+:root[data-theme="slate"] .bsr-card.is-failed .bsr-state, :root[data-theme="slate"] .bsr-why { color: #b45309; }
+:root[data-theme="slate"] .bs-pending { color: #312e81; }
+.bsr-kind { flex: 0 0 auto; font-size: 10px; padding: 1px 4px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg1, transparent); color: var(--txt2); max-width: 110px; }
+/* A JIRA in Draft: a red caution triangle in place of the status dot (2026-11-19). */
+.jira-sync-dot.caution { width: auto; height: auto; background: none; border-radius: 0; color: var(--red); display: inline-flex; align-items: center; }
+.jira-sync-dot.caution svg { display: block; }

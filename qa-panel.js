@@ -86,7 +86,10 @@
         columnsSeen: 'qa_columns_seen',
         colWidths: 'qa_col_widths',
         // Which month and owner folders are open on the Reviews tab — see REV_OPEN.
-        revFolders: 'qa_rev_folders'
+        revFolders: 'qa_rev_folders',
+        // The Agents tab: the last scan of closed cases, and EMEA's agents for its picker — see THE AGENTS TAB.
+        scan: 'qa_scan',
+        agentList: 'qa_agent_list'
     };
 
     /* THE TEAM, as the coaching sheet has it. A default, not a fixture: it is
@@ -122,6 +125,10 @@
     /* THE OWNERS PICKED IN THE OWNER DROPDOWN — ownerKey()s, empty for everyone. Not persisted,
      * for TIER's reason; the button says who is picked, so the filter is never invisible. */
     let OWNERS = new Set();
+    // The master select box, which lives in the column headings and is put back each time they are drawn.
+    let GSEL_EL = null;
+    // Re-measures the top row and the chip line (see wire): called after the chips are drawn again.
+    let FIT_TOP = () => {};
 
     /* THE CHAT, AND WHAT IT STANDS ON.
      *
@@ -168,7 +175,7 @@
     // a reload would be a lie the panel had no way to correct.
     const ROW_STATE = new Map();
 
-    const RUN = { active: false, stop: false, total: 0, done: 0, failed: 0, kind: 'qa', note: '', saidHow: false, accessBlocked: false, coaching: false };
+    const RUN = { active: false, stop: false, total: 0, done: 0, failed: 0, kind: 'qa', note: '', saidHow: false, accessBlocked: false, coaching: false, scanning: false };
 
     /* ---------------------------------------------------------------------
      * SMALL SHARED PIECES
@@ -726,7 +733,7 @@
     async function boot() {
         const got = await load([K.cases, K.reviews, K.coaching, K.rules, K.roster, K.lastList,
                                 K.lists, K.month, K.chats, K.context,
-                                K.columns, K.columnsSeen, K.colWidths, K.revFolders]);
+                                K.columns, K.columnsSeen, K.colWidths, K.revFolders, K.scan, K.agentList]);
         if (got[K.cases] && Array.isArray(got[K.cases].cases)) CASES = got[K.cases];
         if (Array.isArray(got[K.reviews])) REVIEWS = got[K.reviews];
         if (Array.isArray(got[K.coaching])) COACHING = got[K.coaching];
@@ -739,6 +746,8 @@
         if (got[K.chats] && typeof got[K.chats] === 'object') CHATS = got[K.chats];
         if (got[K.context] && typeof got[K.context] === 'object') CONTEXT = got[K.context];
         if (Array.isArray(got[K.revFolders])) REV_OPEN = new Set(got[K.revFolders].map(String));
+        if (got[K.scan] && Array.isArray(got[K.scan].cases)) SCAN = got[K.scan];
+        if (Array.isArray(got[K.agentList])) AGENT_LIST = got[K.agentList].filter(a => a && a.id && a.name);
         // Before the first render, so the queue is drawn in the reviewer's own layout rather
         // than drawn in the default and then rearranged under them.
         loadColumnPrefs(got);
@@ -893,7 +902,9 @@
         // A code file added to the folder that the signature does not cover is a change too.
         for (const file of ['QA_Tool.html', 'manifest.json', 'qa-panel.js', 'qa-engine.js', 'ai-provider.js', 'copilot-bridge.js',
                             'background.js', 'content.js', 'case-reader.js', 'reader-wake.js', 'display-size.js', 'backup.js',
-                            'updater.js', 'styles.css', 'qa-styles.css']) {
+                            'updater.js', 'theme.js', 'qa-agents.js', 'styles.css', 'qa-styles.css',
+                            'salesforce/sf-graphql.js', 'salesforce/sf-case.js', 'salesforce/sf-activity.js', 'salesforce/sf-feed.js',
+                            'salesforce/sf-feed-capture.js', 'salesforce/sf-qa-case.js', 'salesforce/sf-qa-scan.js']) {
             if (!(file in rec.files)) changed.push(file);
         }
         return { status: changed.length ? 'modified' : 'verified', changed, build: rec.build };
@@ -943,7 +954,7 @@
     // Something is running that a restart would cut off.
     function updPanelBusy() {
         const sync = $('btnSyncCaseList');
-        return !!(RUN.active || RUN.coaching || CHAT_BUSY || (sync && sync.disabled));
+        return !!(RUN.active || RUN.coaching || RUN.scanning || CHAT_BUSY || (sync && sync.disabled));
     }
 
     function paintUpdateBanner() {
@@ -1087,12 +1098,15 @@
      * VIEWS
      * ------------------------------------------------------------------- */
     const VIEWS = {
-        cases: 'viewCases', reviews: 'viewReviews', chat: 'viewChat',
+        cases: 'viewCases', reviews: 'viewReviews', agents: 'viewAgents', chat: 'viewChat',
         sheet: 'viewSheet', coaching: 'viewCoaching', settings: 'viewSettings'
     };
 
+    // The tab Settings was opened from — where Close, Cancel and Save go back to.
+    let VIEW_BEFORE_SETTINGS = 'cases';
     function switchView(name) {
         if (!VIEWS[name]) return;
+        if (name === 'settings' && VIEW !== 'settings') VIEW_BEFORE_SETTINGS = VIEW;
         VIEW = name;
         for (const [k, id] of Object.entries(VIEWS)) {
             const el = $(id);
@@ -1104,6 +1118,7 @@
         if (name === 'sheet') renderSheet();
         if (name === 'coaching') renderCoaching();
         if (name === 'reviews') renderReviews();
+        if (name === 'agents') renderAgents();
         if (name === 'chat') renderChat();
         // Re-read on every visit: Chrome's grant can change behind the panel's back.
         if (name === 'settings') refreshAiStatus();
@@ -1563,6 +1578,10 @@
         if (!any) return;
 
         head.textContent = '';
+        /* THE MASTER CHECKBOX AT THE START OF THE HEADINGS, over the rows' tick-boxes (the analyser's Layout A1). Kept
+         * by reference, because emptying the headings takes it out of the page each time they are drawn again. */
+        GSEL_EL = GSEL_EL || $('ocGsel');
+        if (GSEL_EL) head.appendChild(GSEL_EL);
         // Whatever was chosen last time, before anything is measured — a grip reads the
         // cell's RENDERED width when the drag starts, so the stored width has to already be
         // on the view.
@@ -1925,12 +1944,16 @@
         const find = $('ocOwnerFind');
         if (find) find.value = '';
         renderOwnerPicker();
-        // Kept inside the panel: the button sits at the right-hand end of the chip line, so a
-        // menu hung off its left edge would run off the side.
-        m.style.left = '';
-        m.style.right = '0';
-        const box = m.getBoundingClientRect();
-        if (box.left < 8) { m.style.right = ''; m.style.left = '0'; }
+        /* PLACED UNDER ITS BUTTON, ON THE PAGE. The button lives on the chip line, which slides sideways and so clips
+         * whatever hangs out of it; the menu is a child of the page instead (see wireOwnerPicker) and is put here by
+         * hand, kept inside the panel's width. Display size scales the page, so the measurements are divided by it. */
+        const z = uiZoom();
+        const r = btn.getBoundingClientRect();
+        const w = m.offsetWidth || 240;
+        const vw = document.documentElement.clientWidth / z;
+        m.style.top = `${Math.round(r.bottom / z + 4)}px`;
+        m.style.left = `${Math.round(Math.max(8, Math.min(r.left / z, vw - w - 8)))}px`;
+        m.style.right = 'auto';
         if (find && find.offsetParent) try { find.focus({ preventScroll: true }); } catch (e) { /* not focusable yet */ }
     }
 
@@ -2055,6 +2078,13 @@
         };
         // A click inside the menu is not a click outside it — see the document handler in wire().
         menu.addEventListener('click', (e) => e.stopPropagation());
+        // Out of the chip line, which clips what hangs out of it: the menu is placed under its button by openOwnerMenu.
+        menu.classList.add('qa-owner-menu-floating');
+        document.body.appendChild(menu);
+        // The chip line scrolls sideways; a menu left open would float away from its button.
+        const line = $('ocChips');
+        if (line) line.addEventListener('scroll', () => closeOwnerMenu(), { passive: true });
+        window.addEventListener('resize', () => closeOwnerMenu());
         $('ocOwnerClear').onclick = () => { OWNERS.clear(); renderCases(); };
         $('ocOwnerFind').oninput = () => renderOwnerPicker();
         menu.addEventListener('keydown', (e) => {
@@ -2355,13 +2385,14 @@
         renderOwnerPicker();
         renderTierChips();
         renderQaColumnHeader();
+        requestAnimationFrame(() => FIT_TOP());
         paintSyncLabel();
 
         /* NOTHING SYNCED: the hint says what to do, and the filters and the list bar — which
          * act on a list — stay out of the way until there is one. */
         const hint = $('ocHint');
         if (hint) hint.style.display = total ? 'none' : '';
-        for (const id of ['ocFilters', 'ocFilters2']) {
+        for (const id of ['ocTopSearch', 'ocFilters2']) {
             const el = $(id);
             if (el) el.style.display = total ? '' : 'none';
         }
@@ -3238,6 +3269,8 @@
         const label = $('ocSyncLabel');
         const was = label ? label.textContent : '';
         if (btn) btn.disabled = true;
+        const glyph = $('ocRefresh');
+        if (glyph) { glyph.classList.add('spinning'); glyph.disabled = true; }
         if (label) label.textContent = 'Syncing…';
         try {
             let tab = found.tab;
@@ -3306,6 +3339,8 @@
             toast('Sync failed: ' + ((e && e.message) || e), 'e', 12000);
         } finally {
             if (btn) btn.disabled = false;
+            const glyph2 = $('ocRefresh');
+            if (glyph2) { glyph2.classList.remove('spinning'); glyph2.disabled = false; }
             if (label) label.textContent = was || 'Sync From Salesforce';
             paintSyncLabel();
         }
@@ -3634,6 +3669,7 @@
         if (RUN.active) { toast('A run is already going — wait for it or press Stop.', 'w'); return; }
         // One thing at a time through the relay — and one thing at a time on the progress strip.
         if (RUN.coaching) { toast('The coaching summary is being written — wait for it or press Stop.', 'w'); return; }
+        if (RUN.scanning) { toast('A scan of closed cases is running — wait for it or press Stop.', 'w'); return; }
         const recs = only && only.length ? only.slice() : selectedRecords();
         if (!recs.length) { toast('Select some cases first — press Select, then click them.', 'w'); return; }
         if (!window.SotiAI || !window.SotiAI.isConfigured()) {
@@ -3724,6 +3760,11 @@
                     applyReadToRecord(rec, read.data);
                     migrateKey(key, keyOf(rec));
                     metrics = E.measureCase(read.data, RULES);
+                    // THE QA AGENTS (qa-agents.js): the moments for the team lead, with a link to each. They ride on the
+                    // measurement into the prompt, and onto the review card.
+                    metrics.source = read.data.qaSource || 'page';
+                    try { metrics.flags = window.QaAgents ? window.QaAgents.review(read.data, metrics, rec).flags : []; }
+                    catch (e) { metrics.flags = []; }
                 } catch (e) {
                     /* THE CASE WAS READ AND THE MEASUREMENT FELL OVER ON IT. That is a bug
                      * worth seeing rather than a case worth abandoning the run for, so it is
@@ -4118,6 +4159,21 @@
          * the LAST ask's delivery: the ladder sends less of the case on each retry, and what
          * grounded the answer that was kept is the one worth recording. */
         review.delivery = keptDelivery || askDelivery;
+        /* THE QA AGENTS' FLAGS, THE QUICK SCORE AND THE FACT CHECK (qa-agents.js), kept on the review: the moments the
+         * team lead should look at, each with its date and a link to it; the score worked out from the record, beside
+         * the written one; and anything the write-up quotes that the case does not contain. */
+        review.flags = Array.isArray(metrics.flags) ? metrics.flags : [];
+        review.source = metrics.source || 'page';
+        if (window.QaAgents) {
+            try { review.quick = window.QaAgents.quickScore(metrics, review.flags, RULES); } catch (e) { /* the written score stands alone */ }
+            if (text && !error) {
+                try {
+                    const material = [E.buildTranscript(data, { perPost: Infinity, maxChars: Infinity }), data.caseNumber, data.jiraNumber, data.subject,
+                        data.description, data.caseUrl, rec.url, JSON.stringify(data.qaClosure || {})].join('\n');
+                    review.factCheck = window.QaAgents.factCheck(text, material);
+                } catch (e) { review.factCheck = []; }
+            }
+        }
         await saveReview(review);
         const said = error ? 'write-up FAILED — ' + firstLine(error)
             : kind === '306090' ? '30/60/90 written'
@@ -4141,7 +4197,30 @@
         return !error;
     }
 
+    /* READ A CASE — OVER GRAPHQL FIRST, THE PAGE SECOND.
+     *
+     * The SOTI AI Analyser's GraphQL read (salesforce/sf-qa-case.js): the case's records, asked of Salesforce from any
+     * open Lightning tab. No window opens and nothing scrolls, every time is the record's own, and who sent each email
+     * is Salesforce's Incoming flag rather than a guess — which is what makes the first response reliable. When no
+     * Lightning tab can answer (none open, or signed out), the case is read the old way, in the background reader
+     * window, so a run never stops for want of a tab. The review says which read it came from. */
+    async function readByGraphql(rec) {
+        if (!window.SfQaCase) return { ok: false, why: 'no-module' };
+        const recordId = rec.recordId || (urlOf(rec).match(/\/(500[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?)(?:[/?#]|$)/) || [])[1] || '';
+        const caseNumber = recordId ? '' : String(rec.caseNum || '');
+        if (!recordId && !caseNumber) return { ok: false, why: 'no-id' };
+        return window.SfQaCase.read({ recordId, caseNumber }, {
+            reader: { owns: (t) => window.QaReader && window.QaReader.ownsTab(t) },
+            onStep: (note) => setRunNote(`${rec.caseNum || 'Case'}: ${note}`)
+        });
+    }
+
     async function readOnce(rec) {
+        try {
+            const viaApi = await readByGraphql(rec);
+            if (viaApi.ok) return viaApi;
+            if (viaApi.why && viaApi.why !== 'no-module') logLine(`${rec.caseNum || keyOf(rec)}: GraphQL read unavailable (${viaApi.error || viaApi.why}) — reading the case page instead.`, 'warn');
+        } catch (e) { /* the page read below */ }
         try {
             return await window.QaReader.readCase(urlOf(rec));
         } catch (e) {
@@ -4335,7 +4414,7 @@
      * run, one agent for the coaching. The analyser's, keyed per kind. localStorage because the
      * bar needs it SYNCHRONOUSLY when it opens; a per-machine pacing hint, nothing more. */
     const RUN_MS_PREFIX = 'qa_run_ms_';
-    const RUN_MS_DEFAULT = { qa: 120000, '306090': 120000, 'chat-read': 60000, coaching: 60000 };
+    const RUN_MS_DEFAULT = { qa: 120000, '306090': 120000, 'chat-read': 60000, coaching: 60000, scan: 1500, 'scan-list': 8000 };
     function expectedRunMs(kind) {
         const fallback = RUN_MS_DEFAULT[kind] || 90000;
         try {
@@ -4360,16 +4439,18 @@
     function runBarText(pct) {
         if (BAR.closing) return BAR.final;
         const p = `${Math.round(pct)}%`;
-        if (BAR.stopping) return BAR.kind === 'coaching' ? `Stopping after the summary being written now — ${p}` : `Stopping after the case being read now — ${p}`;
+        if (BAR.stopping) return BAR.kind === 'coaching' ? `Stopping after the summary being written now — ${p}`
+            : /^scan/.test(BAR.kind) ? `Stopping after this batch of cases — ${p}` : `Stopping after the case being read now — ${p}`;
         const n = BAR.total, s = n === 1 ? '' : 's';
         const base = BAR.kind === 'qa' ? `Reviewing ${n} case${s}`
             : BAR.kind === '306090' ? `30/60/90 analysis of ${n} case${s}`
             : BAR.kind === 'coaching' ? `Writing coaching summaries for ${n} agent${s}`
+            : BAR.kind === 'scan' ? `Scoring ${n} closed case${s}`
             : (BAR.what || 'Working');
         let tail = '';
         if (n > 1) {
-            const done = BAR.kind === 'coaching' ? [...BAR.parts.values()].filter(v => v >= 1).length : RUN.done;
-            const failed = BAR.kind !== 'coaching' ? RUN.failed : 0;
+            const done = BAR.kind === 'coaching' || BAR.kind === 'scan' ? [...BAR.parts.values()].filter(v => v >= 1).length : RUN.done;
+            const failed = BAR.kind !== 'coaching' && BAR.kind !== 'scan' ? RUN.failed : 0;
             if (done) tail = ` · ${done} done` + (failed ? `, ${failed} failed` : '');
         }
         return `${base}${tail} — ${p}`;
@@ -4443,10 +4524,10 @@
          * to a panel that looks exactly like one that was never started. */
         if (BAR.hide) clearTimeout(BAR.hide);
         BAR.hide = setTimeout(() => {
-            if (RUN.active || RUN.coaching || CHAT_BUSY) return;
+            if (RUN.active || RUN.coaching || RUN.scanning || CHAT_BUSY) return;
             bar.classList.add('is-leaving');
             BAR.hide = setTimeout(() => {
-                if (!RUN.active && !RUN.coaching && !CHAT_BUSY) bar.hidden = true;
+                if (!RUN.active && !RUN.coaching && !RUN.scanning && !CHAT_BUSY) bar.hidden = true;
                 bar.classList.remove('is-leaving');
                 BAR.hide = null;
             }, 400);
@@ -4831,7 +4912,7 @@
         runBarOpen('chat-read', 1, `Reading ${chat.caseNum || 'the case'} for this chat`);
         setRunNote(`Reading ${chat.caseNum || 'the case'} for this chat…`);
         try {
-            const read = await window.QaReader.readCase(url);
+            const read = await readOnce(Object.assign({}, rec, { url: urlOf(rec) || url }));
             if (!read.ok) { toast(read.error, 'e', 12000); RUN.failed = 1; return; }
             applyReadToRecord(rec, read.data);
             const metrics = E.measureCase(read.data, RULES);
@@ -5519,6 +5600,399 @@
         renderReviews();
     }
 
+    /* ---------------------------------------------------------------------
+     * THE AGENTS TAB — closed cases, scanned and scored, per agent
+     * ---------------------------------------------------------------------
+     * The cases an agent closed in the last 30 days (or 60, or 90), or every EMEA agent's, read over GraphQL straight
+     * from the records (salesforce/sf-qa-scan.js) and scored by the QA agents (qa-agents.js) — no case is opened and no
+     * Copilot is asked. Every case is ranked from the highest score to the lowest, because a case that was handled
+     * badly keeps losing points; the LOWEST FIVE are what a team lead focuses on, each with its flags and a link to every
+     * moment; and "QA in full" puts one through the complete written review.
+     *
+     * EMEA is the region's Agent Cases rule, as the SOTI AI Analyser reads it: Support and Interim cases whose Case
+     * Owner's Manager is one of the region's team leads. A scan of the whole region reads up to the number chosen,
+     * spread evenly over the period, and says how many it read of how many there were.
+     * ------------------------------------------------------------------- */
+    const REGION_MANAGERS = {
+        EMEA: ['Ronan Coakley', 'Michael Stanley', 'Sukh Kooner', 'John Balhatchet', 'Farooq Ahmed', 'Alexandra Bolchi', 'Brendan Flynn']
+    };
+    let SCAN = null;           // the last scan: { who, whoName, period, at, listed, total, more, scanned, cases: [...] }
+    let AGENT_LIST = [];       // [{ id, name }] — EMEA's agents, from the cases they closed
+    let AG_FILTER = '';        // one agent picked out of a region scan
+    const DAY_MS = 86400000;
+
+    function scanAvg(list) {
+        const xs = list.map(c => c.score).filter(n => Number.isFinite(n));
+        return xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : null;
+    }
+
+    function paintAgentSelect() {
+        const sel = $('agWho');
+        if (!sel) return;
+        const was = sel.value;
+        sel.textContent = '';
+        const add = (value, label) => { const o = document.createElement('option'); o.value = value; o.textContent = label; sel.appendChild(o); };
+        add('', 'EMEA — every agent');
+        for (const a of AGENT_LIST) add(a.id, a.name);
+        if ([...sel.options].some(o => o.value === was)) sel.value = was;
+        const cap = $('agCap');
+        if (cap) cap.style.display = sel.value ? 'none' : '';
+    }
+
+    // EMEA's agents: the people who closed EMEA cases in the last three months, read from those cases.
+    async function loadAgentList(quiet) {
+        if (!window.SfQaScan) return;
+        const got = await window.SfQaScan.closedCases({ since: Date.now() - 90 * DAY_MS, managers: REGION_MANAGERS.EMEA, maxPages: 25 });
+        if (!got) { if (!quiet) toast('Salesforce could not be read — open any Salesforce tab, sign in, and try again.', 'w', 8000); return; }
+        const byId = new Map();
+        for (const r of got.rows) if (r.ownerId && /^005/.test(r.ownerId) && r.owner) byId.set(r.ownerId, r.owner);
+        AGENT_LIST = [...byId.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+        await store({ [K.agentList]: AGENT_LIST });
+        paintAgentSelect();
+        if (!quiet) toast(`${AGENT_LIST.length} EMEA agent${AGENT_LIST.length === 1 ? '' : 's'} found.`, 's');
+    }
+
+    async function runScan() {
+        if (RUN.active || RUN.coaching || RUN.scanning) { toast('Something is already running — wait for it, or press Stop.', 'w'); return; }
+        if (!window.SfQaScan || !window.QaAgents) { toast('The scanner did not load.', 'e'); return; }
+        const who = $('agWho').value;
+        const whoName = who ? ((AGENT_LIST.find(a => a.id === who) || {}).name || 'that agent') : 'EMEA';
+        const period = Number($('agPeriod').value) || 30;
+        const cap = who ? 0 : Number($('agCap').value) || 0;
+        RUN.scanning = true;
+        RUN.stop = false;
+        RUN.failed = 0;
+        RUN.done = 0;
+        runBarOpen('scan-list', 1, `Listing the cases ${whoName} closed in the last ${period} days`);
+        try {
+            const list = await window.SfQaScan.closedCases({
+                since: Date.now() - period * DAY_MS, ownerId: who, managers: who ? [] : REGION_MANAGERS.EMEA, maxPages: who ? 10 : 40,
+                onPage: (n) => setRunNote(`${n} closed case${n === 1 ? '' : 's'} listed…`)
+            });
+            if (!list) {
+                runBarClose('Salesforce could not be read', 'fail');
+                toast('Salesforce could not be read — open any Salesforce tab, sign in, and try again.', 'e', 9000);
+                return;
+            }
+            // A region scan reads up to `cap`, spread evenly over the period (newest closure first, every k-th case).
+            let rows = list.rows;
+            if (cap && rows.length > cap) {
+                const step = rows.length / cap;
+                rows = Array.from({ length: cap }, (_, i) => list.rows[Math.floor(i * step)]);
+            }
+            if (!rows.length) {
+                runBarClose('No closed cases in that period', 'warn');
+                SCAN = { who, whoName, period, at: Date.now(), listed: 0, total: 0, more: false, scanned: 0, cases: [] };
+                await store({ [K.scan]: SCAN });
+                renderAgents();
+                return;
+            }
+            runBarOpen('scan', rows.length);
+            const results = [];
+            const read = await window.SfQaScan.readMany(rows, {
+                origin: list.origin,
+                stop: () => RUN.stop,
+                onBatch: (done) => {
+                    for (const r of rows.slice(0, done)) runBarMark(r, 1);
+                    RUN.done = done;
+                    setRunNote(`${done} of ${rows.length} cases read`);
+                }
+            });
+            for (const { row, data } of read) {
+                if (!data) continue;
+                try {
+                    const m = E.measureCase(data, RULES);
+                    const flags = window.QaAgents.review(data, m, row).flags;
+                    const q = window.QaAgents.quickScore(m, flags, RULES, { notesRead: data.qaFeed.notesRead });
+                    results.push({
+                        row, score: q.value, band: q.band, basis: q.basis,
+                        flags: flags.slice(0, 14),
+                        fails: flags.filter(f => f.severity === 'fail').length,
+                        warns: flags.filter(f => f.severity === 'warn').length,
+                        frt: m.frtMet, frtMs: m.firstResponseMs
+                    });
+                } catch (e) { RUN.failed++; }
+            }
+            results.sort((a, b) => b.score - a.score || (b.row.closedAt || 0) - (a.row.closedAt || 0));
+            SCAN = { who, whoName, period, at: Date.now(), listed: list.rows.length, total: list.total, more: list.more, scanned: results.length, cases: results };
+            AG_FILTER = '';
+            await store({ [K.scan]: SCAN });
+            if (!who && results.length) {
+                // The region scan also knows who EMEA's agents are: kept for the picker.
+                const byId = new Map(AGENT_LIST.map(a => [a.id, a.name]));
+                for (const c of results) if (c.row.ownerId && /^005/.test(c.row.ownerId) && c.row.owner) byId.set(c.row.ownerId, c.row.owner);
+                AGENT_LIST = [...byId.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+                await store({ [K.agentList]: AGENT_LIST });
+                paintAgentSelect();
+            }
+            renderAgents();
+            runBarClose(RUN.stop ? `Stopped — ${results.length} cases scored` : `Done — ${results.length} cases scored`, RUN.stop ? 'warn' : 'ok');
+        } catch (e) {
+            runBarClose('The scan failed', 'fail');
+            toast('The scan failed: ' + ((e && e.message) || e), 'e', 9000);
+        } finally {
+            RUN.scanning = false;
+        }
+    }
+
+    // "QA in full": the case into the queue (kept as added by hand) and through the complete written review.
+    async function qaInFull(row) {
+        if (RUN.active || RUN.coaching || RUN.scanning) { toast('Something is already running — wait for it, or press Stop.', 'w'); return; }
+        let rec = CASES.cases.find(c => c.recordId === row.recordId || (row.caseNum && c.caseNum === row.caseNum));
+        if (!rec) {
+            rec = { recordId: row.recordId, url: row.url, caseNum: row.caseNum, subject: row.subject, status: row.status, owner: row.owner,
+                    ownerManager: row.ownerManager, account: row.account, contact: row.contact, entitlement: row.entitlement,
+                    ageDays: row.ageDays, priority: row.priority, jira: row.jira, closedAt: row.closedAt || null, manual: true };
+            CASES.cases.push(rec);
+            await store({ [K.cases]: CASES });
+        }
+        startRun('qa', [rec]);
+    }
+
+    function scanCaseLine(c, rank, { open = false } = {}) {
+        const line = document.createElement('div');
+        line.className = 'qa-ag-case band-' + scoreBand({ value: c.score });
+        const head = document.createElement('div');
+        head.className = 'qa-ag-case-head';
+        const closed = c.row.closedAt ? E.fmtDate(c.row.closedAt) : '';
+        head.innerHTML = (rank ? `<span class="qa-ag-rank">${rank}</span>` : '')
+            + `<span class="qa-score band-${esc(scoreBand({ value: c.score }))}">${esc(c.score)}</span>`
+            + `<span class="qa-rev-num">${esc(c.row.caseNum)}</span>`
+            + `<span class="qa-ag-subj" title="${esc(c.row.subject)}">${esc(c.row.subject)}</span>`
+            + `<span class="qa-ag-who">${esc(c.row.owner)}</span>`
+            + (closed ? `<span class="qa-rev-closed">Closed ${esc(closed)}</span>` : '')
+            + ((c.fails + c.warns) ? `<span class="qa-rev-flagcount">${c.fails + c.warns} to check</span>` : '');
+        const body = document.createElement('div');
+        body.className = 'qa-ag-case-body';
+        body.hidden = !open;
+        const fill = () => {
+            if (body.dataset.filled) return;
+            body.dataset.filled = '1';
+            const why = document.createElement('div');
+            why.className = 'qa-quickline';
+            why.textContent = `Score ${c.score} — ${c.basis}.`;
+            body.appendChild(why);
+            if (c.flags.length) body.appendChild(flagList(c.flags, 'Look at this'));
+            const acts = document.createElement('div');
+            acts.className = 'qa-rev-acts';
+            const openBtn = document.createElement('button');
+            openBtn.className = 'btn';
+            openBtn.textContent = 'Open in Salesforce';
+            openBtn.onclick = () => openInTab(c.row.url);
+            const qa = document.createElement('button');
+            qa.className = 'btn qa-btn-primary';
+            qa.textContent = 'QA in full';
+            qa.title = 'Put this case through the complete written review (reads its notes and posts too)';
+            qa.onclick = () => qaInFull(c.row);
+            acts.append(qa, openBtn);
+            body.appendChild(acts);
+        };
+        if (open) fill();
+        head.onclick = () => { fill(); body.hidden = !body.hidden; line.classList.toggle('open', !body.hidden); };
+        line.classList.toggle('open', open);
+        line.append(head, body);
+        return line;
+    }
+
+    function renderAgents() {
+        paintAgentSelect();
+        const meta = $('agMeta'), out = $('agResults');
+        if (!out) return;
+        out.textContent = '';
+        if (meta) {
+            meta.textContent = !SCAN ? 'Pick an agent (or all of EMEA) and a period, then press Scan. Open any Salesforce tab first — the cases are read through it.'
+                : `Last scan: ${SCAN.whoName}, closed in the last ${SCAN.period} days, ${E.fmtDateTime(SCAN.at)} — `
+                  + `${SCAN.scanned} case${SCAN.scanned === 1 ? '' : 's'} scored`
+                  + (SCAN.listed > SCAN.scanned ? ` of ${SCAN.listed} listed (spread evenly over the period)` : '')
+                  + (SCAN.more ? '; the list was longer still' : '') + '.';
+        }
+        renderAgentReviews();
+        if (!SCAN || !SCAN.cases.length) {
+            if (SCAN) { const none = document.createElement('div'); none.className = 'qa-empty'; none.textContent = 'No closed cases in that period.'; out.appendChild(none); }
+            return;
+        }
+        const cases = AG_FILTER ? SCAN.cases.filter(c => c.row.owner === AG_FILTER) : SCAN.cases;
+        const card = (title, sub) => {
+            const s = document.createElement('section');
+            s.className = 'qa-ag-card';
+            const h = document.createElement('div');
+            h.className = 'qa-ag-h';
+            h.innerHTML = `${esc(title)}${sub ? ` <span class="qa-ag-sub">${esc(sub)}</span>` : ''}`;
+            s.appendChild(h);
+            out.appendChild(s);
+            return s;
+        };
+
+        // The headline: whose, how many, the average.
+        const avg = scanAvg(cases);
+        const top = card(AG_FILTER || SCAN.whoName, `${cases.length} closed case${cases.length === 1 ? '' : 's'} · last ${SCAN.period} days`);
+        const stat = document.createElement('div');
+        stat.className = 'qa-ag-stat';
+        const frtKnown = cases.filter(c => c.frt === true || c.frt === false);
+        const frtMet = frtKnown.filter(c => c.frt === true).length;
+        stat.innerHTML = `<span class="qa-ag-big qa-score band-${esc(scoreBand({ value: avg }))}">${avg === null ? '—' : avg}</span>`
+            + `<span>average score</span>`
+            + (frtKnown.length ? `<span class="qa-ag-dot">·</span><span>first response met on <b>${frtMet} of ${frtKnown.length}</b></span>` : '')
+            + `<span class="qa-ag-dot">·</span><span><b>${cases.filter(c => c.fails).length}</b> with something failed</span>`;
+        top.appendChild(stat);
+        if (AG_FILTER) {
+            const back = document.createElement('button');
+            back.className = 'qa-rev-foldbtn';
+            back.textContent = `× Show all of ${SCAN.whoName}`;
+            back.onclick = () => { AG_FILTER = ''; renderAgents(); };
+            top.appendChild(back);
+        }
+
+        // THE LOWEST FIVE — what a team lead focuses on.
+        const low = cases.slice().sort((a, b) => a.score - b.score).slice(0, 5);
+        const focus = card('Focus on these 5', 'the lowest scores — open each moment, or QA it in full');
+        focus.classList.add('qa-ag-focus');
+        low.forEach((c, i) => focus.appendChild(scanCaseLine(c, i + 1, { open: i === 0 })));
+
+        // A region scan: the bucket per agent, and the best and worst examples.
+        if (!SCAN.who && !AG_FILTER) {
+            const by = new Map();
+            for (const c of SCAN.cases) { const k = c.row.owner || 'Unknown'; if (!by.has(k)) by.set(k, []); by.get(k).push(c); }
+            const agents = [...by.entries()].map(([name, list]) => ({ name, list, avg: scanAvg(list), low: Math.min(...list.map(c => c.score)), high: Math.max(...list.map(c => c.score)) }))
+                .sort((a, b) => (a.avg ?? 0) - (b.avg ?? 0));
+            const tbl = card('Per agent', 'average score of the cases each one closed — lowest first; click a name to see their cases');
+            const t = document.createElement('div');
+            t.className = 'qa-ag-table';
+            t.innerHTML = '<div class="qa-ag-tr qa-ag-th"><span>Agent</span><span>Cases</span><span>Average</span><span>Lowest</span><span>Highest</span></div>';
+            for (const a of agents) {
+                const tr = document.createElement('button');
+                tr.type = 'button';
+                tr.className = 'qa-ag-tr';
+                tr.innerHTML = `<span class="qa-ag-name">${esc(a.name)}</span><span>${a.list.length}</span>`
+                    + `<span><span class="qa-score band-${esc(scoreBand({ value: a.avg }))}">${a.avg}</span></span><span>${a.low}</span><span>${a.high}</span>`;
+                tr.onclick = () => { AG_FILTER = a.name; renderAgents(); };
+                t.appendChild(tr);
+            }
+            tbl.appendChild(t);
+            const best = card('Best examples', 'the highest-scoring cases — handled well');
+            SCAN.cases.slice(0, 5).forEach((c, i) => best.appendChild(scanCaseLine(c, i + 1)));
+            const worst = card('Examples that need work', 'the lowest-scoring cases across the region');
+            SCAN.cases.slice(-5).reverse().forEach((c, i) => worst.appendChild(scanCaseLine(c, i + 1)));
+        }
+
+        // Every case, highest to lowest.
+        const all = card('Every case, highest score to lowest', 'click one for its flags');
+        const shown = cases.slice(0, 300);
+        shown.forEach((c, i) => all.appendChild(scanCaseLine(c, i + 1)));
+        if (cases.length > shown.length) {
+            const more = document.createElement('div');
+            more.className = 'qa-flag-more';
+            more.textContent = `…and ${cases.length - shown.length} more (the lowest are in "Focus on these 5" above).`;
+            all.appendChild(more);
+        }
+    }
+
+    // THE WRITTEN REVIEWS, AVERAGED PER AGENT — all time and the last 30 days, with the best and the worst.
+    function renderAgentReviews() {
+        const box = $('agReviews');
+        if (!box) return;
+        box.textContent = '';
+        const scored = REVIEWS.filter(r => r.kind === 'qa' && !incomplete(r) && r.score && Number.isFinite(Number(r.score.value)));
+        if (!scored.length) { box.innerHTML = '<div class="qa-ag-meta">No written QA reviews yet.</div>'; return; }
+        const since = Date.now() - 30 * DAY_MS;
+        const by = new Map();
+        for (const r of scored) { const k = r.agent || 'Unassigned'; if (!by.has(k)) by.set(k, []); by.get(k).push(r); }
+        const avgOf = (list) => list.length ? Math.round(list.reduce((a, r) => a + Number(r.score.value), 0) / list.length) : null;
+        const rows = [...by.entries()].map(([name, list]) => {
+            const recent = list.filter(r => (r.closedAt || r.at) >= since);
+            const sorted = list.slice().sort((a, b) => Number(a.score.value) - Number(b.score.value));
+            return { name, list, avg: avgOf(list), recent: avgOf(recent), recentN: recent.length, worst: sorted[0], best: sorted[sorted.length - 1] };
+        }).sort((a, b) => a.avg - b.avg);
+        const t = document.createElement('div');
+        t.className = 'qa-ag-table qa-ag-table-rev';
+        t.innerHTML = '<div class="qa-ag-tr qa-ag-th"><span>Agent</span><span>Reviews</span><span>Average</span><span>Last 30 days</span><span>Lowest</span></div>';
+        for (const a of rows) {
+            const tr = document.createElement('div');
+            tr.className = 'qa-ag-tr';
+            tr.innerHTML = `<span class="qa-ag-name">${esc(a.name)}</span><span>${a.list.length}</span>`
+                + `<span><span class="qa-score band-${esc(scoreBand({ value: a.avg }))}">${a.avg}</span></span>`
+                + `<span>${a.recent === null ? '—' : `<span class="qa-score band-${esc(scoreBand({ value: a.recent }))}">${a.recent}</span> <small>(${a.recentN})</small>`}</span>`;
+            const worst = document.createElement('button');
+            worst.type = 'button';
+            worst.className = 'qa-ag-link';
+            worst.textContent = `${a.worst.caseNum} · ${a.worst.score.value}`;
+            worst.title = 'Open this review';
+            worst.onclick = () => showReview(a.worst);
+            const cell = document.createElement('span');
+            cell.appendChild(worst);
+            tr.appendChild(cell);
+            t.appendChild(tr);
+        }
+        box.appendChild(t);
+    }
+
+    /* THE QA AGENTS' FLAGS, AS A LIST — one line each: a mark for how serious, the agent that found it, what it is, the
+     * day and time, the detail, and "Open ↗", which opens that email, post or call in Salesforce. Used on the review
+     * cards and in the Agents tab. */
+    function openInTab(url) {
+        if (!url) return;
+        if (isExt() && window.QaReader) window.QaReader.createTab({ url, active: true }, () => {});
+        else window.open(url, '_blank');
+    }
+    function flagList(flags, title, { max = 0 } = {}) {
+        const wrap = document.createElement('div');
+        wrap.className = 'qa-flags';
+        const shown = max ? flags.slice(0, max) : flags;
+        const bad = flags.filter(f => f.severity === 'fail' || f.severity === 'warn').length;
+        if (title) {
+            const h = document.createElement('div');
+            h.className = 'qa-flags-head';
+            h.textContent = bad ? `${title} — ${bad} moment${bad === 1 ? '' : 's'}` : `${title} — nothing to check`;
+            wrap.appendChild(h);
+        }
+        for (const f of shown) {
+            const line = document.createElement('div');
+            line.className = 'qa-flag sev-' + f.severity;
+            const mark = document.createElement('span');
+            mark.className = 'qa-flag-mark';
+            mark.textContent = f.severity === 'fail' ? '✕' : f.severity === 'warn' ? '!' : f.severity === 'pass' ? '✓' : '·';
+            const main = document.createElement('div');
+            main.className = 'qa-flag-main';
+            const top = document.createElement('div');
+            top.className = 'qa-flag-top';
+            const agent = document.createElement('span');
+            agent.className = 'qa-flag-agent';
+            agent.textContent = f.agent;
+            const t = document.createElement('span');
+            t.className = 'qa-flag-title';
+            t.textContent = f.title;
+            top.append(agent, t);
+            if (f.when) {
+                const w = document.createElement('span');
+                w.className = 'qa-flag-when';
+                w.textContent = f.when;
+                top.appendChild(w);
+            }
+            const d = document.createElement('div');
+            d.className = 'qa-flag-detail';
+            d.textContent = f.detail || '';
+            main.append(top, d);
+            line.append(mark, main);
+            if (f.url) {
+                const go = document.createElement('button');
+                go.type = 'button';
+                go.className = 'qa-flag-go';
+                go.textContent = 'Open ↗';
+                go.title = f.when ? `Open this in Salesforce — ${f.when}` : 'Open this in Salesforce';
+                go.onclick = (e) => { e.stopPropagation(); openInTab(f.url); };
+                line.appendChild(go);
+            }
+            wrap.appendChild(line);
+        }
+        if (max && flags.length > max) {
+            const more = document.createElement('div');
+            more.className = 'qa-flag-more';
+            more.textContent = `…and ${flags.length - max} more.`;
+            wrap.appendChild(more);
+        }
+        return wrap;
+    }
+
     function reviewCard(r, rec) {
         const card = document.createElement('div');
         card.className = 'qa-rev';
@@ -5551,6 +6025,16 @@
         who.className = 'qa-rev-agent';
         who.textContent = r.agent || '';
         head.appendChild(who);
+
+        // How many moments the agents want a lead to look at — the reason to open this card first.
+        const toCheck = (Array.isArray(r.flags) ? r.flags : []).filter(f => f.severity === 'fail' || f.severity === 'warn').length;
+        if (toCheck) {
+            const fcount = document.createElement('span');
+            fcount.className = 'qa-rev-flagcount';
+            fcount.textContent = `${toCheck} to check`;
+            fcount.title = 'Moments the QA agents flagged for the team lead — open the card to see each one, with a link to it.';
+            head.appendChild(fcount);
+        }
 
         // When it closed — the date its month folder was chosen by.
         const closedAt = Number(r.closedAt) || Number(rec && rec.closedAt) || 0;
@@ -5601,6 +6085,26 @@
         };
         card.appendChild(head);
         card.appendChild(body);
+
+        /* LOOK AT THIS — the QA agents' moments for the team lead, worst first: what happened, on which day, and a link
+         * that opens that very email, post or call in Salesforce. A passed check is listed too, quieter, so a lead can see
+         * what was checked and not only what failed. */
+        const flags = Array.isArray(r.flags) ? r.flags : [];
+        if (flags.length) body.appendChild(flagList(flags, 'Look at this'));
+        if (Array.isArray(r.factCheck) && r.factCheck.length) {
+            const fc = document.createElement('div');
+            fc.className = 'qa-factcheck';
+            fc.innerHTML = `<div class="qa-flags-head">Fact check</div>`
+                + `<div class="qa-factcheck-line">The write-up mentions ${r.factCheck.map(x => `the ${esc(x.kind)} <b>${esc(x.value)}</b>`).join(', ')}, which ${r.factCheck.length === 1 ? 'is' : 'are'} not in the case. Check before using it.</div>`;
+            body.appendChild(fc);
+        }
+        if (r.quick && r.quick.value !== undefined) {
+            const q = document.createElement('div');
+            q.className = 'qa-quickline';
+            q.innerHTML = `<span class="qa-score band-${esc(scoreBand({ value: r.quick.value }))}">${esc(r.quick.value)}</span> <span>Score from the record — ${esc(r.quick.basis)}.</span>`;
+            q.title = 'Worked out by the QA Tool from the case record alone, beside the score in the write-up.';
+            body.appendChild(q);
+        }
 
         /* THE MEASURED FINDINGS FIRST, AND LOOKING DIFFERENT FROM THE PROSE.
          * These are arithmetic; the paragraphs under them are judgement. A reader has to be
@@ -6238,6 +6742,7 @@
         fillSettings();
         renderAll();
         toast('Settings saved.', 's');
+        switchView(VIEW_BEFORE_SETTINGS || 'cases');
     }
 
     /* ---------------------------------------------------------------------
@@ -6311,14 +6816,14 @@
             if (e.key === 'Escape' && $('ocSearch').value) { e.preventDefault(); e.stopPropagation(); $('ocSearch').value = ''; renderCases(); }
         };
         $('ocSort').onchange = () => renderCases();
-        for (const chip of document.querySelectorAll('#ocChips .oc-chip')) {
-            chip.onclick = () => {
-                // Clicking the active chip clears it, like the tier chips above.
-                FILTER = (FILTER === chip.dataset.filter) ? 'all' : chip.dataset.filter;
-                for (const c of document.querySelectorAll('#ocChips .oc-chip')) c.classList.toggle('active', c.dataset.filter === FILTER);
-                renderCases();
-            };
-        }
+        /* HOW OLD, OR WHETHER QA'D — the seven chips that had a row of their own, as one choice on the chip line (the
+         * analyser's Layout A1 has room for one line). Any age, 30 / 60 / 90-day, Needs 30/60/90, Not yet QA'd,
+         * Already QA'd: the same FILTER as before, so nothing that reads it changed. Marked while it narrows the list. */
+        $('ocAge').onchange = () => {
+            FILTER = $('ocAge').value || 'all';
+            $('ocAge').classList.toggle('active', FILTER !== 'all');
+            renderCases();
+        };
 
         /* THE COG — the Cases tab's settings: the column chooser, which a right-click on the
          * column headings also opens. A toggle, so the control that opened it also closes it. */
@@ -6414,7 +6919,10 @@
         $('btnStopRun').onclick = () => {
             RUN.stop = true;
             BAR.stopping = true;
-            if (RUN.coaching) {
+            if (RUN.scanning) {
+                setRunNote('Stopping after this batch of cases…');
+                toast('Stopping — the batch being read now will finish first.', 'i');
+            } else if (RUN.coaching) {
                 setRunNote('Stopping after the summary being written now…');
                 toast('Stopping — the summary being written now will finish first.', 'i');
             } else {
@@ -6422,6 +6930,40 @@
                 toast('Stopping — the case being read now will finish first.', 'i');
             }
         };
+
+        /* THE TOP ROW ON A NARROW PANEL (the analyser's ocToolbarFit): when the filter box and Current View cannot
+         * both fit, Current View takes a line of its own (.oc-toolbar.is-narrow in styles.css). And THE CHIP LINE
+         * fades at an edge that has more chips beyond it, so a line that slides says it slides. */
+        const toolbar = $('ocToolbar');
+        const chipLine = $('ocChips');
+        const fitTop = () => {
+            if (toolbar) toolbar.classList.toggle('is-narrow', toolbar.clientWidth > 0 && toolbar.clientWidth < 470);
+            if (chipLine) {
+                const max = chipLine.scrollWidth - chipLine.clientWidth;
+                chipLine.classList.toggle('fade-l', chipLine.scrollLeft > 2);
+                chipLine.classList.toggle('fade-r', max > 2 && chipLine.scrollLeft < max - 2);
+            }
+        };
+        if (typeof ResizeObserver === 'function') {
+            const ro = new ResizeObserver(() => fitTop());
+            if (toolbar) ro.observe(toolbar);
+            if (chipLine) ro.observe(chipLine);
+        }
+        if (chipLine) chipLine.addEventListener('scroll', fitTop, { passive: true });
+        window.addEventListener('resize', fitTop);
+        fitTop();
+        FIT_TOP = fitTop;
+
+        // THE THEME (Settings) — Soft Slate or Dark, at once, kept on this computer (theme.js).
+        if ($('themeSel') && window.QaTheme) {
+            $('themeSel').value = window.QaTheme.get();
+            $('themeSel').onchange = () => { window.QaTheme.set($('themeSel').value); toast($('themeSel').value === 'slate' ? 'Soft Slate theme on.' : 'Dark theme on.', 's', 2500); };
+        }
+
+        // THE AGENTS TAB
+        $('agScan').onclick = () => runScan();
+        $('agLoadAgents').onclick = async () => { const b = $('agLoadAgents'); b.disabled = true; try { await loadAgentList(false); } finally { b.disabled = false; } };
+        $('agWho').onchange = () => { const cap = $('agCap'); if (cap) cap.style.display = $('agWho').value ? 'none' : ''; };
 
         $('revSearch').oninput = renderReviews;
         $('revFilter').onchange = renderReviews;
@@ -6543,6 +7085,10 @@
             renderChat();
         };
         $('btnSaveSettings').onclick = saveSettings;
+        // Close and Cancel put back what is saved and go back — as the analyser's AI Settings does.
+        const leaveSettings = () => { fillSettings(); switchView(VIEW_BEFORE_SETTINGS || 'cases'); };
+        $('setClose').onclick = leaveSettings;
+        $('setCancel').onclick = leaveSettings;
         $('btnResetSettings').onclick = async () => {
             const ok = await confirmAsk('Reset the settings?', 'The thresholds and the team list go back to what this tool shipped with. Reviews are kept.', 'Reset');
             if (!ok) return;

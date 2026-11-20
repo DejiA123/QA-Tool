@@ -1200,3 +1200,213 @@
 .oc-gsel-menu[hidden] { display: none; }
 .oc-gsel-menu button { text-align: left; background: none; border: 0; color: var(--txt1); font: inherit; font-size: 12.5px; padding: 7px 16px; cursor: pointer; white-space: nowrap; }
 .oc-gsel-menu button:hover, .oc-gsel-menu button:focus-visible { background: rgba(99, 102, 241, .16); outline: none; }
+
+/* ============================================================
+   THE CASES HEADER IN TWO ROWS — the analyser's Layout A1 (styles.css)
+   ============================================================
+   What only the QA Tool needs on top of it: the round + keeps its words for
+   screen readers, the tier chips join the one sliding line, the age choice
+   reads as a chip, and the owner menu floats free of the line that slides. */
+.qa-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.qa-chip-run { display: contents; }
+.oc-listbar #ocChips { align-items: center; gap: 5px; }
+.oc-listbar #ocChips > .qa-owner-wrap { flex: 0 0 auto; }
+select.oc-chip.qa-age-chip {
+    flex: 0 0 auto;
+    appearance: none;
+    -webkit-appearance: none;
+    padding: 3px 20px 3px 9px;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position: calc(100% - 10px) 52%, calc(100% - 6px) 52%;
+    background-size: 4px 4px, 4px 4px;
+    background-repeat: no-repeat;
+    font-family: inherit;
+    line-height: 1.4;
+}
+select.oc-chip.qa-age-chip.active { color: #fff; background-color: rgba(99, 102, 241, .22); border-color: var(--blue); }
+.qa-owner-btn { padding: 3px 9px; }
+.oc-menu.qa-owner-menu.qa-owner-menu-floating { position: fixed; right: auto; z-index: 1300; }
+/* The sort, inside ⚙: a choice, not a command. */
+.oc-menu-item.qa-cog-sortrow { cursor: default; }
+.oc-menu-item.qa-cog-sortrow:hover { background: none; }
+.oc-sort.qa-cog-sort { max-width: none; width: 100%; margin-top: 4px; }
+.oc-toolbar #ocRefresh:disabled { opacity: .85; cursor: progress; }
+
+/* ============================================================
+   LOOK AT THIS — the QA agents' moments for the team lead
+   ============================================================ */
+.qa-flags { margin: 10px 0 4px; display: flex; flex-direction: column; gap: 4px; }
+.qa-flags-head { font-size: 10px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--txt3); margin-bottom: 2px; }
+.qa-flag {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 7px 9px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border2);
+    border-radius: var(--r6);
+    background: rgba(255, 255, 255, .02);
+}
+.qa-flag.sev-fail { border-left-color: rgba(239, 68, 68, .85); background: rgba(239, 68, 68, .06); }
+.qa-flag.sev-warn { border-left-color: rgba(220, 170, 60, .85); background: rgba(220, 170, 60, .06); }
+.qa-flag.sev-pass { border-left-color: rgba(34, 197, 94, .7); }
+.qa-flag-mark { flex: 0 0 16px; font-size: 11px; font-weight: 800; line-height: 1.6; text-align: center; color: var(--txt3); }
+.qa-flag.sev-fail .qa-flag-mark { color: #ff9a8b; }
+.qa-flag.sev-warn .qa-flag-mark { color: #ffd08a; }
+.qa-flag.sev-pass .qa-flag-mark { color: #7ee0b8; }
+.qa-flag-main { flex: 1 1 auto; min-width: 0; }
+.qa-flag-top { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.qa-flag-agent {
+    flex: 0 0 auto;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    padding: 1px 6px;
+    border-radius: 999px;
+    color: var(--blue2);
+    background: rgba(99, 102, 241, .12);
+}
+.qa-flag-title { font-size: 11.5px; font-weight: 700; color: var(--txt1); }
+.qa-flag-when { font-size: 10.5px; color: var(--txt3); font-variant-numeric: tabular-nums; }
+.qa-flag-detail { font-size: 11px; line-height: 1.5; color: var(--txt2); margin-top: 2px; overflow-wrap: anywhere; }
+.qa-flag-go {
+    flex: 0 0 auto;
+    align-self: center;
+    padding: 3px 9px;
+    font-family: inherit;
+    font-size: 10.5px;
+    font-weight: 700;
+    border-radius: 6px;
+    border: 1px solid rgba(129, 140, 248, .5);
+    background: rgba(99, 102, 241, .12);
+    color: var(--blue2);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.qa-flag-go:hover { background: var(--blue); border-color: var(--blue); color: #fff; }
+.qa-flag-more { font-size: 10.5px; color: var(--txt3); padding: 2px 4px; }
+.qa-rev-flagcount {
+    flex-shrink: 0;
+    font-size: 9.5px;
+    font-weight: 800;
+    padding: 2px 7px;
+    border-radius: 999px;
+    color: #ff9a8b;
+    background: rgba(239, 68, 68, .12);
+    border: 1px solid rgba(239, 68, 68, .35);
+    white-space: nowrap;
+}
+.qa-factcheck { margin: 8px 0 4px; padding: 7px 9px; border-radius: var(--r6); border: 1px solid rgba(220, 170, 60, .45); background: rgba(220, 170, 60, .07); }
+.qa-factcheck-line { font-size: 11px; line-height: 1.5; color: var(--txt2); }
+.qa-quickline { display: flex; align-items: baseline; gap: 8px; margin: 8px 0 2px; font-size: 11px; line-height: 1.5; color: var(--txt2); }
+.qa-quickline .qa-score { flex: 0 0 auto; }
+
+/* ============================================================
+   THE AGENTS TAB
+   ============================================================ */
+.qa-ag { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.qa-ag-card { flex-shrink: 0; background: var(--bg1); border: 1px solid var(--border2); border-radius: var(--r8); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.qa-ag-h { font-size: 12.5px; font-weight: 800; color: var(--txt1); }
+.qa-ag-sub { font-size: 10.5px; font-weight: 500; color: var(--txt3); margin-left: 4px; }
+.qa-ag-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.qa-ag-row .oc-sort { max-width: none; }
+.qa-ag-row .qa-ag-who { flex: 1 1 180px; min-width: 150px; }
+.qa-ag-meta { font-size: 11px; line-height: 1.5; color: var(--txt3); }
+.qa-ag-stat { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11.5px; color: var(--txt2); }
+.qa-ag-big { font-size: 15px !important; padding: 3px 10px !important; }
+.qa-ag-dot { color: var(--txt4); }
+.qa-ag-focus { border-color: rgba(239, 68, 68, .35); }
+.qa-ag-case { flex-shrink: 0; border: 1px solid var(--border); border-left: 3px solid var(--txt4); border-radius: var(--r6); background: rgba(255, 255, 255, .015); }
+.qa-ag-case.band-excellent { border-left-color: rgba(34, 197, 94, .8); }
+.qa-ag-case.band-good { border-left-color: rgba(80, 130, 230, .8); }
+.qa-ag-case.band-needs { border-left-color: rgba(220, 170, 60, .8); }
+.qa-ag-case.band-poor { border-left-color: rgba(239, 68, 68, .85); }
+.qa-ag-case-head { display: flex; align-items: center; gap: 7px; padding: 6px 9px; cursor: pointer; min-width: 0; }
+.qa-ag-case-head:hover { background: rgba(255, 255, 255, .03); }
+.qa-ag-rank { flex: 0 0 auto; min-width: 16px; font-size: 10px; font-weight: 800; color: var(--txt4); text-align: right; font-variant-numeric: tabular-nums; }
+.qa-ag-subj { flex: 1 1 auto; min-width: 30px; font-size: 11.5px; color: var(--txt1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qa-ag-who { flex: 0 1 auto; min-width: 0; max-width: 130px; font-size: 10.5px; color: var(--txt2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qa-ag-case-body { padding: 0 10px 10px; border-top: 1px solid var(--border); }
+.qa-ag-case-body[hidden] { display: none; }
+.qa-ag-table { display: flex; flex-direction: column; }
+.qa-ag-tr {
+    display: grid;
+    grid-template-columns: minmax(110px, 1fr) 54px 64px 54px 54px;
+    gap: 6px;
+    align-items: center;
+    padding: 5px 6px;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    background: none;
+    color: var(--txt2);
+    font-family: inherit;
+    font-size: 11px;
+    text-align: left;
+}
+button.qa-ag-tr { cursor: pointer; }
+button.qa-ag-tr:hover { background: rgba(255, 255, 255, .04); }
+.qa-ag-table-rev .qa-ag-tr { grid-template-columns: minmax(110px, 1fr) 54px 64px 86px minmax(90px, auto); }
+.qa-ag-th { font-size: 9.5px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--txt3); }
+.qa-ag-name { color: var(--txt1); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qa-ag-link { padding: 0; border: none; background: none; color: var(--blue2); font-family: inherit; font-size: 11px; cursor: pointer; text-align: left; }
+.qa-ag-link:hover { text-decoration: underline; }
+
+/* ============================================================
+   SETTINGS — the analyser's AI Settings card
+   ============================================================
+   A title and ×, a short bold label over each setting, help only where it is
+   needed, switches as cards, and Cancel / Save at the foot. */
+#viewSettings { overflow-y: auto; padding: 12px 14px 18px; }
+.qa-set-card {
+    max-width: 440px;
+    margin: 0 auto;
+    background: var(--bg1);
+    border: 1px solid var(--border2);
+    border-radius: 14px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, .25);
+    display: flex;
+    flex-direction: column;
+}
+.qa-set-title {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px; border-bottom: 1px solid var(--border);
+    font-size: 15px; font-weight: 600; color: var(--txt1);
+}
+.qa-set-title > span { display: inline-flex; align-items: center; gap: 8px; }
+.qa-set-x { background: none; border: none; color: var(--txt2); font-size: 20px; line-height: 1; cursor: pointer; padding: 0 2px; }
+.qa-set-x:hover { color: var(--txt1); }
+.qa-set-body { padding: 6px 18px 14px; display: flex; flex-direction: column; gap: 8px; }
+.qa-set-k { font-size: 12px; font-weight: 700; color: var(--txt1); margin-top: 10px; }
+.qa-set-line { font-size: 11.5px; color: var(--txt2); }
+.qa-set-hint { font-size: 10.5px; line-height: 1.45; color: var(--txt3); margin-top: -2px; }
+.qa-set-body .fsel, .qa-set-body .finput { width: 100%; box-sizing: border-box; font-size: 12px; }
+.qa-set-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.qa-set-grid { display: grid; grid-template-columns: 1fr 86px; gap: 6px 10px; align-items: center; font-size: 11.5px; color: var(--txt2); }
+.qa-set-grid .finput { padding: 5px 8px; }
+.qa-zoom { display: flex; gap: 6px; align-items: center; }
+.qa-zoom .fsel { flex: 1; }
+.qa-roster { font-family: var(--mono); font-size: 11.5px !important; resize: vertical; }
+.qa-switch-card {
+    display: flex; align-items: flex-start; gap: 10px; margin-top: 4px;
+    padding: 10px 12px; border: 1px solid var(--border2); border-radius: 10px; cursor: pointer;
+    background: rgba(255, 255, 255, .02);
+}
+.qa-switch-card > span { display: flex; flex-direction: column; gap: 2px; font-size: 11.5px; color: var(--txt1); }
+.qa-switch-card > span > span { font-size: 10.5px; line-height: 1.45; color: var(--txt3); }
+input.qa-switch {
+    appearance: none; -webkit-appearance: none; flex: 0 0 auto;
+    width: 30px; height: 17px; margin: 1px 0 0; border-radius: 999px; position: relative; cursor: pointer;
+    background: var(--bg3); border: 1px solid var(--border2); transition: background .15s ease;
+}
+input.qa-switch::after {
+    content: ''; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform .15s ease;
+}
+input.qa-switch:checked { background: var(--blue); border-color: var(--blue); }
+input.qa-switch:checked::after { transform: translateX(13px); }
+input.qa-switch:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.qa-set-about { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 10.5px; line-height: 1.5; color: var(--txt3); display: flex; flex-direction: column; gap: 4px; }
+.qa-set-about strong { color: var(--txt2); font-size: 11px; }
+.qa-set-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--border); }
+.qa-set-foot-r { display: inline-flex; gap: 6px; }

@@ -27,6 +27,9 @@
          rather than by picking a diff apart. -->
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="qa-styles.css">
+    <!-- THE COLOUR THEME (Soft Slate or Dark), on before the first paint: the SOTI AI Analyser's theme.js. After both
+         stylesheets, which it reads. Switched in Settings → Theme. -->
+    <script src="theme.js"></script>
     <!-- THE DISPLAY SIZE, in the head and before anything is drawn — a panel that paints at
          100% and then jumps to 80% is a flicker on every open. See display-size.js. -->
     <script src="display-size.js"></script>
@@ -108,6 +111,9 @@
             <span class="tab-name">Reviews</span>
             <span class="tab-cases-count" id="tabReviewsCount"></span>
         </div>
+        <div class="tab-item tab-stats" data-view="agents" role="button" tabindex="0" title="Agents — every agent's closed cases, scored from the record: averages, the lowest five to focus on, and the best and worst examples">
+            <span class="tab-name">Agents</span>
+        </div>
         <div class="tab-item tab-stats" data-view="chat" role="button" tabindex="0" title="Chat — ask about one case, grounded in what was read off it">
             <span class="tab-name">Chat</span>
             <span class="tab-cases-count" id="tabChatCount"></span>
@@ -150,12 +156,18 @@
          is scrolled up — everything in #ocTop is for FINDING a case; the bar
          below it acts on the list and stays put. See wireTopFold. -->
     <div class="oc-view qa-view" id="viewCases">
+        <!-- THE CASES HEADER IN TWO ROWS — the SOTI AI Analyser's Layout A1 (Beta 9.8.6).
+               Row 1: + (Add Case) · the filter box · Current View · refresh (the same sync Sync From Salesforce did).
+               Row 2: the chips on one sliding line (whose cases, how old or QA'd, the tiers, JIRA, Focus) · QA · 30/60/90 · ⚙.
+             The select box sits at the start of the column headings, over the rows' tick-boxes. Nothing was taken
+             away: the sort is in ⚙, the seven age and QA chips are one "Any age" choice, and while cases are ticked the
+             chips step aside for the count and the bin. -->
         <div class="oc-top" id="ocTop">
-        <div class="oc-toolbar">
+        <div class="oc-toolbar" id="ocToolbar">
             <div class="oc-add-wrap">
-                <button class="btn btn-add" id="btnAddCase" type="button" aria-haspopup="menu" title="Put a case — or a whole list of cases — into this queue">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                    Add Case
+                <button class="btn btn-add btn-add-round" id="btnAddCase" aria-label="Add Case" type="button" aria-haspopup="menu" title="Put a case — or a whole list of cases — into this queue">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                    <span class="qa-sr">Add Case</span>
                 </button>
                 <div class="oc-menu" id="ocAddMenu" role="menu" style="display:none">
                     <button class="oc-menu-item" id="ocAddFromSf" type="button" role="menuitem">
@@ -173,11 +185,17 @@
                     </button>
                 </div>
             </div>
-            <!-- REFRESHES SALESFORCE FIRST, AND FINDS ITS OWN TAB: a Lightning list view is a
-                 snapshot of when it loaded, so this presses Salesforce's own Refresh and then
-                 reads every row. You do not need to be standing on the list — see
-                 resolveListTab. The count and the age of the last sync are in its title. -->
-            <div class="oc-sync-split" id="ocSyncSplit">
+            <div class="oc-top-search" id="ocTopSearch" style="display:none">
+                <input class="oc-search" id="ocSearch" type="search" autocomplete="off"
+                       placeholder="Filter — case number, subject, account or owner; commas for several"
+                       title="Type several things separated by commas to see all of them at once — e.g. &quot;C01934848, enrol&quot; or &quot;Imran, Ayse&quot; for the cases those two own. Esc clears it.">
+            </div>
+            <!-- CURRENT VIEW — the saved Salesforce list views. Press one to open it in Salesforce
+                 and sync the queue from it; right-click to rename or forget it. Rendered by renderLists(). -->
+            <div class="oc-links" id="ocLists" style="display:none"></div>
+            <!-- The labelled Sync From Salesforce button is kept for its wiring and its tooltip, out of sight: the
+                 refresh glyph beside it does the same sync. -->
+            <div class="oc-sync-split" id="ocSyncSplit" hidden>
                 <button class="btn btn-sf" id="btnSyncCaseList" type="button"
                         title="Refresh the Salesforce list view and read every case from it. If it is open in another tab this brings it to the front; if it is closed it opens the one you last synced from.">
                     <span id="ocSyncLabel">Sync From Salesforce</span>
@@ -189,52 +207,19 @@
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
             </button>
         </div>
-
-        <!-- CURRENT VIEW — the saved Salesforce list views. Press one to open it in Salesforce
-             and sync the queue from it; right-click to rename or forget it. Hidden until one
-             is saved. Rendered by renderLists(). -->
-        <div class="oc-links" id="ocLists" style="display:none"></div>
-
         <div class="oc-hint" id="ocHint">
-            Open the Salesforce case <b>list view</b> you QA from and press <b>Sync From Salesforce</b> — it
-            reads every case from it, and after the first sync it can go back to that list on its own.
-            Or press <b>Add Case</b> to put in one case, or a list view to keep as a button.
+            Press <b>↻</b> (top right) to open the Salesforce case <b>list view</b> or report you QA from and read every case
+            from it — after the first time it goes back to that list on its own. Or press <b>+</b> to add one case, or a list
+            view to keep as a button.
         </div>
-
-        <div class="oc-filters" id="ocFilters" style="display:none">
-            <div class="oc-filter-row">
-                <input class="oc-search" id="ocSearch" type="search" autocomplete="off"
-                       placeholder="Filter — case number, subject, account or owner; commas for several"
-                       title="Type several things separated by commas to see all of them at once — e.g. &quot;C01934848, enrol&quot; or &quot;Imran, Ayse&quot; for the cases those two own. Esc clears it.">
-                <!-- Sorting re-orders WITHIN each entitlement group, not across them: the tier is
-                     which cases the team owes first. Pick a single tier chip and the grouping goes,
-                     leaving a flat sorted list. Oldest first by default, because this is a review
-                     queue and the case most overdue its 30/60/90 is the one to open first. -->
-                <select class="oc-sort" id="ocSort" title="Order the cases within each entitlement group">
-                    <option value="list">List order</option>
-                    <option value="age-desc" selected>Oldest first</option>
-                    <option value="age-asc">Newest first</option>
-                    <option value="sev-high">Severity: high first</option>
-                    <option value="sev-low">Severity: low first</option>
-                    <option value="status">Status: on SOTI first</option>
-                    <option value="activity">Activity: overdue first</option>
-                    <option value="case">Case number</option>
-                    <option value="owner">Case owner</option>
-                    <option value="score">QA score (reviewed first)</option>
-                </select>
-            </div>
-        </div>
-
-        <!-- THE CHIPS: the tiers, JIRA and Focus (the analyser's row), then this tool's own —
-             the 30/60/90 milestones and whether a case has been QA'd. -->
-        <div class="oc-filters" id="ocFilters2" style="display:none">
-            <!-- THE TIER CHIPS, AND THE OWNER PICKER AT THE END OF THEIR LINE. The picker lists
-                 only the people whose cases are loaded, ticks as many as wanted, and narrows the
-                 list to their cases; every chip count below it follows. Filled by
-                 renderOwnerPicker(). -->
-            <div class="qa-chipline">
-                <div class="oc-chips" id="ocTierChips"></div>
-                <div class="qa-owner-wrap" id="ocOwnerWrap">
+        </div><!-- /#ocTop -->
+        <div class="oc-listbar" id="ocActions" style="display:none">
+            <div class="oc-lb-left">
+                <!-- THE CHIPS, ON ONE SLIDING LINE: whose cases (the owner dropdown), how old or whether QA'd, then the
+                     entitlement tiers, JIRA and Focus (renderTierChips). They step aside while cases are ticked. -->
+                <div class="oc-filters" id="ocFilters2" style="display:none">
+                    <div class="oc-chips" id="ocChips">
+                        <div class="qa-owner-wrap" id="ocOwnerWrap">
                     <button class="qa-owner-btn" id="ocOwnerBtn" type="button" aria-haspopup="listbox" aria-expanded="false"
                             title="Show only the cases of the owners you pick — tick one or several">
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
@@ -251,30 +236,75 @@
                         <div class="qa-owner-list" id="ocOwnerList" role="listbox" aria-multiselectable="true"></div>
                     </div>
                 </div>
+                        <select class="oc-chip qa-age-chip" id="ocAge" title="How old the cases are, and whether they have been QA'd">
+                            <option value="all" selected>Any age</option>
+                            <option value="30">30-day</option>
+                            <option value="60">60-day</option>
+                            <option value="90">90-day</option>
+                            <option value="milestone">Needs 30/60/90</option>
+                            <option value="unreviewed">Not yet QA'd</option>
+                            <option value="reviewed">Already QA'd</option>
+                        </select>
+                        <span class="qa-chip-run" id="ocTierChips"></span>
+                    </div>
+                </div>
+                <button class="oc-lb-btn" id="ocSelect" type="button"
+                        title="Pick cases — every case grows a tick-box; click the ones you want, then press QA. Esc stops selecting.">
+                    <span class="oc-lb-box" aria-hidden="true"></span> Select
+                </button>
+                <span class="oc-lb-count" id="ocSelCount" hidden></span>
+                <button class="oc-lb-btn" id="ocSelectAll" type="button" hidden
+                        title="Tick every case on screen (or press Ctrl+A). Click a case to untick it.">Select all</button>
+                <button class="oc-lb-btn oc-lb-bin" id="ocSelDelete" type="button" hidden
+                        title="Remove the ticked cases from this list. Local only; nothing changes in Salesforce, and reviews already written are kept.">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>
+                </button>
+                <button class="oc-lb-btn" id="ocSelCancel" type="button" hidden title="Stop selecting — nothing is removed">Cancel</button>
+                <button class="oc-lb-btn qa-lb-run" id="btnRunQa" type="button"
+                        title="Write a QA review of every ticked case">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>
+                    <span id="btnRunQaLabel">QA selected</span>
+                </button>
+                <button class="oc-lb-btn" id="btnRun306090" type="button"
+                        title="Produce the 30/60/90 management-review write-up for the ticked cases">30/60/90</button>
             </div>
-            <div class="oc-chips qa-ms-chips" id="ocChips">
-                <button class="oc-chip active" data-filter="all" type="button" title="Every case, whatever its age or review">Any age</button>
-                <button class="oc-chip" data-filter="30" type="button" title="Cases 30 days old or more but under 60">30-day</button>
-                <button class="oc-chip" data-filter="60" type="button" title="Cases 60 days old or more but under 90">60-day</button>
-                <button class="oc-chip" data-filter="90" type="button" title="Cases 90 days old or more">90-day</button>
-                <button class="oc-chip" data-filter="milestone" type="button" title="Every case at or past its first 30-day review">Needs 30/60/90</button>
-                <button class="oc-chip" data-filter="unreviewed" type="button" title="Cases with no QA review yet">Not yet QA'd</button>
-                <button class="oc-chip" data-filter="reviewed" type="button" title="Cases this tool has already reviewed">Already QA'd</button>
+            <div class="oc-lb-right">
+                <div class="oc-cog-wrap">
+                    <button class="oc-lb-btn oc-lb-icon" id="ocColumns" type="button" aria-label="Cases tab settings"
+                            aria-haspopup="menu" title="Cases tab settings — the sort, and the columns each case shows.">
+                        <span class="oc-act-i" aria-hidden="true">⚙</span>
+                    </button>
+                    <div class="oc-menu oc-cog-menu" id="ocCogMenu" role="menu" style="display:none">
+                        <!-- THE SORT, here since the header went to two rows (the analyser's Layout A1 has no room for it
+                             on the top line). Sorting re-orders WITHIN each entitlement group; pick a single tier chip
+                             and the grouping goes, leaving a flat sorted list. Oldest first by default. -->
+                        <label class="oc-menu-item qa-cog-sortrow">
+                            <span class="oc-menu-t">⇅ Sort the cases</span>
+                            <select class="oc-sort qa-cog-sort" id="ocSort" title="Order the cases within each entitlement group">
+                    <option value="list">List order</option>
+                    <option value="age-desc" selected>Oldest first</option>
+                    <option value="age-asc">Newest first</option>
+                    <option value="sev-high">Severity: high first</option>
+                    <option value="sev-low">Severity: low first</option>
+                    <option value="status">Status: on SOTI first</option>
+                    <option value="activity">Activity: overdue first</option>
+                    <option value="case">Case number</option>
+                    <option value="owner">Case owner</option>
+                    <option value="score">QA score (reviewed first)</option>
+                </select>
+                        </label>
+                        <button class="oc-menu-item" id="ocCogColumns" role="menuitem" type="button">
+                            <span class="oc-menu-t">▦ Columns</span>
+                            <span class="oc-menu-s">Choose what each case shows on its line. Also: right-click the column headings.</span>
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
-        </div><!-- /#ocTop -->
-
-        <!-- THE BAR JUST ABOVE THE CASES — what acts on the list.
-             SELECT, THE GMAIL WAY — the analyser's (Global 1.3.2). Every row has its own
-             tick-box, always; the box ticks the case and the row still opens it. The master
-             checkbox ticks every case on screen (Ctrl+A does the same) or, with any ticked,
-             clears them (so does Esc); its ▾ picks All, None, or a kind of case. The bin takes
-             the ticked cases off this list. QA and 30/60/90 run on the ticked cases. The cog
-             holds the column chooser. Painted by renderListBar(). -->
-        <div class="oc-listbar" id="ocActions" style="display:none">
-            <div class="oc-lb-left">
-                <!-- THE MASTER CHECKBOX — see gselPaint in qa-panel.js. Empty, a dash (some on
-                     screen ticked) or a tick (every case on screen). -->
+        <!-- The search box and the sort used to share this row: kept, empty, for the code that shows and hides it. -->
+        <div class="oc-filters" id="ocFilters" style="display:none" hidden></div>
+        <!-- THE MASTER CHECKBOX — see gselPaint in qa-panel.js. Moved into the column headings by renderQaColumnHeader,
+             over the rows' tick-boxes, as in the analyser. -->
                 <div class="oc-gsel" id="ocGsel">
                     <button class="oc-gsel-box" id="ocGselBox" type="button" role="checkbox" aria-checked="false" data-state="none" title="Select every case on screen"><span class="oc-gsel-mark" aria-hidden="true"></span></button>
                     <button class="oc-gsel-caret" id="ocGselCaret" type="button" aria-haspopup="menu" title="Select" aria-label="Select options">▾</button>
@@ -290,46 +320,6 @@
                         <button type="button" role="menuitem" data-pick="nofocus">Not focus</button>
                     </div>
                 </div>
-                <!-- SELECT, SELECT ALL and CANCEL stay in the page, hidden — the checkbox above
-                     stands in for all three, as it does in the analyser. -->
-                <button class="oc-lb-btn" id="ocSelect" type="button"
-                        title="Pick cases — every case grows a tick-box; click the ones you want, then press QA. Esc stops selecting.">
-                    <span class="oc-lb-box" aria-hidden="true"></span> Select
-                </button>
-                <span class="oc-lb-count" id="ocSelCount" hidden></span>
-                <button class="oc-lb-btn" id="ocSelectAll" type="button" hidden
-                        title="Tick every case on screen (or press Ctrl+A). Click a case to untick it.">Select all</button>
-                <button class="oc-lb-btn oc-lb-bin" id="ocSelDelete" type="button" hidden
-                        title="Remove the ticked cases from this list. Local only; nothing changes in Salesforce, and reviews already written are kept.">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>
-                </button>
-                <button class="oc-lb-btn" id="ocSelCancel" type="button" hidden title="Stop selecting — nothing is removed">Cancel</button>
-                <!-- THE QA BUTTON. On the bar, beside the selection it acts on, and always there —
-                     so it is never a hunt to find the thing this tool is for. -->
-                <button class="oc-lb-btn qa-lb-run" id="btnRunQa" type="button"
-                        title="Write a QA review of every ticked case">
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>
-                    <span id="btnRunQaLabel">QA selected</span>
-                </button>
-                <button class="oc-lb-btn" id="btnRun306090" type="button"
-                        title="Produce the 30/60/90 management-review write-up for the ticked cases">30/60/90</button>
-            </div>
-            <div class="oc-lb-right">
-                <div class="oc-cog-wrap">
-                    <button class="oc-lb-btn oc-lb-icon" id="ocColumns" type="button" aria-label="Cases tab settings"
-                            aria-haspopup="menu" title="Cases tab settings — the columns each case shows.">
-                        <span class="oc-act-i" aria-hidden="true">⚙</span>
-                    </button>
-                    <div class="oc-menu oc-cog-menu" id="ocCogMenu" role="menu" style="display:none">
-                        <button class="oc-menu-item" id="ocCogColumns" role="menuitem" type="button">
-                            <span class="oc-menu-t">▦ Columns</span>
-                            <span class="oc-menu-s">Choose what each case shows on its line. Also: right-click the column headings.</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
         <!-- WHAT EACH ROW SHOWS. A popover rather than a settings page: it is a property of
              this list, and it belongs beside it. Filled in by renderQaColumns(). -->
         <div class="oc-cols" id="ocColsPanel" style="display:none">
@@ -406,6 +396,43 @@
              timeline itself still goes to the browser console for anyone diagnosing a run.
              See logLine in qa-panel.js. -->
         <div class="oc-list" id="revList"></div>
+    </div>
+
+    <!-- ==================================================================
+         AGENTS — closed cases, scanned and scored, per agent
+         ==================================================================
+         The cases an agent closed (or every EMEA agent's), read over GraphQL from the records and scored by the QA
+         agents without opening one: the average per agent, every case ranked from the highest score to the lowest, the
+         LOWEST FIVE a team lead should focus on, and the best and worst examples. Each case carries its flags, with a
+         link to every moment, and "QA in full" writes the complete review. Painted by renderAgents(). -->
+    <div class="oc-view qa-view" id="viewAgents" style="display:none">
+        <div class="qa-ag">
+            <section class="qa-ag-card">
+                <div class="qa-ag-h">Scan closed cases <span class="qa-ag-sub">read from Salesforce, scored from the record</span></div>
+                <div class="qa-ag-row">
+                    <select class="oc-sort qa-ag-who" id="agWho" title="Whose closed cases to scan"></select>
+                    <select class="oc-sort" id="agPeriod" title="How far back">
+                        <option value="30" selected>Last 30 days</option>
+                        <option value="60">Last 60 days</option>
+                        <option value="90">Last 3 months</option>
+                    </select>
+                    <select class="oc-sort" id="agCap" title="How many of EMEA's closed cases to read — spread evenly over the period">
+                        <option value="200">Up to 200 cases</option>
+                        <option value="400" selected>Up to 400 cases</option>
+                        <option value="1000">Up to 1,000 cases</option>
+                        <option value="0">Every case</option>
+                    </select>
+                    <button class="btn qa-btn-primary" id="agScan" type="button">Scan</button>
+                    <button class="btn" id="agLoadAgents" type="button" title="Read the list of EMEA agents again from the cases closed in the last 3 months">↻ Agents</button>
+                </div>
+                <div class="qa-ag-meta" id="agMeta"></div>
+            </section>
+            <div id="agResults"></div>
+            <section class="qa-ag-card" id="agReviewsCard">
+                <div class="qa-ag-h">From your QA reviews <span class="qa-ag-sub">the written reviews, averaged per agent</span></div>
+                <div id="agReviews"></div>
+            </section>
+        </div>
     </div>
 
     <!-- ==================================================================
@@ -513,132 +540,39 @@
     <!-- ==================================================================
          SETTINGS
          ================================================================== -->
+    <!-- SETTINGS — the SOTI AI Analyser's AI Settings, in its shape: a card with a title and ×, one short label over
+         each setting, a line of help only where it is needed, switches as cards, and Cancel / Save at the foot. Saved
+         with Save; Theme and Display size change at once, as in the analyser. -->
     <div class="oc-view qa-view" id="viewSettings" style="display:none">
-        <div class="qa-settings">
-            <div class="qa-set-block">
-                <div class="qa-set-head">The standards this tool measures against</div>
-                <p class="qa-set-note">
-                    These are the numbers every measured finding is compared with. They are settings
-                    rather than constants because a threshold nobody can change is one people work
-                    around — if the first response target moves, change it here rather than waiting
-                    for a new build.
-                </p>
-                <div class="qa-set-row">
-                    <label for="setFrt">First response target (hours)</label>
-                    <input class="finput" id="setFrt" type="number" min="0.25" max="72" step="0.25">
-                </div>
-                <div class="qa-set-row">
-                    <label for="setGap">Flag silence longer than (days)</label>
-                    <input class="finput" id="setGap" type="number" min="1" max="60" step="1">
-                </div>
-                <div class="qa-set-row">
-                    <label for="setMeetingNote">Meeting must be written up within (hours)</label>
-                    <input class="finput" id="setMeetingNote" type="number" min="1" max="168" step="1">
-                </div>
-                <div class="qa-set-row">
-                    <label for="setOpenWait">Flag "waiting on us" after (days)</label>
-                    <input class="finput" id="setOpenWait" type="number" min="1" max="30" step="1">
-                </div>
+        <div class="qa-set-card">
+            <div class="qa-set-title">
+                <span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                Settings</span>
+                <button class="qa-set-x" id="setClose" type="button" aria-label="Close">×</button>
             </div>
-
-            <div class="qa-set-block">
-                <div class="qa-set-head">The team</div>
-                <p class="qa-set-note">
-                    The agents the coaching sheet has a row for, one per line. A name here is matched
-                    against the case owner Salesforce reports, so it wants to be the name as Salesforce
-                    writes it. An agent who turns up in the queue but is not on this list still gets
-                    reviewed and still gets a coaching row — the list decides the ORDER of the sheet
-                    and who appears on it with no cases yet, not who may be reviewed.
-                </p>
-                <textarea class="finput qa-roster" id="setRoster" rows="10" spellcheck="false"></textarea>
-            </div>
-
-            <div class="qa-set-block">
-                <div class="qa-set-head">How many cases at once</div>
-                <p class="qa-set-note">
-                    Each case is opened in a background window, read to the end of its feed and closed
-                    again. More at once is faster and heavier: every case being read is a full
-                    Salesforce page in memory. Two is comfortable on a support laptop; go higher only
-                    if the machine has room, and expect the reader window to surface more often.
-                </p>
-                <div class="qa-set-row">
-                    <label for="setWorkers">Cases read at the same time</label>
-                    <input class="finput" id="setWorkers" type="number" min="1" max="4" step="1">
-                </div>
-            </div>
-
-            <div class="qa-set-block">
-                <div class="qa-set-head">The AI</div>
-                <p class="qa-set-note">
-                    Reviews are written through the Microsoft 365 Copilot relay: the tool drives a
-                    Copilot tab in a window of its own, the same way the SOTI AI Analyser does, so no
-                    case data goes anywhere the browser was not already signed in to. Chrome has to
-                    grant access once — press <b>Grant access to Copilot</b> and allow it when asked.
-                    It asks for <span class="qa-mono">m365.cloud.microsoft</span> and
-                    <span class="qa-mono">copilot.cloud.microsoft</span> together, because Microsoft now
-                    moves the chat from the first to the second; the connection is tested as soon as
-                    it is allowed.
-                </p>
-                <div class="qa-set-row qa-set-check">
-                    <label for="setDeident">Send cases with the names removed</label>
-                    <input class="fcheck" id="setDeident" type="checkbox">
-                </div>
-                <p class="qa-set-note qa-set-sub">
-                    On by default, and worth leaving on. Every name in a case — the agent's, the
-                    customer's, anyone who wrote on it — is replaced with a role label before the case
-                    is sent, and the labels are swapped back for the real names in the answer, so the
-                    review you read is unchanged. It is also what makes the review arrive at all:
-                    Copilot refuses outright to assess an identifiable employee, and a refusal comes
-                    back looking like an answer with every column empty. Turn it off only to compare.
-                </p>
-                <p class="qa-set-note qa-set-sub">
-                    <b>The case goes over as a file.</b> A chat box has a character limit and a case
-                    does not — a long email chain is hundreds of kilobytes, and it is exactly the case
-                    a review most needs to read in full. So only the instructions are typed into the
-                    box; the facts, the measured findings and the whole transcript are attached
-                    beside them as <span class="qa-mono">&lt;case number&gt;-case-material.txt</span>,
-                    complete and untrimmed. Every case, however small — a support case is prose, and
-                    even a busy one with thirty messages on it is only about seven thousand
-                    characters, which is under the size the relay would otherwise judge worth
-                    uploading. The card on every review says how that case was sent.
-                </p>
-                <div class="qa-set-row">
-                    <label>Status</label>
-                    <span class="qa-set-status" id="aiStatus">—</span>
-                </div>
+            <div class="qa-set-body">
+                <div class="qa-set-k">Copilot</div>
+                <div class="qa-set-line"><span class="qa-set-status" id="aiStatus">—</span></div>
                 <div class="qa-set-acts">
-                    <button class="btn qa-btn-primary" id="btnGrantAi">Grant access to Copilot</button>
-                    <button class="btn" id="btnTestAi">Test the relay</button>
-                    <button class="btn" id="btnTestUpload">Test the case upload</button>
+                    <button class="btn qa-btn-primary" id="btnGrantAi" type="button">Grant access to Copilot</button>
+                    <button class="btn" id="btnTestAi" type="button">Test the relay</button>
+                    <button class="btn" id="btnTestUpload" type="button" title="Sends a test file with markers at its start, middle and end, and checks Copilot reads all three">Test the case upload</button>
                 </div>
-                <p class="qa-set-note qa-set-sub">
-                    <b>Test the case upload</b> sends a made-up case with three markers hidden at its
-                    start, its middle and its end, and asks Copilot to read all three back. Passing it
-                    proves the whole path — the file reached the site, the site read it, and nothing
-                    in the middle was dropped — which is the one thing a working relay test does not
-                    tell you. Worth pressing once after Grant, and again if a review ever comes back
-                    talking about a case you do not recognise.
-                </p>
-            </div>
+                <label class="qa-switch-card" for="setDeident">
+                    <input class="qa-switch" id="setDeident" type="checkbox">
+                    <span><b>Send cases with the names removed</b><span>Names become role labels before Copilot sees them, and come back in the review.</span></span>
+                </label>
 
-            <!-- DISPLAY SIZE — the analyser's setting. Everything in the panel drawn smaller or
-                 larger, text, buttons and the Cases columns together, for a small laptop screen.
-                 Applied and kept the moment it changes: a size you only see after pressing Save
-                 is one you cannot judge. Ctrl + / Ctrl − / Ctrl 0 do the same from anywhere in
-                 the panel. See display-size.js. -->
-            <div class="qa-set-block">
-                <div class="qa-set-head">Display size</div>
-                <p class="qa-set-note">
-                    Makes everything in the QA Tool smaller or larger — text, buttons and the case
-                    columns together — so more fits on a small screen. It changes straight away and
-                    is kept on this computer. <b>Ctrl +</b> and <b>Ctrl −</b> zoom from anywhere in the
-                    panel, and <b>Ctrl 0</b> puts it back to 100%.
-                </p>
-                <div class="qa-set-row">
-                    <label for="uiScaleSel">Display size</label>
-                    <div class="qa-zoom">
-                        <button class="btn qa-zoom-step" id="btnZoomOut" type="button" title="Smaller (Ctrl −)" aria-label="Smaller">−</button>
-                        <select class="fsel qa-zoom-sel" id="uiScaleSel" title="Makes everything in the QA Tool smaller or larger. Changes straight away, on this computer only.">
+                <div class="qa-set-k">Theme</div>
+                <select class="fsel" id="themeSel">
+                    <option value="slate">Soft Slate — light (default)</option>
+                    <option value="dark">Dark</option>
+                </select>
+
+                <div class="qa-set-k">Display size</div>
+                <div class="qa-zoom">
+                    <button class="btn qa-zoom-step" id="btnZoomOut" type="button" title="Smaller (Ctrl −)" aria-label="Smaller">−</button>
+                    <select class="fsel qa-zoom-sel" id="uiScaleSel" title="Makes everything in the QA Tool smaller or larger. Changes straight away, on this computer only.">
                             <option value="0.7">70% — smallest</option>
                             <option value="0.75">75%</option>
                             <option value="0.8">80%</option>
@@ -650,47 +584,47 @@
                             <option value="1.2">120%</option>
                             <option value="1.3">130% — largest</option>
                         </select>
-                        <button class="btn qa-zoom-step" id="btnZoomIn" type="button" title="Larger (Ctrl +)" aria-label="Larger">+</button>
-                    </div>
+                    <button class="btn qa-zoom-step" id="btnZoomIn" type="button" title="Larger (Ctrl +)" aria-label="Larger">+</button>
                 </div>
-            </div>
 
-            <!-- YOUR DATA. The update check that shared this block is gone — a new build arrives
-                 by replacing the folder, and the manifest key keeps every review across that.
-                 What stays is the backup, for a profile being rebuilt or a move to another
-                 laptop, and the restore that reads one back. -->
-            <div class="qa-set-block">
-                <div class="qa-set-head">Your data</div>
-                <p class="qa-set-note">
-                    Every review, chat, coaching row and setting this tool keeps, written to one file —
-                    and read back in from one. Restoring adds to what is here rather than wiping it: the
-                    reviews, chats and settings in the file replace the ones now stored, and anything the
-                    file does not hold is left alone.
-                </p>
+                <div class="qa-set-k">Standards</div>
+                <div class="qa-set-grid">
+                    <label for="setFrt">First response target (hours)</label>
+                    <input class="finput" id="setFrt" type="number" min="0.25" max="72" step="0.25">
+                    <label for="setGap">Flag silence longer than (days)</label>
+                    <input class="finput" id="setGap" type="number" min="1" max="60" step="1">
+                    <label for="setMeetingNote">Write up a meeting within (hours)</label>
+                    <input class="finput" id="setMeetingNote" type="number" min="1" max="168" step="1">
+                    <label for="setOpenWait">Flag "waiting on us" after (days)</label>
+                    <input class="finput" id="setOpenWait" type="number" min="1" max="30" step="1">
+                    <label for="setWorkers">Cases read at the same time</label>
+                    <input class="finput" id="setWorkers" type="number" min="1" max="4" step="1">
+                </div>
+
+                <div class="qa-set-k">The team</div>
+                <textarea class="finput qa-roster" id="setRoster" rows="6" spellcheck="false" placeholder="One name per line, as Salesforce writes it"></textarea>
+                <div class="qa-set-hint">The order of the coaching sheet. Anyone not listed is still reviewed.</div>
+
+                <div class="qa-set-k">Your data</div>
                 <div class="qa-set-acts">
                     <button class="btn" id="btnBackupNow" type="button" title="Write every review, chat and setting to a JSON file">Back up my data</button>
                     <button class="btn" id="btnRestore" type="button" title="Read a QA Tool backup file back in">Restore from a backup</button>
                     <input type="file" id="restoreFile" accept="application/json,.json" style="display:none">
                 </div>
-            </div>
 
-            <!-- OWNERSHIP, TERMS AND THE INTEGRITY CHECK — who made this, whether this copy is the
-                 one they published (see verifyIntegrity), and the terms accepted. The SOTI AI
-                 Analyser's block. -->
-            <div class="qa-set-block">
-                <div class="about-own" style="margin-top:0">
+                <div class="qa-set-about about-own">
                     <strong>© 2026 Ayodeji Augustine — QA Tool</strong>
                     <div>Created and owned by Ayodeji Augustine. All rights reserved. Proprietary: copying, changing or redistributing it — by hand or with an AI tool — needs his written permission.</div>
                     <div class="about-integrity" id="integrityStatus">Checking this copy…</div>
                     <div class="about-terms"><span id="termsAcceptedLine"></span> <a href="#" id="termsRead">Read the Terms of use</a></div>
                 </div>
             </div>
-
-            <div class="qa-set-block">
-                <div class="qa-set-acts">
-                    <button class="btn qa-btn-primary" id="btnSaveSettings">Save settings</button>
-                    <button class="btn" id="btnResetSettings">Reset to defaults</button>
-                </div>
+            <div class="qa-set-foot">
+                <button class="btn" id="btnResetSettings" type="button">Reset to defaults</button>
+                <span class="qa-set-foot-r">
+                    <button class="btn" id="setCancel" type="button">Cancel</button>
+                    <button class="btn qa-btn-primary" id="btnSaveSettings" type="button">Save</button>
+                </span>
             </div>
         </div>
     </div>
@@ -757,6 +691,16 @@
 
     <script src="ai-provider.js"></script>
     <script src="qa-engine.js"></script>
+    <!-- THE GRAPHQL READ — the SOTI AI Analyser's (Beta 9.8.6) Salesforce modules, unchanged, then the QA Tool's own two
+         on top of them: one case in the shape the QA engine measures (sf-qa-case.js), and many closed cases at once for
+         the Agents tab (sf-qa-scan.js). They share globals, so the order matters. -->
+    <script src="salesforce/sf-graphql.js"></script>
+    <script src="salesforce/sf-case.js"></script>
+    <script src="salesforce/sf-activity.js"></script>
+    <script src="salesforce/sf-feed.js"></script>
+    <script src="salesforce/sf-qa-case.js"></script>
+    <script src="salesforce/sf-qa-scan.js"></script>
+    <script src="qa-agents.js"></script>
     <script src="case-reader.js"></script>
     <script src="updater.js"></script>
     <script src="qa-panel.js"></script>

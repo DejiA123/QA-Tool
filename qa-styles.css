@@ -1410,3 +1410,7 @@ input.qa-switch:focus-visible { outline: 2px solid var(--blue); outline-offset: 
 .qa-set-about strong { color: var(--txt2); font-size: 11px; }
 .qa-set-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--border); }
 .qa-set-foot-r { display: inline-flex; gap: 6px; }
+
+/* POWER MONITOR — its pill in Settings, beside its one line (5.0.0). The pill and the window are the Analyser's styles. */
+.qa-power-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.qa-power-line .qa-set-hint { margin: 0; }

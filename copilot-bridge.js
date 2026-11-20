@@ -1,4 +1,4 @@
-/* © 2026 Ayodeji Augustine. All rights reserved. Carried over from SOTI AI Analyser v9.5.4, whole, so the QA Tool's Copilot relay is the analyser's relay. */
+/* © 2026 Ayodeji Augustine. All rights reserved. Carried over from SOTI AI Analyser v9.8.6, whole, so the QA Tool's Copilot relay is the analyser's relay — with the QA Tool's own additions, each marked "(QA Tool addition)". */
 /* ============================================================================
  * SOTI AI Analyser — Copilot Browser Bridge (relay content script)
  * ============================================================================
@@ -474,7 +474,23 @@
         removeAttachment: [
             'button[aria-label^="Remove attachment" i]',
             'button[aria-label*="Remove attachment" i]',
-            'button[title*="Remove attachment" i]'
+            'button[title*="Remove attachment" i]',
+            // Other wordings for the same control (2026-11-18): "Remove file", "Delete file", "Remove <name>.txt".
+            'button[aria-label*="Remove file" i]',
+            'button[aria-label*="Delete file" i]',
+            'button[aria-label*="Remove uploaded" i]',
+            'button[aria-label^="Remove" i][aria-label*=".txt" i]',
+            'button[aria-label^="Remove" i][aria-label*=".log" i]',
+            // Pictures (2026-11-20). An image chip reads "Remove Picture14.png" and matched none of the above, so an
+            // image the site would not send could never be taken back out: it stayed in the composer, Send stayed
+            // greyed out with "Remove attachments to send", and the text fallback was blocked by it too.
+            'button[aria-label^="Remove" i][aria-label*=".png" i]',
+            'button[aria-label^="Remove" i][aria-label*=".jpg" i]',
+            'button[aria-label^="Remove" i][aria-label*=".jpeg" i]',
+            'button[aria-label^="Remove" i][aria-label*=".gif" i]',
+            'button[aria-label^="Remove" i][aria-label*=".bmp" i]',
+            'button[aria-label^="Remove" i][aria-label*=".webp" i]',
+            'button[aria-label^="Remove" i][aria-label*=".jfif" i]'
         ],
         // Optional. When one of these matches it is preferred over the heuristic,
         // because a selector that IS right is more precise than any inference.
@@ -580,17 +596,6 @@
         setTimeout(finish, ms);
     });
     const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
-    /* (QA Tool addition) THE ECHO, COMPARED ON LETTERS AND DIGITS ONLY. Copilot draws the user's
-     * own turn through its markdown renderer, so "=== REQUEST ===" and the line break after it
-     * can come back as a heading, as nothing, or run into the next line with no space — and a
-     * comparison that kept the symbols and spacing never found a message that had plainly gone.
-     * Lower-case letters and digits survive every one of those renderings. */
-    const echoKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-    function showsPrompt(text, ctx) {
-        const k = echoKey(text);
-        if (ctx.promptKey && k.includes(ctx.promptKey)) return true;
-        return !!(ctx.promptTail && k.includes(ctx.promptTail));
-    }
 
     async function waitFor(fn, timeoutMs, stepMs = 150) {
         const until = Date.now() + timeoutMs;
@@ -644,20 +649,44 @@
         );
     }
 
-    function findFileInputIn(doc, filename, mime) {
+    /* HOW FIRMLY AN INPUT CLAIMS THIS FILE (2026-11-19). M365 Copilot now carries TWO file inputs: the
+     * composer's own (#upload-file-button, whose accept list names .log, .txt and the rest) and, after it in
+     * the DOM, a second one with NO accept list ("Upload files (PDF, Word, Excel, images)"). An empty accept
+     * passes acceptsFile, and "last match wins" then picked the second one every time. Copilot takes a file
+     * through it, draws the chip as "Text file", and then greys out Send with "Remove attachments to send" —
+     * the attachment is there and can never be sent. Reproduced on copilot.cloud.microsoft with a 60-byte
+     * .log: second input → blocked; #upload-file-button → uploads to OneDrive and sends, for .log and .txt
+     * alike. So an input that NAMES the file outranks one that merely does not refuse it.
+     *   3 — lists the file's extension     2 — lists its exact MIME type
+     *   1 — a wildcard or a type group     0 — no accept list at all */
+    function acceptRank(input, filename, mime) {
+        const raw = (input.getAttribute('accept') || '').trim().toLowerCase();
+        if (!raw) return 0;
+        const ext = '.' + String(filename || '').split('.').pop().toLowerCase();
+        const type = String(mime || '').toLowerCase();
+        const list = raw.split(',').map(s => s.trim()).filter(Boolean);
+        if (list.includes(ext)) return 3;
+        if (type && list.includes(type)) return 2;
+        return 1;
+    }
+
+    // Every usable input in this document, best first: firmest claim on the file, then multi-file, then the
+    // later one (for the same reason it is in pick(): the live control sits at the end).
+    function findFileInputsIn(doc, filename, mime) {
+        const out = [];
         for (const sel of SELECTORS.fileInput) {
             let nodes;
             try { nodes = doc.querySelectorAll(sel); } catch (e) { continue; }
-            // Prefer a multi-file input, then any that accepts our extension. Last match
-            // wins for the same reason it does in pick(): the live control sits at the end.
-            const usable = [...nodes].filter(i => !i.disabled && acceptsFile(i, filename, mime));
-            if (usable.length) {
-                const multi = usable.filter(i => i.multiple);
-                const list = multi.length ? multi : usable;
-                return { el: list[list.length - 1], selector: sel, accept: list[list.length - 1].getAttribute('accept') || '' };
-            }
+            [...nodes].forEach((el, order) => {
+                if (el.disabled || !acceptsFile(el, filename, mime) || out.some(h => h.el === el)) return;
+                out.push({ el, selector: sel, accept: el.getAttribute('accept') || '', rank: acceptRank(el, filename, mime), order });
+            });
         }
-        return null;
+        return out.sort((a, b) => (b.rank - a.rank) || ((b.el.multiple ? 1 : 0) - (a.el.multiple ? 1 : 0)) || (b.order - a.order));
+    }
+
+    function findFileInputIn(doc, filename, mime) {
+        return findFileInputsIn(doc, filename, mime)[0] || null;
     }
 
     // Every document this frame can legally touch. The relay is injected into ALL frames and
@@ -677,12 +706,47 @@
         return docs;
     }
 
+    function findFileInputs(filename, mime) {
+        return reachableDocs().flatMap(doc => findFileInputsIn(doc, filename, mime));
+    }
+
+    // For a diagnostic: which input this was, in words an engineer can find in DevTools.
+    function describeInput(hit) {
+        const el = hit && hit.el;
+        if (!el) return 'an unknown input';
+        if (el.id) return `#${el.id}`;
+        const label = el.getAttribute('aria-label');
+        if (label) return `the input labelled "${label.slice(0, 60)}"`;
+        return hit.accept ? `an input accepting "${hit.accept.slice(0, 40)}…"` : 'an input with no accept list';
+    }
+
+    // The best input across every reachable document; on a tie, the first document's (this frame's own).
     function findFileInput(filename, mime) {
-        for (const doc of reachableDocs()) {
-            const hit = findFileInputIn(doc, filename, mime);
-            if (hit) return hit;
-        }
-        return null;
+        const all = findFileInputs(filename, mime);
+        if (!all.length) return null;
+        const best = Math.max(...all.map(h => h.rank));
+        return all.find(h => h.rank === best);
+    }
+
+    /* THE SITE TOOK THE FILE AND WILL NOT SEND IT (2026-11-19). A chip with a remove button proves the page
+     * took the file; it does not prove the page will send it. M365 Copilot says so in words under the
+     * composer — "Remove attachments to send" — while Send stays disabled. Read only to decide; never clicked. */
+    const ATTACH_BLOCKED_RE = /remove (the )?attachments? to send|can['’]t send (with )?(these|this) (files?|attachments?)/i;
+    function attachBlocked() {
+        try {
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+            while (walker.nextNode()) {
+                const t = walker.currentNode.nodeValue || '';
+                if (t.length > 200 || !ATTACH_BLOCKED_RE.test(t)) continue;
+                const el = walker.currentNode.parentElement;
+                if (el && visible(el) && !el.closest('[contenteditable="true"],textarea,input')) return true;
+            }
+            for (const el of document.querySelectorAll('[aria-label],[title]')) {
+                const a = (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('title') || '');
+                if (ATTACH_BLOCKED_RE.test(a) && visible(el)) return true;
+            }
+        } catch (e) { /* not readable — not blocked as far as we can tell */ }
+        return false;
     }
 
     // Some chat UIs mount the upload input only once its menu has been opened. Clicking the
@@ -706,13 +770,52 @@
         } catch (e) { /* nothing to close */ }
     }
 
+    /* PROOF THAT THE PAGE TOOK THE FILE, WITHOUT DEPENDING ON ONE BUTTON'S WORDING (2026-11-18). A Global colleague on
+     * copilot.cloud.microsoft, since the Microsoft outage of the Friday before: "accepted the file into its upload control but
+     * never showed it as attached (waited 20s for 2 attachment chips…)" — and the case then went as 89,000 characters of text
+     * the site would not send. The upload is proven by a "Remove attachment" button per file, and a site that renames that
+     * button (or shows the chip without one) made every upload look failed. Also accepted now: the file's own NAME appearing
+     * on the page where it was not before (a chip, its label, its title), counted against how often it was there already.
+     * Only the CASE file has to be proven: an extra reference file the site would not take does not sink the case. Used only
+     * to decide that the file is there, never to click anything. */
+    function nameShownCount(name) {
+        const base = String(name || '').trim();
+        if (base.length < 5) return 0;
+        const stem = base.replace(/\.[a-z0-9]{1,5}$/i, '');
+        let n = 0;
+        try {
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+            while (walker.nextNode()) {
+                const t = walker.currentNode.nodeValue || '';
+                if (!t.includes(base) && !(stem.length >= 8 && t.includes(stem))) continue;
+                const el = walker.currentNode.parentElement;
+                if (el && visible(el) && !el.closest('[contenteditable="true"],textarea,input')) n++;
+            }
+            for (const el of document.querySelectorAll('[aria-label],[title]')) {
+                const a = (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('title') || '');
+                if ((a.includes(base) || (stem.length >= 8 && a.includes(stem))) && visible(el) && !el.closest('[contenteditable="true"],textarea')) n++;
+            }
+        } catch (e) { /* not counted */ }
+        return n;
+    }
+
+    /* EVERY CHIP, NOT THE FIRST KIND FOUND (2026-11-20). This returned the matches of the first selector that
+     * matched anything, so with a .log and a .png attached it saw the two .log chips and never the picture —
+     * a picture it then could not clear, count or wait on. Now the union of every selector, plus a button named
+     * "Remove <file>" for each file this relay is attaching right now, whatever its extension. */
+    let ATTACHING_NAMES = [];
     function attachmentRemovers() {
+        const out = new Set();
         for (const sel of SELECTORS.removeAttachment) {
-            let nodes;
-            try { nodes = document.querySelectorAll(sel); } catch (e) { continue; }
-            if (nodes.length) return [...nodes];
+            try { document.querySelectorAll(sel).forEach(n => out.add(n)); } catch (e) { /* bad selector */ }
         }
-        return [];
+        if (ATTACHING_NAMES.length) {
+            for (const b of document.querySelectorAll('button[aria-label^="Remove" i]')) {
+                const a = (b.getAttribute('aria-label') || '').toLowerCase();
+                if (ATTACHING_NAMES.some(n => a.startsWith('remove ' + n))) out.add(b);
+            }
+        }
+        return [...out];
     }
 
     // Is an upload still in flight? Scoped to the chip's own container rather than the
@@ -857,6 +960,22 @@
         }
         if (revealed) dismissRevealedMenu();
 
+        /* AN INPUT THAT DOES NOT NAME THE FILE IS A LAST RESORT, SO DO NOT SETTLE FOR ONE EARLY (2026-11-20).
+         * On a fresh copilot.cloud.microsoft chat the accept-less "Upload files (PDF, Word, Excel, images)"
+         * input mounts about 0.9s BEFORE the composer's own #upload-file-button (measured: 1015ms vs 1885ms
+         * after load). The first look above lands in that gap whenever the request is quick to build — a
+         * screenshot and a question, typically, where a log run spends seconds preparing first — and the
+         * picture went into the input whose uploads Copilot will not send. Wait for one that lists the
+         * file; open the attach menu once if none comes; only then fall back to what was found. */
+        if (found.rank === 0) {
+            let better = await waitFor(() => { const h = findFileInput(name, mime); return h && h.rank > 0 ? h : null; }, 6000, 200);
+            if (!better && revealUploadControl()) {
+                better = await waitFor(() => { const h = findFileInput(name, mime); return h && h.rank > 0 ? h : null; }, 3000, 200);
+                dismissRevealedMenu();
+            }
+            if (better) found = better;
+        }
+
         // The FIRST file chose the input; the rest are extras (product reference alongside
         // the case). An extra the input will not take is dropped rather than allowed to sink
         // the whole attach — losing a reference file costs a worse answer, losing the case
@@ -880,6 +999,9 @@
             usable = usable.slice(0, ceiling);
         }
 
+        // What this run is attaching, so its own chips are recognised by name whatever their extension (see
+        // attachmentRemovers). Kept after the call returns: the caller's clean-up on a failed send needs it too.
+        ATTACHING_NAMES = usable.map(s => String(s.name || '').toLowerCase()).filter(n => n.length >= 3);
         const cleared = await clearAttachments();
 
         const makeTransfer = () => {
@@ -897,6 +1019,12 @@
             return t;
         };
 
+        // How often each file's name is on the page already (an earlier chip, an earlier message), so only a NEW one counts.
+        const shownBefore = usable.map(s => nameShownCount(s.name));
+        const caseShown = () => nameShownCount(usable[0].name) > shownBefore[0];
+        const removersBefore = attachmentRemovers().length;
+        // Attached: a chip per file (as before), or the case file proven by a new chip or its name now on the page.
+        const proven = () => attachmentRemovers().length >= usable.length || (attachmentRemovers().length > removersBefore) || caseShown();
         const dt = makeTransfer();
         found.el.files = dt.files;
         // Both events, in this order: some frameworks listen for one and some the other,
@@ -907,7 +1035,7 @@
         // The chip appearing proves the page took the file; the chip going quiet proves the
         // upload finished. Both are needed — the first alone is true one frame after the
         // drop, while the bytes are still going up.
-        let appeared = await waitFor(() => attachmentRemovers().length >= usable.length, 20000, 200);
+        let appeared = await waitFor(proven, 20000, 200);
 
         // A SECOND, INDEPENDENT ROUTE. Assigning `input.files` is the direct way in, but it
         // is not the only one a chat UI understands, and it is the one most exposed to the
@@ -924,7 +1052,7 @@
             };
             const t1 = makeTransfer();
             fire('paste', { bubbles: true, cancelable: true, clipboardData: t1 });
-            appeared = await waitFor(() => attachmentRemovers().length >= usable.length, 6000, 200);
+            appeared = await waitFor(proven, 6000, 200);
             if (appeared) via = 'paste';
         }
         if (!appeared) {
@@ -934,7 +1062,7 @@
             for (const type of ['dragenter', 'dragover', 'drop']) {
                 try { el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: t2 })); } catch (e) { /* unsupported */ }
             }
-            appeared = await waitFor(() => attachmentRemovers().length >= usable.length, 6000, 200);
+            appeared = await waitFor(proven, 6000, 200);
             if (appeared) via = 'drop';
         }
 
@@ -950,6 +1078,40 @@
             throw new Error(
                 `The upload of ${usable.map(s => s.name).join(', ')} did not finish within ${Math.round(timeoutMs / 1000)}s on ${location.host}. ` +
                 `Sending now would ask the question without the evidence, so the case will be sent as text instead.`);
+        }
+
+        /* ATTACHED IS NOT SENDABLE (2026-11-19). If the site now says "Remove attachments to send", the input
+         * that took the file is one whose uploads this composer will not send (see acceptRank). Take the file
+         * back out and offer it to the next input, best first; only if every one of them ends the same way is
+         * it an error — and the chips are cleared then too, or the text fallback would meet the same grey Send. */
+        if (await waitFor(attachBlocked, 1500, 150)) {
+            const refusedBy = [describeInput(found)];
+            let rescued = false;
+            // The other input may not be mounted yet (the composer's own mounts after the accept-less one), so
+            // give it a few seconds to appear rather than concluding there is nothing else to try.
+            const others = () => findFileInputs(name, mime).filter(h => h.el !== found.el);
+            const alts = others().length ? others() : ((await waitFor(() => others().length > 0, 5000, 200)) ? others() : []);
+            for (const alt of alts) {
+                await clearAttachments();
+                const chipsBefore = attachmentRemovers().length;
+                alt.el.files = makeTransfer().files;
+                alt.el.dispatchEvent(new Event('input', { bubbles: true }));
+                alt.el.dispatchEvent(new Event('change', { bubbles: true }));
+                const took = await waitFor(() => attachmentRemovers().length > chipsBefore || caseShown(), 20000, 200);
+                if (took && await waitFor(() => !attachmentsBusy(), timeoutMs, 250) && !(await waitFor(attachBlocked, 1500, 150))) {
+                    found = alt;
+                    via = `input.files (${describeInput(alt)}, after ${refusedBy.join(', ')} was refused)`;
+                    rescued = true;
+                    break;
+                }
+                refusedBy.push(describeInput(alt));
+            }
+            if (!rescued) {
+                await clearAttachments();
+                throw new Error(
+                    `${location.host} took the file but then would not send it ("Remove attachments to send"), through every ` +
+                    `upload input it has (${refusedBy.join('; ')}). The case will be sent as text instead.`);
+            }
         }
 
         // A base64 image is reported by its DECODED size — the picture is three quarters of
@@ -973,6 +1135,62 @@
      * API that produces those faithfully, and it inserts newlines WITHOUT the
      * Enter keydown that would submit the prompt half-written.
      * ------------------------------------------------------------------- */
+    /* TYPED ONCE, WITH ITS LINE BREAKS — the duplicate prompt (Beta 9.6.2, second fix).
+     *
+     * M365 Copilot's message box is a rich editor that keeps its own copy of the text. Two
+     * things about it put the request in the box two, three, four times:
+     *   · it reports execCommand('insertText') as not done, shows the text a moment later,
+     *     and loses its line breaks;
+     *   · it puts back text that is deleted from outside it, so "empty the box, then try
+     *     another way" did not empty it, and every further try added another copy.
+     *
+     * So the rule now is ONE WAY CHANGES THE BOX, ONCE:
+     *   1. A paste of the text over everything in the box. Rich editors (this one, ProseMirror,
+     *      Lexical) take a paste whole, line breaks included, and a paste REPLACES what is
+     *      selected, so whatever was left in the box goes with it.
+     *   2. Only if the paste changed nothing: insertText (a plain editable box).
+     *   3. Only if that changed nothing either: line by line, then textContent.
+     * As soon as one way has changed the box, nothing is typed again on top of it. If it holds
+     * every word but lost its line breaks, that is kept: one copy without breaks is still the
+     * request; two copies is not. deliver() then checks the box holds the request once.
+     * ------------------------------------------------------------------- */
+    const composerHeld = (el) => (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') ? (el.value || '') : (el.innerText || '');
+    // Every word and every break between words: "Analyser\nI'm" read back as "AnalyserI'm" is not exact.
+    const holdsExactly = (el, text) => norm(composerHeld(el)) === norm(text);
+    // Every character, line breaks and curly quotes aside.
+    const squash = (s) => String(s || '').replace(/[\s ​‌‍﻿]+/g, '').replace(/[‘’]/g, "'").replace(/[“”]/g, '"');
+    // How many times the box holds the start of the request: 2 means it is in there twice.
+    const timesHeld = (el, text) => {
+        const h = squash(composerHeld(el)), k = squash(text).slice(0, 60);
+        if (!k) return 0;
+        let n = 0, i = 0;
+        while ((i = h.indexOf(k, i)) >= 0) { n++; i += k.length; }
+        return n;
+    };
+    const selectAllIn = (el) => {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+    };
+    const pasteInto = (el, text) => {
+        const dt = new DataTransfer();
+        dt.setData('text/plain', text);
+        el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    };
+    // Wait until the box holds the text, or has changed and then stopped changing for 300 ms.
+    // An unchanged box is waited on for up to `maxMs`: the editor may still be about to draw.
+    async function settleBox(el, text, before, maxMs) {
+        const t0 = Date.now();
+        let seen = composerHeld(el), still = Date.now();
+        while (!holdsExactly(el, text) && Date.now() - t0 < maxMs) {
+            await sleep(60);
+            const now = composerHeld(el);
+            if (now !== seen) { seen = now; still = Date.now(); }
+            else if (now !== before && Date.now() - still >= 300) break;
+        }
+    }
     async function typeInto(el, text) {
         el.focus();
         el.click();
@@ -983,32 +1201,40 @@
             setter.call(el, text);
             el.dispatchEvent(new Event('input', { bubbles: true }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
-            return (el.value || '').length;
+            return { len: (el.value || '').length, via: 'value' };
         }
 
         if (el.isContentEditable) {
-            const range = document.createRange();
-            range.selectNodeContents(el);
-            const sel = window.getSelection();
-            sel.removeAllRanges();
-            sel.addRange(range);
-            let ok = false;
-            try { ok = document.execCommand('insertText', false, text); } catch (e) { ok = false; }
-            /* (QA Tool addition) GIVE THE EDITOR ITS TURN BEFORE TYPING AGAIN. M365 Copilot's
-             * editor cancels the browser's insert and applies it itself a moment later, so
-             * straight after execCommand the box can look empty — and writing the text in a
-             * second time then sent the message TWICE ("=== REQUEST ===…=== REQUEST ===…").
-             * The fallback still runs when the box really did stay empty. */
-            if (!ok || !norm(el.innerText)) {
-                for (let i = 0; i < 6 && !norm(el.innerText); i++) await sleep(50);
+            const ways = [
+                ['paste', () => pasteInto(el, text)],
+                ['insertText', () => document.execCommand('insertText', false, text)],
+                ['line by line', () => String(text).split('\n').forEach((line, i) => {
+                    if (i) document.execCommand('insertParagraph', false);
+                    if (line) document.execCommand('insertText', false, line);
+                })],
+                ['textContent', () => {
+                    el.textContent = text;
+                    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
+                }]
+            ];
+            for (const [via, run] of ways) {
+                const before = composerHeld(el);
+                el.focus();
+                selectAllIn(el);
+                // A rich editor takes in a new selection a moment later (on the browser's selectionchange), not at
+                // once: typed or pasted straight away, the text lands beside the old text instead of replacing it.
+                await sleep(60);
+                try { run(); } catch (e) { /* the next way */ }
+                await settleBox(el, text, before, 1500);
+                if (holdsExactly(el, text)) return { len: composerHeld(el).length, via };
+                if (composerHeld(el) !== before) {
+                    // THIS WAY CHANGED THE BOX: never type again on top of it.
+                    return { len: composerHeld(el).length, via, breaksLost: squash(composerHeld(el)) === squash(text) };
+                }
             }
-            if (!norm(el.innerText)) {
-                el.textContent = text;
-                el.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
-            }
-            return (el.innerText || '').length;
+            return { len: composerHeld(el).length, via: 'none' };
         }
-        return 0;
+        return { len: 0, via: 'none' };
     }
 
     // Click the send control if it is there and enabled, otherwise press Enter.
@@ -1456,8 +1682,73 @@
     // sibling short on its own, and little text dropped in total.
     const CHROME_CHARS = 25;   // longest a single discarded sibling may be
     const CHROME_TOTAL = 50;   // most text tightening may drop at one level
-    // (QA Tool addition) Prose, never chrome: a sibling that is one of these is part of the answer however short.
-    const PROSE_BLOCK = /^(?:P|LI|UL|OL|H[1-6]|BLOCKQUOTE|PRE|TABLE|DL)$/;
+
+    /* WHAT TIGHTENING MAY THROW AWAY (9.6.2 fix: the panel showed one paragraph of a reply).
+     *
+     * Size alone was the rule, and size cannot tell a button row from a short line of the
+     * answer: on "Hi John, / Yes, that works. / Thanks, Ayo" every paragraph is under 25
+     * characters, so tightening walked into the longest one and the greeting and sign-off
+     * were gone. A sibling may now be dropped only when it is page furniture by WHAT IT IS:
+     * empty, not content at all, a control (button / toolbar / menu / tooltip, whose text is
+     * all control labels), or nothing but the turn label ("Copilot said:"). Any line of real
+     * text keeps tightening where it is, however short. */
+    const CHROME_CONTROLS = 'button,[role="button"],[role="toolbar"],[role="menu"],[role="menubar"],[role="tooltip"]';
+    function chromeLike(el) {
+        if (!el || isNonContent(el)) return true;
+        const text = (el.innerText || '').trim();
+        if (!text) return true;
+        try {
+            if (el.matches && el.matches(CHROME_CONTROLS)) return true;
+            let ctl = 0;
+            for (const b of el.querySelectorAll(CHROME_CONTROLS)) {
+                // Nested controls are counted once, at the outermost one.
+                const outer = b.parentElement ? b.parentElement.closest(CHROME_CONTROLS) : null;
+                if (outer && el.contains(outer)) continue;
+                ctl += (b.innerText || '').trim().length;
+            }
+            if (ctl >= text.replace(/\s+/g, '').length) return true;
+        } catch (e) { /* treat as content */ }
+        return !stripRelayChrome(text).trim();
+    }
+    // Text written directly inside the element, outside any child element.
+    function ownText(el) {
+        let s = '';
+        for (const n of (el.childNodes || [])) if (n.nodeType === 3) s += n.nodeValue;
+        return s.trim();
+    }
+
+    /* THE WHOLE TURN, NOT THE PART OF IT THAT MOVED LAST (9.6.2 fix).
+     *
+     * The answer is found by GROWTH: whichever changed element grew the most. That is the
+     * paragraph being written, not the reply. M365 Copilot routinely swaps the streamed
+     * message for a freshly rendered one when it finishes and then animates a paragraph of
+     * it, so the only thing still growing was the email's longest paragraph, and that one
+     * paragraph was relayed as the whole email ("As you mentioned that the PDF quality…").
+     *
+     * So the element found by growth is only a FOOTHOLD. From it, climb to the outermost
+     * ancestor that is still this answer alone: one that does not hold the composer, does not
+     * hold our own message (the echo node, or the prompt's text), and is not the page itself.
+     * Everything inside that is the assistant's turn, and tighten() then trims furniture off
+     * its edges. Turns before ours cannot be swept in: in document order they sit before our
+     * own message, so any box holding them holds it too, and that box is refused. */
+    function widenToTurn(ctx, el) {
+        if (!el || !el.isConnected) return el;
+        // Without a fixed point for "our own message" there is nothing to stop the climb at.
+        if (!ctx.echoNode && !ctx.promptHead) return el;
+        const loose = ctx.promptLoose || '';
+        let best = el;
+        for (let up = el.parentElement; up; up = up.parentElement) {
+            if (up === document.body || up === document.documentElement) break;
+            if (ctx.composer && (up === ctx.composer || up.contains(ctx.composer))) break;
+            if (ctx.echoNode && ctx.echoNode.isConnected && up.contains(ctx.echoNode)) break;
+            if (inChrome(up)) break;
+            const text = up.innerText || '';
+            if (ctx.promptHead && norm(text).includes(ctx.promptHead)) break;
+            if (loose.length >= 16 && looseKey(text).includes(loose)) break;
+            best = up;
+        }
+        return best;
+    }
 
     function tighten(node) {
         let best = node;
@@ -1471,26 +1762,10 @@
             // block is either mangled or lost. An answer that is MOSTLY one long code block
             // walks straight into this: the widget is the biggest child every time.
             if (codeWidget(best)) break;
-            const all = best.children ? [...best.children].filter(k => !isNonContent(k)) : [];
-            if (!all.length) break;
-
-            /* (QA Tool addition) A ROW OF BUTTONS IS NEVER THE ANSWER, AND NEVER COUNTS AGAINST
-             * IT. Under a short reply the toolbar — "Copy", "Like", "More actions" — can be the
-             * longest child: this walked into it and returned "Regenerate" as what Copilot said,
-             * or, measuring the toolbar as content, refused to step past it and returned the
-             * reply with its button labels stuck on. The same two tests bestCandidate applies to
-             * a whole candidate decide which children are chrome; those are left out of every
-             * measurement below. */
-            let chromeLen = 0;
-            const kids = [];
-            for (const k of all) {
-                const len = (k.innerText || '').trim().length;
-                if (len && (inChrome(k) || buttonTextLen(k) > len * 0.6)) chromeLen += len;
-                else kids.push(k);
-            }
+            const kids = best.children ? [...best.children].filter(k => !isNonContent(k)) : [];
             if (!kids.length) break;
 
-            const full = Math.max(0, (best.innerText || '').trim().length - chromeLen);
+            const full = (best.innerText || '').trim().length;
             if (!full) break;
 
             let biggest = null, biggestLen = -1;
@@ -1510,20 +1785,16 @@
             // flow of text it belongs to is where tightening stops.
             if (MD_INLINE.test(String(biggest.tagName || '').toUpperCase())) break;
 
-            // Anything sizeable outside the biggest child is content, not chrome.
-            const othersTooBig = kids.some(k => k !== biggest && (k.innerText || '').trim().length > CHROME_CHARS);
-            if (othersTooBig) break;
-            /* AND A PARAGRAPH IS CONTENT HOWEVER SHORT IT IS (QA Tool addition). The size
-             * rule cannot tell a "Copy" button from a short paragraph, so an answer made of
-             * short paragraphs — three codes on three lines, "Yes." followed by one sentence —
-             * was cut down to its first paragraph and returned as the whole reply. Buttons and
-             * labels are never <p> or <li>; when what would be dropped is prose, stop here. */
-            const proseLeftBehind = kids.some(k => k !== biggest
-                && PROSE_BLOCK.test(String(k.tagName || '').toUpperCase())
-                && (k.innerText || '').trim().length > 0);
-            if (proseLeftBehind) break;
-            // Covers the parent's own loose text too, which no child accounts for.
-            if (full - biggestLen > CHROME_TOTAL) break;
+            // Anything outside the biggest child that is not furniture is content: a short
+            // greeting or sign-off is part of the answer (see chromeLike).
+            const othersAreContent = kids.some(k => k !== biggest && !chromeLike(k));
+            if (othersAreContent) break;
+            // The parent's own loose text, which no child accounts for, is content too.
+            if (ownText(best) && stripRelayChrome(ownText(best)).trim()) break;
+            // And a furniture-only sibling is still capped, so a big control panel is never
+            // mistaken for a label and a whole region thrown away on its say-so.
+            const dropped = kids.filter(k => k !== biggest).reduce((n, k) => n + (k.innerText || '').trim().length, 0);
+            if (dropped > CHROME_TOTAL * 4 || kids.some(k => k !== biggest && !k.matches(CHROME_CONTROLS) && (k.innerText || '').trim().length > CHROME_CHARS * 4)) break;
 
             best = biggest;
         }
@@ -1592,20 +1863,9 @@
             // Anything showing the prompt back is the user's own turn, or a wrapper
             // holding both turns. Compared on normalised whitespace because innerText
             // re-flows newlines.
-            if (ctx.promptHead && (norm(text).includes(ctx.promptHead) || showsPrompt(text, ctx))) continue;
+            if (ctx.promptHead && norm(text).includes(ctx.promptHead)) continue;
             if (inChrome(el)) continue;
-            /* (QA Tool addition) SCORED ON ITS OWN TEXT, NOT ITS TOOLBAR'S. This used to drop
-             * any element whose text was mostly button labels — right for a strip of
-             * suggestion chips, and fatal for a SHORT answer: M365 Copilot draws a reply and
-             * its Copy / Like / Dislike / More bar in one go, the bar's screen-reader labels
-             * outweigh "QA TOOL OK", and the only element holding the answer was thrown out.
-             * Nothing was ever read, so the request sat until its ten-minute ceiling — the
-             * connection test stuck at 95%. Now only an element with no text of its own is
-             * dropped, and a mostly-buttons one ranks below any other with the same growth. */
-            const btnLen = buttonTextLen(el);
-            const own = text.length - btnLen;
-            if (own < 2) continue;
-            const mostlyButtons = btnLen > text.length * 0.6 ? 1 : 0;
+            if (buttonTextLen(el) > text.length * 0.6) continue;
 
             // HOW MUCH it grew, not merely whether it did. A boolean ranked the page
             // disclaimer — which went from empty to 37 characters in one mutation — level
@@ -1618,15 +1878,14 @@
             cands.push({
                 el,
                 delta,
-                len: own,
-                mostlyButtons,
+                len: text.length,
                 after: comesAfter(ctx.echoNode, el) ? 1 : 0
             });
         }
 
         const pool = requireGrowth ? cands.filter(c => c.delta > 0) : cands;
         if (!pool.length) return null;
-        pool.sort((a, b) => (b.delta - a.delta) || (a.mostlyButtons - b.mostlyButtons) || (b.after - a.after) || (b.len - a.len));
+        pool.sort((a, b) => (b.delta - a.delta) || (b.after - a.after) || (b.len - a.len));
         return pool[0];
     }
 
@@ -1650,13 +1909,17 @@
     // text that was typed and never sent, which is exactly the failure being detected.
     // Also records the TIGHTEST node holding the prompt — the user's own bubble — which
     // becomes the document-order anchor the answer must follow.
+    // Letters and digits only: how the opening words are matched when the chat shows them formatted (a subject
+    // with * _ or ` in it can be drawn as markdown, and quotes can be drawn curly).
+    const looseKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
     function promptEchoed(ctx) {
         let smallest = null;
+        const loose = ctx.promptLoose || '';
         for (const el of ctx.watcher.touched) {
             if (!el.isConnected) continue;
             if (el === ctx.composer || el.contains(ctx.composer)) continue;
             const text = el.innerText || '';
-            if (!norm(text).includes(ctx.promptHead) && !showsPrompt(text, ctx)) continue;
+            if (!norm(text).includes(ctx.promptHead) && !(loose.length >= 16 && looseKey(text).includes(loose))) continue;
             // <= so a tie resolves to the DEEPER node: a bubble and the wrapper that holds
             // only that bubble have identical text, and the bubble is the tighter anchor.
             if (!smallest || text.length <= (smallest.innerText || '').length) smallest = el;
@@ -1869,6 +2132,8 @@
                 if (n.nodeType !== 1) continue;
                 const tag = String(n.tagName).toUpperCase();
                 if (MD_SKIP.test(tag)) continue;
+                // A toolbar, menu or role="button" box is the page's controls, not the reply.
+                try { if (n.matches && n.matches(CHROME_CONTROLS)) continue; } catch (e) { /* keep it */ }
 
                 // An inline element continues the sentence. Checked before every block
                 // branch below, and before codeWidget(), because a <code> span is inline
@@ -1953,14 +2218,33 @@
     // "Lining things up…Copilot said:" is two pieces, so this takes them off in turn.
     // Bounded rather than looped to exhaustion: a pattern that ever matched the empty
     // string must not be able to spin here, and six is more pieces than any page writes.
+    /* THE TURN LABEL AS A HEADING, AND THE PAGE'S OWN BANNERS AT THE END (9.6.2). Since the bridge reads the whole
+     * assistant turn (see widenToTurn), the turn's own furniture comes with it: M365 Copilot draws "Copilot said:" as a
+     * heading — "###### Copilot said:" once it is markdown, which the pattern above did not match — and can put an
+     * upsell under the reply ("Get help with all your work / Upgrade Copilot for answers relevant to all your work…").
+     * Both reached the panel and the Salesforce email. Taken off the START and the END only, line by line, so an answer
+     * that quotes these words in its middle keeps them. */
+    const RELAY_LABEL_LINE_RE = /^\s*(?:#{1,6}[ \t]*)?(?:\*\*|__)?[ \t]*(?:copilot|claude|chatgpt|assistant|you|user)\s+said\s*:?[ \t]*(?:\*\*|__)?[ \t]*(?:\n|$)/i;
+    const RELAY_TAIL_LINE_RE = /^[ \t>*_#-]*(?:get help with all your work.*|\[?upgrade (?:to )?copilot\b.*|(?:\[)?try copilot\b.*|ai[- ]generated content may be incorrect\.?|sources?|copy|edit in pages|was this (?:response|answer) helpful\??)[ \t*_]*$/i;
+    function stripRelayTail(text) {
+        const lines = String(text || '').split('\n');
+        let n = lines.length, cut = 0;
+        while (n > 0 && cut < 6) {
+            const l = lines[n - 1];
+            if (!l.trim()) { n--; continue; }
+            if (!RELAY_TAIL_LINE_RE.test(l)) break;
+            n--; cut++;
+        }
+        return cut ? lines.slice(0, n).join('\n').replace(/\s+$/, '') : String(text || '');
+    }
     function stripRelayChrome(text) {
         let t = String(text || '');
         for (let i = 0; i < 6; i++) {
-            const cut = t.replace(RELAY_CHROME_RE, '');
+            const cut = t.replace(RELAY_LABEL_LINE_RE, '').replace(RELAY_CHROME_RE, '');
             if (cut === t) break;
             t = cut;
         }
-        return t;
+        return stripRelayTail(t);
     }
 
     // The one place the answer's text is decided. Markdown when the DOM can give it,
@@ -1983,12 +2267,7 @@
                 // in the markdown read would look 30 characters "longer" than the truth.
                 const cleaned = stripRelayChrome(md.trim()).trim();
                 const kept = cleaned.replace(/[|`*#>\-\s]/g, '').length;
-                /* (QA Tool addition) Buttons are skipped by the serialiser ON PURPOSE (MD_SKIP),
-                 * so their labels are not counted as content it lost — under a short reply they
-                 * outweighed it, and the flat read went out with "Copy Like Dislike" in it. */
-                let skipped = 0;
-                try { for (const b of el.querySelectorAll('button')) skipped += (b.innerText || '').replace(/\s/g, '').length; } catch (e) { /* none */ }
-                const whole = Math.max(0, flat.replace(/\s/g, '').length - skipped);
+                const whole = flat.replace(/\s/g, '').length;
                 if (cleaned && (!whole || kept >= whole * 0.6)) return cleaned;
             }
         } catch (e) { /* fall through to the flat read */ }
@@ -1999,7 +2278,9 @@
         // A selector that genuinely matches beats inference — but only if it has text.
         const hit = pickAll(SELECTORS.assistant);
         if (hit.els.length) {
-            const text = answerText(hit.els[hit.els.length - 1]);
+            // Widened like the heuristic's pick: a selector that matches one block of the
+            // reply must not relay that block as the whole of it.
+            const text = answerText(tighten(widenToTurn(ctx, hit.els[hit.els.length - 1])));
             if (text) {
                 ctx.strategy = `selector ${hit.selector}`;
                 return text;
@@ -2015,7 +2296,9 @@
         }
 
         if (ctx.answerRoot && ctx.answerRoot.isConnected) {
-            return answerText(tighten(ctx.answerRoot));
+            // The pinned element is where the page is WRITING; the answer is the whole turn
+            // around it (see widenToTurn).
+            return answerText(tighten(widenToTurn(ctx, ctx.answerRoot)));
         }
         return '';
     }
@@ -2246,11 +2529,9 @@
                 // nonce for exactly this, and falls back to the old rule when there is one
                 // part and no stamp.
                 promptHead: norm(part.echoKey) || norm(text).slice(0, 40),
-                // (QA Tool addition) The same test on letters and digits only — the opening
-                // and, for a message with no stamp, its closing words too, which a renderer
-                // that drops the "=== REQUEST ===" line still shows.
-                promptKey: echoKey(part.echoKey) || echoKey(text).slice(0, 32),
-                promptTail: part.echoKey ? '' : (echoKey(text).length >= 16 ? echoKey(text).slice(-24) : ''),
+                // The request words as the key (Beta 9.8.3) are matched loosely too, as the opening words always were; a
+                // ⟦SOTI …⟧ mark is too short for that (under 16 letters and digits) and stays exact.
+                promptLoose: looseKey(norm(part.echoKey || text).slice(0, 60)),
                 watcher: null,
                 strategy: ''
             };
@@ -2263,7 +2544,8 @@
             watcher = makeWatcher();
             ctx.watcher = watcher;
 
-            const typedLen = await typeInto(composer, text);
+            const typed = await typeInto(composer, text);
+            const typedLen = typed.len;
             if (!typedLen) {
                 throw failure(`Could not type into the message box on ${location.host} (matched "${found.selector}"). It may be a custom editor — try a different composer selector in Settings (⚙).`);
             }
@@ -2280,8 +2562,24 @@
             // limit is what made this a setting the user had to tune by hand; measuring it
             // once lets the adapter re-split the case to what the box demonstrably holds and
             // try again, which is the difference between an error and an answer.
+            /* IN THE BOX ONCE (Beta 9.6.2). A request held twice is never sent: the box is replaced once by a
+             * paste over all of it, and if it still holds the request twice the send is refused, so the
+             * engineer can press again, rather than Copilot being asked the same thing twice. */
+            if (timesHeld(composer, text) > 1) {
+                selectAllIn(composer);
+                await sleep(60);                    // let the editor take in the selection first
+                pasteInto(composer, text);
+                await settleBox(composer, text, '', 1200);
+                if (timesHeld(composer, text) > 1) {
+                    throw failure(`The message box on ${location.host} ended up holding the request twice, so it was not sent. Press the button again.`);
+                }
+            }
+            if (index === 0) diag('typed-via', `${typed.via}${typed.breaksLost ? ' (line breaks lost)' : ''}`);
+
+            // Measured without spaces and line breaks: a rich editor that draws "\n" as a paragraph, or
+            // drops one, is not a box that cut the text short.
             const held = (composer.value != null ? composer.value : (composer.innerText || '')).length;
-            if (held < text.length * 0.97) {
+            if (squash(composerHeld(composer)).length < squash(text).length * 0.97) {
                 post({ type: 'SOTI_BRIDGE_CAPACITY', accepted: held, attempted: text.length });
                 throw failure(
                     `${location.host} accepted only ${held.toLocaleString()} of ${text.length.toLocaleString()} characters — its message box has a length limit, so the rest of the case was silently dropped. ` +
@@ -2442,6 +2740,11 @@
 
                     const generating = isGenerating();
                     if (generating) sawGenerating = true;
+
+                    // While the model is still writing, only a GROWING element may be
+                    // adopted — that is what stops a static page label being streamed as the
+                    // answer. Once it has gone quiet, an answer that rendered in one shot
+                    // (short replies do) is accepted on its own merits.
                     /* (QA Tool addition) A STOP CONTROL THAT NEVER GOES AWAY IS NOT A MODEL
                      * STILL WRITING. Something on the page that answers to a "Stop" selector and
                      * stays put after the reply — a dictation control, a hidden stop button left
@@ -2452,11 +2755,6 @@
                      * case shows nothing at all for a minute or more, and that silence is real. */
                     const stuckStop = generating && !!prevFull && Date.now() - lastChange > STOP_STALE_MS;
                     const writing = generating && !stuckStop;
-
-                    // While the model is still writing, only a GROWING element may be
-                    // adopted — that is what stops a static page label being streamed as the
-                    // answer. Once it has gone quiet, an answer that rendered in one shot
-                    // (short replies do) is accepted on its own merits.
                     const settling = !writing && Date.now() - lastChange > quietMs;
                     const full = readAnswer(ctx, !settling);
 
@@ -2774,7 +3072,7 @@
     // "Summarize this email" and "How to downgrade SOTI Cloud" can never match these.
     const RELAY_TITLE_MARKERS = ['SOTI AI Analyser', '=== INSTRUCTIONS'];
 
-    function looksLikeRelayTitle(text) {
+    function looksLikeRelayTitle(text, titles) {
         const t = norm(text);
         if (!t) return false;
         if (RELAY_TITLE_MARKERS.some(m => t.startsWith(m))) return true;
@@ -2786,13 +3084,24 @@
         // aria-label="SOTI AI Analyser — automated request.=== INSTRUCTI", cut at 50
         // characters. Requiring the full name would work today and silently stop matching
         // the moment a case number ran long.
-        return /^[A-Za-z]{0,3}\d{5,}\b/.test(t) && /\bSOTI AI\b/.test(t);
+        if (/^[A-Za-z]{0,3}\d{5,}\b/.test(t) && /\bSOTI AI\b/.test(t)) return true;
+        /* SINCE BETA 9.6.2 the title is the case number and the case's subject ("C01741332 - Javascript require('ini')
+         * fails…"), which a chat an engineer names by hand can look like. So only a title this tool wrote counts: the
+         * relay hands over the list of them. A row matches when it IS one of them, or, when the list shows it clipped
+         * with "…", when it is the start of one, 20 characters at least. Always a case number first. */
+        if (!/^[A-Za-z]{1,3}\d{6,}\b/.test(t) || !Array.isArray(titles) || !titles.length) return false;
+        const clipped = /(?:…|\.\.\.)$/.test(t);
+        const shown = t.replace(/(?:…|\.\.\.)$/, '').trim();
+        return titles.some((k) => {
+            const known = norm(k);
+            return shown === known || (clipped && shown.length >= 20 && known.startsWith(shown));
+        });
     }
 
     // Rows in the chat list whose title this tool wrote. Scoped to navigation containers
     // and to row-shaped elements so the message bubble — which also opens with the title
     // line — cannot be mistaken for a list entry.
-    function relayRows() {
+    function relayRows(titles) {
         let scope = null;
         try { scope = document.querySelector('nav, [role="navigation"], aside'); } catch (e) {}
         scope = scope || document.body;
@@ -2803,7 +3112,7 @@
             candidates = [...scope.querySelectorAll('a,button,li,[role="treeitem"],[role="option"],[role="listitem"],[role="menuitem"]')];
         } catch (e) { return []; }
 
-        const hits = candidates.filter(el => visible(el) && looksLikeRelayTitle(el.innerText || ''));
+        const hits = candidates.filter(el => visible(el) && looksLikeRelayTitle(el.innerText || '', titles));
         // Drop any candidate that contains another: keep the row, not its wrapper.
         return hits.filter(el => !hits.some(o => o !== el && el.contains(o)));
     }
@@ -2850,7 +3159,7 @@
 
     // Remove the relay's own conversations — this run's, and any left behind by earlier
     // ones. Only ever rows whose title this tool wrote.
-    async function deleteRelayConversations(explicitId, max) {
+    async function deleteRelayConversations(explicitId, max, titles) {
         const limit = Math.max(1, max || 3);
         const notes = [];
         let removed = 0;
@@ -2865,7 +3174,7 @@
         }
 
         for (let i = 0; i < limit && removed < limit; i++) {
-            const rows = relayRows();
+            const rows = relayRows(titles);
             if (!rows.length) break;
             const r = await deleteRow(rows[0]);
             if (r.ok) { removed++; await sleep(400); continue; }
@@ -2890,7 +3199,7 @@
     // for tests/copilot-bridge.test.js to drive against a fake DOM. Everything else here
     // needs a live page; this part is pure enough to pin down properly.
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = { stripRelayChrome, heuristicAnswerNode, bestCandidate, readAnswer, tighten, commonPrefixLen, reconcileTail, norm, promptEchoed, typeable, findComposer, currentConversationId, findConversationRow, looksLikeRelayTitle, findDeleteItem, findConfirmButton, triggerScore, looksTruncated, domToMarkdown, answerText, codeWidget, acceptsFile, findFileInput, findFileInputIn, reachableDocs, revealUploadControl, attachmentRemovers, attachmentsBusy, clearAttachments, attachFiles, reassembleAttachments, releaseAttachBuffer, sweepAttachBuffer };
+        module.exports = { stripRelayChrome, heuristicAnswerNode, bestCandidate, readAnswer, tighten, commonPrefixLen, reconcileTail, norm, promptEchoed, typeable, findComposer, currentConversationId, findConversationRow, looksLikeRelayTitle, findDeleteItem, findConfirmButton, triggerScore, looksTruncated, domToMarkdown, answerText, codeWidget, acceptsFile, acceptRank, findFileInput, findFileInputIn, findFileInputs, attachBlocked, reachableDocs, revealUploadControl, attachmentRemovers, attachmentsBusy, clearAttachments, attachFiles, reassembleAttachments, releaseAttachBuffer, sweepAttachBuffer };
     }
     if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.onMessage) return;
 
@@ -2975,12 +3284,14 @@
 
         if (msg.type === 'SOTI_BRIDGE_ASK') {
             if (msg.selectors && typeof msg.selectors === 'object') {
-                SELECTORS = {
+                // Every list the relay uses is kept: custom selectors used to drop fileInput and
+                // removeAttachment, and the attach step then failed on a list that was not there.
+                SELECTORS = Object.assign({}, DEFAULT_SELECTORS, {
                     composer: msg.selectors.composer || DEFAULT_SELECTORS.composer,
                     send: msg.selectors.send || DEFAULT_SELECTORS.send,
                     stop: msg.selectors.stop || DEFAULT_SELECTORS.stop,
                     assistant: msg.selectors.assistant || DEFAULT_SELECTORS.assistant
-                };
+                });
             } else {
                 SELECTORS = DEFAULT_SELECTORS;
             }
@@ -2994,7 +3305,7 @@
         // Delete the conversation this relay just created. Async, so the listener must
         // return true to keep the response channel open.
         if (msg.type === 'SOTI_BRIDGE_CLEANUP') {
-            deleteRelayConversations(msg.conversationId, msg.max)
+            deleteRelayConversations(msg.conversationId, msg.max, Array.isArray(msg.titles) ? msg.titles : [])
                 .then(r => sendResponse(r))
                 .catch(e => sendResponse({ ok: false, why: (e && e.message) || String(e) }));
             return true;

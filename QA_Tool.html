@@ -202,15 +202,14 @@
                 </button>
             </div>
             <button class="btn btn-sf oc-refresh" id="ocRefresh" type="button"
-                    title="Refresh the case list — the same sync, in one glyph: bring the list to the front (or open it), press Salesforce's Refresh, and read every case."
+                    title="Refresh the case list. EMEA Agent Cases and EMEA Closed Cases are read straight from Salesforce over GraphQL — no tab opens."
                     aria-label="Refresh the case list">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
             </button>
         </div>
         <div class="oc-hint" id="ocHint">
-            Press <b>↻</b> (top right) to open the Salesforce case <b>list view</b> or report you QA from and read every case
-            from it — after the first time it goes back to that list on its own. Or press <b>+</b> to add one case, or a list
-            view to keep as a button.
+            Press <b>↻</b> (top right) to read <b>EMEA Agent Cases</b> straight from Salesforce — any Salesforce tab open in
+            Chrome will do, and nothing else opens. Or press <b>+</b> to add one case, or a list view to keep as a button.
         </div>
         </div><!-- /#ocTop -->
         <div class="oc-listbar" id="ocActions" style="display:none">
@@ -587,6 +586,15 @@
                     <button class="btn qa-zoom-step" id="btnZoomIn" type="button" title="Larger (Ctrl +)" aria-label="Larger">+</button>
                 </div>
 
+                <div class="qa-set-k">Power monitor</div>
+                <div class="qa-set-line qa-power-line">
+                    <button class="power-pill" id="powerPill" type="button" title="Power Monitor — how much memory and CPU the QA Tool is using on your machine. Click to open it." style="display:none">
+                        <span class="power-dot" id="powerDot"></span>
+                        <span class="power-txt" id="powerTxt">—</span>
+                    </button>
+                    <span class="qa-set-hint">Memory the QA Tool is using now. Click it for the Power Monitor.</span>
+                </div>
+
                 <div class="qa-set-k">Standards</div>
                 <div class="qa-set-grid">
                     <label for="setFrt">First response target (hours)</label>
@@ -625,6 +633,57 @@
                     <button class="btn" id="setCancel" type="button">Cancel</button>
                     <button class="btn qa-btn-primary" id="btnSaveSettings" type="button">Save</button>
                 </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- POWER MONITOR — the SOTI AI Analyser's: this machine, memory and responsiveness now, what was held back, and every
+         AI run and case read this session. Everything it shows comes from window.SotiPower (power.js). See POWER MONITOR in
+         qa-panel.js. -->
+    <div class="backdrop" id="mPower" style="display:none" role="dialog" aria-modal="true" aria-labelledby="pwrTitle">
+        <div class="modal m-power">
+            <div class="mhdr" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+                <div class="mtitle" id="pwrTitle" style="display:flex;align-items:center;gap:8px">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polyline></svg>
+                    Power Monitor
+                </div>
+                <button class="mcls" id="mPowerClose" type="button" aria-label="Close" style="background:none;border:none;color:var(--txt2);font-size:20px;cursor:pointer">×</button>
+            </div>
+            <div class="pwr-section">
+                <div class="pwr-section-title">This machine</div>
+                <div class="pwr-grid" id="pwrProfile"></div>
+                <div class="pwr-note" id="pwrBudgetNote"></div>
+            </div>
+            <div class="pwr-section">
+                <div class="pwr-section-title">Right now</div>
+                <div class="pwr-meter-row">
+                    <div class="pwr-meter-label"><span>Memory</span><span id="pwrMemVal">—</span></div>
+                    <div class="pwr-meter"><div class="pwr-meter-fill" id="pwrMemFill"></div></div>
+                </div>
+                <div class="pwr-meter-row">
+                    <div class="pwr-meter-label"><span>Responsiveness</span><span id="pwrLagVal">—</span></div>
+                    <div class="pwr-meter"><div class="pwr-meter-fill" id="pwrLagFill"></div></div>
+                </div>
+                <div class="pwr-grid" id="pwrLive"></div>
+            </div>
+            <div class="pwr-section">
+                <div class="pwr-section-title">Peak control <span class="pwr-sub">(this session)</span></div>
+                <div class="pwr-grid" id="pwrPeak"></div>
+            </div>
+            <div class="pwr-section">
+                <div class="pwr-section-title">AI performance <span class="pwr-sub">— by request type</span></div>
+                <div class="pwr-table-wrap"><table class="pwr-table" id="pwrSummary"></table></div>
+            </div>
+            <div class="pwr-section">
+                <div class="pwr-section-title">Recent activity <span class="pwr-sub">— newest first</span></div>
+                <div class="pwr-table-wrap pwr-scroll"><table class="pwr-table" id="pwrLog"></table></div>
+            </div>
+            <div class="mact" style="display:flex;justify-content:space-between;gap:10px;margin-top:18px">
+                <div style="display:flex;gap:8px">
+                    <button class="btn" id="btnPowerFree" type="button" title="Release memory the QA Tool can rebuild">Free memory now</button>
+                    <button class="btn" id="btnPowerCopy" type="button" title="Copy this report, to send with a problem">Copy report</button>
+                </div>
+                <button class="btn btn-sec" id="btnPowerDone" type="button">Close</button>
             </div>
         </div>
     </div>
@@ -689,6 +748,8 @@
 
     <div id="toast" class="toast"></div>
 
+    <!-- The SOTI AI Analyser's Power & Resource Governor, unchanged: this panel's memory and responsiveness, read by the Power Monitor. -->
+    <script src="power.js"></script>
     <script src="ai-provider.js"></script>
     <script src="qa-engine.js"></script>
     <!-- THE GRAPHQL READ — the SOTI AI Analyser's (Beta 9.8.6) Salesforce modules, unchanged, then the QA Tool's own two
@@ -700,6 +761,9 @@
     <script src="salesforce/sf-feed.js"></script>
     <script src="salesforce/sf-qa-case.js"></script>
     <script src="salesforce/sf-qa-scan.js"></script>
+    <script src="salesforce/sf-my-cases.js"></script>
+    <script src="salesforce/sf-agent-cases.js"></script>
+    <script src="salesforce/sf-qa-lists.js"></script>
     <script src="qa-agents.js"></script>
     <script src="case-reader.js"></script>
     <script src="updater.js"></script>

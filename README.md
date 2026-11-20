@@ -64,6 +64,35 @@ QA selected, 30/60/90 and ⚙. The sort is in ⚙. The select box is in the colu
 **Settings, in the Analyser's shape**: one short label per setting, switches as cards, and
 Cancel / Save.
 
+**The blue refresh reads over GraphQL too.** EMEA Agent Cases and EMEA Closed Cases are read
+straight from Salesforce by the report's own rule, through any open Salesforce tab: no tab opens
+and nothing scrolls.
+
+* **EMEA Agent Cases**: Support and Interim cases whose Case Owner's Manager is one of EMEA's seven
+  team leads, not Closed or Close 3x Process (the Analyser's reader, `sf-agent-cases.js`). It keeps
+  itself up to date: every minute only what changed (a new case comes in, a closed one leaves), and
+  a whole read every 30 minutes.
+* **EMEA Closed Cases**: the same cases, closed in the last 30 days, newest first.
+* The owner dropdown, the age choice, the tiers and the tick-boxes work on these lists exactly as
+  before. A list that cannot be read changes nothing, and the bar says why ("Open Salesforce in a
+  tab…"). Your own saved list views are still read from their page.
+
+**The Power Monitor**, the Analyser's: Settings → Power monitor shows the QA Tool's memory now
+(amber when busy, red when critical). Click it for the machine's profile, memory and
+responsiveness, what was held back, and every AI run, case read and list refresh this session,
+with **Copy report**.
+
+**Copilot, as the Analyser drives it** (the relay is now the Analyser's 9.8.6):
+
+* **One pinned Copilot tab in your own window**, instead of a window of its own. It is created in
+  the background, kept and reused, never two.
+* **Short prompts.** What is typed into Copilot is the chat's title ("C01741332 - <subject>") and
+  one line of request. How to answer (the rules, the sheet's headers, the training areas) goes at
+  the top of the attached case file, followed by the case. A review used to type about 7,500
+  characters; it now types about 200.
+* **The case is always attached as a file**, now a `.log`, which Copilot reads in full. If the
+  upload is refused, the relay types it instead, as before, and the review card says which.
+
 ## What's new in 4.0.1
 
 Everything that has changed since 3.0.0.
@@ -742,15 +771,16 @@ gets a coaching row.
 | `case-reader.js` | The background reader window: one window, one tab per case |
 | `content.js` | The Salesforce reader. **The SOTI AI Analyser's, carried over whole**, with a QA appendix at the end that returns the feed as records rather than as prose |
 | `reader-wake.js` | Keeps an occluded reader tab rendering. The analyser's, unchanged |
-| `ai-provider.js` | The Copilot relay. The analyser's v9.5.4, with a few QA Tool additions, each marked `(QA Tool addition)` |
-| `copilot-bridge.js` | Injected into the relay tab. The analyser's v9.5.4, with one QA Tool addition, marked the same way |
+| `ai-provider.js` | The Copilot relay. The analyser's v9.8.6 (one pinned Copilot tab, short prompts, the case as a `.log` file), with a few QA Tool additions, each marked `(QA Tool addition)` |
+| `copilot-bridge.js` | Injected into the relay tab. The analyser's v9.8.6, with one QA Tool addition, marked the same way |
+| `power.js` | The Power Monitor's governor: the machine's profile, this panel's memory and responsiveness, and the log of AI runs and reads. The analyser's, unchanged |
 | `styles.css` | The analyser's v9.5.4 stylesheet, unchanged, so the two tools look like siblings |
 | `qa-styles.css` | Only what QA adds — the QA button, the progress strip, the chat, the sheets, the owner dropdown, the review folders, the update bar |
 | `integrity.json` | The owner's signature over every code file — what *✓ Verified original* checks, and what decides whether the shared folder holds a genuine release |
 | `release.json` | The rest of the release (the icons), byte for byte, so a half-synced folder is never loaded. Covered by the signature |
 | `Install_QA_Tool.html` | The install guide for the team — sent to people, not put in the shared folder: a file changed there after signing marks every copy as modified. Put the shared folder's link in it first (search it for `PASTE-THE-QA-TOOL-FOLDER-LINK-HERE`) |
 | `background.js` | Opens the side panel, keeps a clock running for the relay, and looks for a new release in the shared folder |
-| `salesforce/` | The GraphQL read: the SOTI AI Analyser's Beta 9.8.6 modules (`sf-graphql.js`, `sf-case.js`, `sf-activity.js`, `sf-feed.js`, `sf-feed-capture.js`), unchanged, plus the QA Tool's own: one case in the shape the QA engine measures (`sf-qa-case.js`), and many closed cases at once for the Agents tab (`sf-qa-scan.js`) |
+| `salesforce/` | The GraphQL read: the SOTI AI Analyser's Beta 9.8.6 modules (`sf-graphql.js`, `sf-case.js`, `sf-activity.js`, `sf-feed.js`, `sf-feed-capture.js`), unchanged, and its list readers (`sf-my-cases.js`, `sf-agent-cases.js`, for EMEA Agent Cases), plus the QA Tool's own: one case in the shape the QA engine measures (`sf-qa-case.js`), many closed cases at once for the Agents tab (`sf-qa-scan.js`), and EMEA Closed Cases as a list (`sf-qa-lists.js`) |
 | `qa-agents.js` | The QA agents — Timeline, Communication, Process (Out of Scope, 3x), Documentation — the fact check and the score from the record. Pure: no DOM, no network |
 | `theme.js` | Soft Slate or Dark. The analyser's, recolouring both stylesheets |
 | `updater.js` | Decides when the folder holds a complete, signed new release, and restarts onto it. The analyser's (Global 1.3.2) |

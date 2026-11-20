@@ -350,7 +350,7 @@
      * prompt builder in qa-engine.js returns. The pair is sent as a SYSTEM turn and a USER
      * turn, because that is the only shape ai-provider.js can act on: it splits the system
      * turn at the first bracketed ALL-CAPS heading and uploads everything from there as
-     * "<case number>-case-material.txt", leaving the rules and the question in the chat box.
+     * "<case number>-case-material-<time>.log", leaving the rules and the question in the chat box.
      *
      * Flattened into a single user turn — which is what this did until now — there is no
      * system turn to split, so nothing was ever attached: every audit went into the composer
@@ -360,11 +360,40 @@
      * costs nothing — this only gives it the chance to decide. See the two-halves note above
      * the prompt builders in qa-engine.js.
      */
-    async function askAi(prompt, label, out) {
+    /* EVERY AI RUN, TIMED FOR THE POWER MONITOR (power.js, as the SOTI AI Analyser times its own): what kind of run it was,
+     * how big the prompt was, how long it took, and for a chat the time to the first words. Never the text itself. */
+    function aiRunKind(label) {
+        if (/test/i.test(String(label || ''))) return 'test';
+        if (RUN.coaching) return 'coaching';
+        if (RUN.active) return RUN.kind === '306090' ? '30/60/90' : 'qa review';
+        return 'qa review';
+    }
+    function promptSize(p) {
+        if (Array.isArray(p)) return p.reduce((n, m) => n + String((m && m.content) || '').length, 0);
+        if (p && typeof p === 'object') return String(p.system || '').length + String(p.request || '').length;
+        return String(p || '').length;
+    }
+    async function timedAi(mode, prompt, run) {
+        let h = null;
+        try { h = window.SotiPower && window.SotiPower.perf ? window.SotiPower.perf.start('ai-run', { mode, promptChars: promptSize(prompt) }) : null; } catch (e) { h = null; }
+        try {
+            const said = await run(h);
+            try { if (h) h.end({}); } catch (e) { /* a courtesy */ }
+            return said;
+        } catch (err) {
+            try { if (h) h.end({ error: String((err && err.message) || err).replace(/\s+/g, ' ').slice(0, 80) }); } catch (e) { /* a courtesy */ }
+            throw err;
+        }
+    }
+    function askAi(prompt, label, out, subject) { return timedAi(aiRunKind(label), prompt, () => askAiOnce(prompt, label, out, subject)); }
+    async function askAiOnce(prompt, label, out, subject) {
         if (!window.SotiAI) {
             throw new Error('ai-provider.js did not load, so there is nothing to send this to. Check it sits next to qa-panel.js and reload the extension at chrome://extensions.');
         }
         if (label) window.SotiAI.setConversationLabel(label);
+        /* THE CHAT'S TITLE, AS THE ANALYSER WRITES IT: "C01741332 - <the case's subject>" (ai-provider.js 9.8.6). Only a
+         * review names a subject; anything else (coaching, a test) is titled by its label alone. */
+        try { if (window.SotiAI.setConversationSubject) window.SotiAI.setConversationSubject(subject || ''); } catch (e) { /* the label alone */ }
         const messages = (prompt && typeof prompt === 'object')
             ? [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.request }]
             : [{ role: 'user', content: String(prompt || '') }];
@@ -786,7 +815,7 @@
              * them, which is why this looked intermittent rather than broken.
              *
              * So for this tool the case ALWAYS goes as a file. The cost is a few seconds and
-             * one small .txt per case; what it buys is a message that stays the same tiny
+             * one small .log per case; what it buys is a message that stays the same tiny
              * size whatever the case is, one place for the model to read evidence from, and
              * no case ever competing with its own instructions for room. Set at run time, like
              * attachKnowledge above — the panel never calls SotiAI.save(), so this does not
@@ -902,9 +931,10 @@
         // A code file added to the folder that the signature does not cover is a change too.
         for (const file of ['QA_Tool.html', 'manifest.json', 'qa-panel.js', 'qa-engine.js', 'ai-provider.js', 'copilot-bridge.js',
                             'background.js', 'content.js', 'case-reader.js', 'reader-wake.js', 'display-size.js', 'backup.js',
-                            'updater.js', 'theme.js', 'qa-agents.js', 'styles.css', 'qa-styles.css',
+                            'updater.js', 'theme.js', 'qa-agents.js', 'power.js', 'styles.css', 'qa-styles.css',
                             'salesforce/sf-graphql.js', 'salesforce/sf-case.js', 'salesforce/sf-activity.js', 'salesforce/sf-feed.js',
-                            'salesforce/sf-feed-capture.js', 'salesforce/sf-qa-case.js', 'salesforce/sf-qa-scan.js']) {
+                            'salesforce/sf-feed-capture.js', 'salesforce/sf-qa-case.js', 'salesforce/sf-qa-scan.js',
+                            'salesforce/sf-my-cases.js', 'salesforce/sf-agent-cases.js', 'salesforce/sf-qa-lists.js']) {
             if (!(file in rec.files)) changed.push(file);
         }
         return { status: changed.length ? 'modified' : 'verified', changed, build: rec.build };
@@ -3241,10 +3271,226 @@
         const count = n === t ? String(t) : `${n} of ${t}`;
         const when = CASES.scrapedAt ? ` · synced ${E.fmtDateTime(CASES.scrapedAt)}` : '';
         const from = LAST_LIST && LAST_LIST.name ? ` from ${LAST_LIST.name}` : '';
-        btn.title = `${count} case${t === 1 ? '' : 's'}${when}${from}. Press to sync again.\n\n${SYNC_TITLE}`;
+        const gql = gqlReady() && currentGqlLink();
+        const how = gql ? 'Read straight from Salesforce over GraphQL, and kept up to date every minute. Press to read it again now.' : SYNC_TITLE;
+        btn.title = `${count} case${t === 1 ? '' : 's'}${when}${from}. Press to sync again.\n\n${how}`;
+        const glyph = $('ocRefresh');
+        if (glyph) glyph.title = `${count} case${t === 1 ? '' : 's'}${when}${from}.\n${gql ? 'Refresh over GraphQL, straight from Salesforce — no tab opens.' : 'Refresh the case list — bring the list to the front (or open it), press Salesforce’s Refresh, and read every case.'}`;
+    }
+
+    /* =====================================================================
+     * THE TWO EMEA LISTS, OVER GRAPHQL (5.0.0, the reviewer: "THE BLUE REFRESH BUTTON SHOULD BE GRAPHQL, LIKE SOTI AI
+     * ANALYSER")
+     * =====================================================================
+     * GraphQL cannot run a report, so each list is the report's own rule, asked of Salesforce through any Lightning tab
+     * — nothing opens, nothing scrolls, nothing on screen moves:
+     *   · EMEA Agent Cases    the Analyser's reader (salesforce/sf-agent-cases.js) with the report's Filters: Support and
+     *                         Interim cases, Case Owner's Manager one of EMEA's team leads, Status not Closed or Close 3x
+     *                         Process. Kept up to date every minute (only what changed) and read whole every 30 minutes.
+     *   · EMEA Closed Cases   the same cases once closed, closed in the last CLOSED_LIST_DAYS days
+     *                         (salesforce/sf-qa-lists.js). Read whole every 30 minutes.
+     * The blue refresh, the two chips under Current View and a chip's right-click "Refresh" all read them this way. A
+     * read that fails, or could be partial, changes nothing and says why; a reviewer's own saved list views are still
+     * read from their page, since GraphQL cannot run those either. */
+    const CLOSED_LIST_DAYS = 30;
+    const GQL_LISTS = [
+        { id: 'ql-agent-cases', kind: 'open', report: '00OOF000003bijV2AQ' },
+        { id: 'ql-emea-closed', kind: 'closed', report: '00OOF000003c2K12AI' }
+    ];
+    const GQL_FULL_MS = 30 * 60 * 1000;
+    const GQL_TICK_MS = 60 * 1000;
+    const GQL_PRESS_TRIES = 3;
+    const GQL_LIVE = new Map();   // list id -> { latest: Salesforce's newest LastModifiedDate seen, fullAt }
+    const GQL_SYNC = { busy: false, ticking: false };
+    const emeaRule = () => ({ recordTypes: ['Support Case', 'Interim Case'], managers: REGION_MANAGERS.EMEA.slice(), notStatus: ['Closed', 'Close 3x Process'] });
+    function gqlReady() { return !!(window.SfGraphql && window.SfMyCases && window.SfAgentCases && window.SfQaLists); }
+    // The GraphQL list a saved list (or an address) is: by its id, or by the report it points at. null for any other list.
+    function gqlListOf(link) {
+        if (!link) return null;
+        const byId = link.id && GQL_LISTS.find(g => g.id === link.id);
+        if (byId) return byId;
+        const rep = reportIdOf(link.url || '');
+        return (rep && GQL_LISTS.find(g => rep.slice(0, 15) === g.report.slice(0, 15))) || null;
+    }
+    // The saved chip for a GraphQL list (the reviewer's own name for it kept), or one built for it.
+    function gqlLinkFor(def) {
+        const saved = LISTS.find(l => gqlListOf(l) === def);
+        if (saved) return saved;
+        const d = DEFAULT_LISTS.find(x => x.id === def.id);
+        return d ? { id: d.id, name: d.name, url: d.url } : null;
+    }
+    // The GraphQL list the queue on screen came from, or null.
+    function currentGqlLink() {
+        if (!LAST_LIST) return null;
+        const def = gqlListOf(LAST_LIST);
+        return def ? gqlLinkFor(def) : null;
+    }
+    /* A ROW AS KEPT: the queue's own fields. The Analyser's copy of every column for Copilot (sfFields) is dropped and a
+     * long Description is cut, so a thousand cases stay light in storage; the full case is read when it is QA'd. */
+    function slimRow(row) {
+        const { sfFields, escOwnerRead, ...r } = row || {};
+        if (typeof r.description === 'string' && r.description.length > 1500) r.description = r.description.slice(0, 1500) + '…';
+        return r;
+    }
+    async function lightningTabOpen() {
+        try { return ((await chrome.tabs.query({ url: ['https://*.lightning.force.com/*'], discarded: false })) || []).length > 0; }
+        catch (e) { return true; }
+    }
+    const sameRowId = (a, b) => !!a && !!b && String(a).slice(0, 15) === String(b).slice(0, 15);
+
+    /* ONE WHOLE READ. `opts.quiet`: no bar and no message, and the buttons are left alone (the minute's check). */
+    async function syncGqlList(link, opts = {}) {
+        const def = gqlListOf(link);
+        const quiet = !!opts.quiet;
+        if (!def || !gqlReady()) return { ok: false, reason: 'no-graphql' };
+        if (GQL_SYNC.busy) { if (!quiet) toast(`${link.name} is already being refreshed.`, 'i'); return { ok: false, reason: 'busy' }; }
+        GQL_SYNC.busy = true;
+        const btn = $('btnSyncCaseList'), glyph = $('ocRefresh');
+        if (!quiet) {
+            if (btn) btn.disabled = true;
+            if (glyph) { glyph.classList.add('spinning'); glyph.disabled = true; }
+        }
+        const onThisList = !!(LAST_LIST && gqlListOf(LAST_LIST) === def);
+        const before = onThisList ? CASES.cases.filter(c => !c.manual) : [];
+        const had = before.length;
+        // The bar is the run strip, when nothing else holds it; otherwise the read still runs and says so in a toast.
+        const useBar = !quiet && !(RUN.active || RUN.coaching || RUN.scanning || CHAT_BUSY);
+        const token = {};
+        const many = (n) => `${n.toLocaleString()} case${n === 1 ? '' : 's'}`;
+        if (useBar) runBarOpen('list', 1, `Refreshing ${link.name} from Salesforce`);
+        else if (!quiet) toast(`Refreshing ${link.name} from Salesforce…`, 'i', 5000);
+        const onPage = useBar ? (n) => {
+            BAR.what = `Refreshing ${link.name} · ${had && n <= had ? `${n.toLocaleString()} of about ${had.toLocaleString()} cases` : many(n)} read`;
+            runBarMark(token, Math.min(0.9, 0.1 + 0.8 * (n / Math.max(had, n + 200))));
+        } : null;
+        let failed = 'Couldn’t read the cases from Salesforce · nothing was changed. Press ↻ to try again.';
+        try {
+            let got = null;
+            const tries = quiet ? 1 : GQL_PRESS_TRIES;
+            for (let k = 0; k < tries && !got; k++) {
+                if (k) {
+                    if (useBar) BAR.what = `Refreshing ${link.name} · Salesforce was slow to answer, asking again`;
+                    await new Promise(r => setTimeout(r, 1500 * k));
+                }
+                got = def.kind === 'open'
+                    ? await window.SfAgentCases.read(emeaRule(), { onPage })
+                    : await window.SfQaLists.readClosed(emeaRule(), { days: CLOSED_LIST_DAYS, onPage });
+            }
+            try { if (window.SotiPower && window.SotiPower.perf) window.SotiPower.perf.mark('list-read', { list: link.name, cases: got ? got.rows.length : 0, ok: !!got, quiet }); } catch (e) { /* a courtesy */ }
+            if (!got) {
+                if (!(await lightningTabOpen())) failed = 'Open Salesforce in a tab, then press ↻ · nothing was changed';
+                return { ok: false, reason: 'no-read' };
+            }
+            // An empty answer where there were many cases is not believed: the rule's names may have changed in Salesforce.
+            if (!got.rows.length && had > 10) {
+                failed = `Salesforce returned no case for ${link.name} · nothing was changed`;
+                return { ok: false, reason: 'empty' };
+            }
+            const rows = got.rows.map(slimRow);
+            const was = new Set(before.map(c => String(c.recordId || '').slice(0, 15)).filter(Boolean));
+            const now = new Set(rows.map(r => String(r.recordId || '').slice(0, 15)));
+            const added = onThisList ? rows.filter(r => !was.has(String(r.recordId).slice(0, 15))).length : 0;
+            const gone = onThisList ? [...was].filter(id => !now.has(id)).length : 0;
+            /* WHAT A READ OF THE RECORD ALREADY TOLD US stays on the row (a closing time read during a review, say),
+             * where the list has nothing for it. */
+            const old = new Map(CASES.cases.map(c => [String(c.recordId || '').slice(0, 15), c]));
+            for (const r of rows) {
+                const o = old.get(String(r.recordId).slice(0, 15));
+                if (o && !r.closedAt && o.closedAt) { r.closedAt = o.closedAt; r.closed = o.closed || ''; }
+            }
+            mergeCases({ cases: rows, listName: link.name, origin: got.origin, scrapedAt: Date.now() });
+            CASES.source = 'graphql';
+            LAST_LIST = { url: sfUrl(link.url) || link.url, name: link.name, id: def.id, at: Date.now() };
+            GQL_LIVE.set(def.id, { latest: got.latest || new Date().toISOString(), fullAt: Date.now() });
+            await store({ [K.cases]: CASES, [K.lastList]: LAST_LIST });
+            renderCases();
+            const bits = [many(rows.length)];
+            if (added) bits.push(`${added} new`);
+            if (gone) bits.push(`${gone} ${def.kind === 'open' ? 'closed or moved' : 'gone'}`);
+            if (useBar) runBarClose(`${link.name} up to date · ${bits.join(' · ')}`, 'ok');
+            else if (!quiet) toast(`${link.name} up to date · ${bits.join(' · ')}`, 's');
+            failed = '';
+            return { ok: true };
+        } catch (e) {
+            return { ok: false, reason: 'error' };
+        } finally {
+            if (failed) {
+                if (useBar) runBarClose(failed, 'warn');
+                else if (!quiet) toast(failed, 'w', 9000);
+            }
+            GQL_SYNC.busy = false;
+            if (!quiet) {
+                if (btn) btn.disabled = false;
+                if (glyph) { glyph.classList.remove('spinning'); glyph.disabled = false; }
+            }
+            paintSyncLabel();
+        }
+    }
+
+    /* WHAT CHANGED SINCE THE LAST LOOK, applied to the queue: a case new to EMEA Agent Cases comes in, a changed one is
+     * updated in place, one that left the rule (closed, or moved outside EMEA) leaves. Rows added by hand stay. */
+    function applyGqlChanges(ch) {
+        const list = CASES.cases.slice();
+        let changed = 0;
+        for (const raw of ch.rows || []) {
+            const fresh = slimRow(raw);
+            const i = list.findIndex(x => sameRowId(x.recordId, fresh.recordId) || (fresh.caseNum && x.caseNum === fresh.caseNum));
+            if (i < 0) { list.unshift(fresh); changed++; continue; }
+            const old = list[i];
+            if (old.modifiedAt && old.modifiedAt === fresh.modifiedAt) continue;   // seen already
+            const keep = {};
+            if (!fresh.closedAt && old.closedAt) { keep.closedAt = old.closedAt; keep.closed = old.closed || ''; }
+            list[i] = Object.assign({}, fresh, keep);
+            changed++;
+        }
+        for (const g of ch.gone || []) {
+            const i = list.findIndex(x => sameRowId(x.recordId, g.id) || (g.caseNum && x.caseNum === g.caseNum));
+            if (i < 0 || list[i].manual) continue;
+            list.splice(i, 1);
+            changed++;
+        }
+        if (changed) {
+            CASES = Object.assign({}, CASES, { cases: list });
+            const live = new Set(CASES.cases.map(keyOf));
+            for (const k of [...SELECTED]) if (!live.has(k)) SELECTED.delete(k);
+        }
+        return changed;
+    }
+
+    // Every minute: the GraphQL list on screen is brought up to date — a whole read when due, else only what changed.
+    async function gqlLiveTick() {
+        if (!isExt() || !gqlReady() || GQL_SYNC.busy || GQL_SYNC.ticking) return;
+        if (RUN.active || RUN.scanning) return;   // a run holds the queue still; the next minute catches up
+        const link = currentGqlLink();
+        const def = link && gqlListOf(link);
+        if (!def) return;
+        GQL_SYNC.ticking = true;
+        try {
+            const st = GQL_LIVE.get(def.id);
+            if (!st || !st.latest || Date.now() - st.fullAt >= GQL_FULL_MS) { await syncGqlList(link, { quiet: true }); return; }
+            if (def.kind !== 'open') return;   // a closed list changes slowly: the half-hourly whole read keeps it
+            const ch = await window.SfAgentCases.changes(emeaRule(), st.latest);
+            if (!ch) return;                                            // Salesforce not reachable: the next minute
+            if (ch.tooMany) { await syncGqlList(link, { quiet: true }); return; }
+            if (GQL_SYNC.busy || RUN.active || RUN.scanning) return;   // a press or a run started meanwhile: it wins
+            st.latest = ch.latest || st.latest;
+            if (applyGqlChanges(ch)) {
+                CASES.scrapedAt = Date.now();
+                await store({ [K.cases]: CASES });
+                renderCases();
+            }
+        } catch (e) {
+            /* the next minute tries again */
+        } finally {
+            GQL_SYNC.ticking = false;
+        }
     }
 
     async function syncCaseList() {
+        /* THE BLUE REFRESH: over GraphQL when the queue on screen is EMEA Agent Cases or EMEA Closed Cases — or when
+         * nothing has been synced yet, which starts with EMEA Agent Cases. Another saved list view is read from its page. */
+        const gql = gqlReady() && (currentGqlLink() || (!LAST_LIST && gqlLinkFor(GQL_LISTS[0])));
+        if (gql) return syncGqlList(gql);
         const found = await resolveListTab();
         if (!found.tab && found.openedTabId == null) {
             toast(found.why || 'No Salesforce case list to read.', 'e', 12000);
@@ -3410,7 +3656,10 @@
             name.className = 'oc-view-name';
             name.textContent = link.name;
             chip.appendChild(name);
-            chip.title = `${link.name} — open it in Salesforce and sync this queue from it.\nRight-click to rename or forget it.`;
+            const gql = gqlListOf(link);
+            chip.title = gql
+                ? `${link.name} — read straight from Salesforce over GraphQL: no tab opens, and the list keeps itself up to date.\nRight-click to rename it, or open the report in Salesforce.`
+                : `${link.name} — open it in Salesforce and sync this queue from it.\nRight-click to rename or forget it.`;
             chip.onclick = () => openList(link);
             chip.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
@@ -3419,7 +3668,8 @@
                 const at = (e.clientX || e.clientY) ? { x: e.clientX, y: e.clientY } : { x: r.left, y: r.bottom + 4 };
                 openMenu(at, [
                     { head: link.name },
-                    { label: 'Open and sync', run: () => openList(link) },
+                    gql ? { label: 'Refresh from Salesforce', run: () => openList(link) } : { label: 'Open and sync', run: () => openList(link) },
+                    ...(gql ? [{ label: 'Open the report in Salesforce', run: () => { const u = sfUrl(link.url); if (u) window.QaReader.createTab({ url: u, active: true }, () => {}); } }] : []),
                     { label: 'Rename', run: () => renameList(link.id) },
                     { sep: true },
                     { label: 'Forget this list view', danger: true, run: () => deleteList(link.id) }
@@ -3519,6 +3769,8 @@
         const url = sfUrl(link && link.url);
         if (!url) { toast('That saved list view is not a valid Salesforce address any more.', 'e'); return; }
         if (!isExt()) { toast('Opening a list view needs the Chrome extension.', 'e'); return; }
+        // EMEA Agent Cases and EMEA Closed Cases: read over GraphQL, no tab opened (see THE TWO EMEA LISTS).
+        if (gqlReady() && gqlListOf(link)) return syncGqlList(link);
 
         const open = (await queryTabs({})).filter(t => t && t.url && !window.QaReader.ownsTab(t));
         const hit = open.find(t => sameList(t.url, url));
@@ -3993,7 +4245,7 @@
             const said = aliases.show(await askAi({
                 system: aliases.hide(prompt.system),
                 request: aliases.hide(prompt.request)
-            }, label, out));
+            }, label, out, aliases.hide(String(rec.subject || data.subject || '').replace(/^\(not read yet\)$/, ''))));
             askDelivery = out.delivery;
             return said;
         };
@@ -4215,15 +4467,193 @@
         });
     }
 
+    /* =====================================================================
+     * POWER MONITOR (5.0.0, the reviewer: "THERE SHOULD BE A POWER MONITOR THING TOO FOR THE QA TOOL LIKE SOTI AI ANALYSER")
+     * =====================================================================
+     * The SOTI AI Analyser's: power.js (unchanged) profiles the machine, samples this panel's memory and how quickly it
+     * answers, and keeps a log of every AI run, case read and list refresh; this draws it. The pill in Settings is the
+     * QA Tool's memory now, coloured by level (amber busy, red critical); a click opens the window. Presentation only —
+     * no measurement or policy lives here, and nothing here ever stops the QA Tool working when power.js is absent. */
+    const PowerMonitor = {
+        bound: false, open: false, tick: null,
+        G() { return window.SotiPower || null; },
+        mb(v) { const G = this.G(); try { return G ? G.format.mb(v) : Math.round(v) + ' MB'; } catch (e) { return Math.round(v || 0) + ' MB'; } },
+        ms(v) { const G = this.G(); try { return G ? G.format.ms(v) : Math.round(v) + ' ms'; } catch (e) { return Math.round(v || 0) + ' ms'; } },
+        row(k, v, cls) { return `<div class="pwr-item"><span class="pwr-item-k">${esc(k)}</span><span class="pwr-item-v ${cls || ''}">${esc(String(v))}</span></div>`; },
+        init() {
+            const pill = $('powerPill');
+            if (this.bound || !pill || !this.G()) return;
+            this.bound = true;
+            pill.style.display = 'flex';
+            pill.onclick = () => this.show();
+            const close = () => this.hide();
+            if ($('mPowerClose')) $('mPowerClose').onclick = close;
+            if ($('btnPowerDone')) $('btnPowerDone').onclick = close;
+            if ($('mPower')) $('mPower').addEventListener('click', (e) => { if (e.target === $('mPower')) close(); });
+            document.addEventListener('keydown', (e) => { if (this.open && e.key === 'Escape') close(); });
+            if ($('btnPowerFree')) $('btnPowerFree').onclick = async () => {
+                const before = (this.G().snapshot() || {}).usedMB || 0;
+                let freed = 0;
+                try { freed = await this.G().reclaim('critical', { force: true }); } catch (e) { freed = 0; }
+                this.render();
+                toast(freed > 0 ? `Released ${this.mb(freed / 1048576)} (was ${this.mb(before)}).` : 'Nothing to release — the QA Tool is already lean.', freed > 0 ? 's' : 'i', 4000);
+            };
+            if ($('btnPowerCopy')) $('btnPowerCopy').onclick = () => {
+                copyText(this.asText(), 'Power report copied');
+            };
+            try { if (typeof this.G().sample === 'function') this.G().sample(); } catch (e) { /* the next sample paints it */ }
+            this.paintPill();
+            try { this.G().onChange(() => { this.paintPill(); if (this.open) this.render(); }); } catch (e) { /* no change events */ }
+            try { if (typeof this.G().onSample === 'function') this.G().onSample(() => { if (document.visibilityState === 'visible') this.paintPill(); }); } catch (e) { /* no samples */ }
+        },
+        paintPill() {
+            const pill = $('powerPill'), txt = $('powerTxt');
+            const s = this.G() && this.G().snapshot();
+            if (!pill || !txt || !s) return;
+            pill.classList.remove('lvl-warm', 'lvl-high', 'lvl-critical');
+            if (s.level !== 'ok') pill.classList.add('lvl-' + s.level);
+            txt.textContent = s.heapMeasurable ? `${Math.round(s.usedMB)} MB` : String(s.tier);
+            const pct = s.budgetMB ? Math.round((s.usedMB / s.budgetMB) * 100) : 0;
+            const say = { ok: 'running smoothly', warm: 'busy', high: 'under pressure', critical: 'critical: memory is being released' }[s.level] || s.level;
+            pill.title = s.heapMeasurable
+                ? `Power Monitor: ${say}. Using ${this.mb(s.usedMB)} of this machine's ${this.mb(s.budgetMB)} budget (${pct}%). Click for detail.`
+                : `Power Monitor: ${say}. This browser does not report memory, so only responsiveness is tracked. Click for detail.`;
+        },
+        show() {
+            const m = $('mPower');
+            if (!m) return;
+            this.open = true;
+            m.style.display = 'flex';
+            this.render();
+            if (this.tick) clearInterval(this.tick);
+            // Live while open, then stopped: a window nobody is looking at should not redraw every second.
+            this.tick = setInterval(() => this.render(), 1500);
+        },
+        hide() {
+            this.open = false;
+            if (this.tick) { clearInterval(this.tick); this.tick = null; }
+            if ($('mPower')) $('mPower').style.display = 'none';
+        },
+        render() {
+            const G = this.G();
+            if (!G) return;
+            const s = G.snapshot(), p = G.profile;
+            if (!s || !p) return;
+            const set = (id, html) => { const el = $(id); if (el) el.innerHTML = html; };
+            set('pwrProfile', [
+                this.row('Memory class', p.deviceMemoryReported ? `${p.deviceMemoryGB} GB+` : 'not reported'),
+                this.row('Logical cores', p.coresReported ? p.cores : 'not reported'),
+                this.row('Browser heap ceiling', p.heapMeasurable ? this.mb(p.heapLimitMB) : 'unavailable'),
+                this.row('Capability tier', p.tier),
+                this.row('Memory budget', this.mb(p.budgetMB), 'good')
+            ].join(''));
+            const why = { ram: `set from this machine's memory and ${p.cores} logical cores`, heap: `capped by what this browser gives one page (${this.mb(p.heapLimitMB)})`,
+                floor: 'raised to the minimum the tool needs', ceiling: 'capped at the most the tool will ever ask for' }[p.limitedBy] || '';
+            const note = $('pwrBudgetNote');
+            if (note) note.textContent = p.heapMeasurable
+                ? `The QA Tool keeps to about ${this.mb(p.budgetMB)} on this machine — ${why}. Readings cover this panel's own memory.`
+                : `This browser does not report memory, so the QA Tool watches responsiveness alone (the ${p.tier} profile).`;
+
+            const memPct = s.budgetMB ? Math.min(100, (s.usedMB / s.budgetMB) * 100) : 0;
+            const memFill = $('pwrMemFill');
+            if (memFill) { memFill.style.width = memPct + '%'; memFill.className = 'pwr-meter-fill' + (s.memLevel !== 'ok' ? ' ' + s.memLevel : ''); }
+            if ($('pwrMemVal')) $('pwrMemVal').textContent = s.heapMeasurable ? `${this.mb(s.usedMB)} / ${this.mb(s.budgetMB)}  (${Math.round(memPct)}%)` : 'not measurable in this browser';
+            // Responsiveness inverted: a full green bar means "instant".
+            const lagPct = Math.max(0, 100 - Math.min(100, (s.lagMs / 400) * 100));
+            const lagFill = $('pwrLagFill');
+            if (lagFill) { lagFill.style.width = lagPct + '%'; lagFill.className = 'pwr-meter-fill' + (s.cpuLevel !== 'ok' ? ' ' + s.cpuLevel : ''); }
+            if ($('pwrLagVal')) {
+                const label = { ok: 'instant', warm: 'slight delay', high: 'sluggish', critical: 'stalling' }[s.cpuLevel] || s.cpuLevel;
+                $('pwrLagVal').textContent = `${label} (${Math.round(s.lagMs)} ms lag${s.longTaskSupported ? `, busy ${Math.round((s.ltShare || 0) * 100)}% of the last 10 s` : ''})`;
+            }
+            const cls = { ok: 'good', warm: 'warn', high: 'warn', critical: 'bad' }[s.level];
+            const reads = G.perf.entries().filter(e => e.kind === 'case-read');
+            const viaGql = reads.filter(e => e.meta && e.meta.how === 'graphql' && e.meta.ok).length;
+            set('pwrLive', [
+                this.row('Status', s.level, cls),
+                this.row('Peak this session', this.mb(s.peakMB)),
+                this.row('Memory released', s.reclaimCount ? `${this.mb(s.reclaimedMB)} over ${s.reclaimCount} sweep${s.reclaimCount === 1 ? '' : 's'}` : 'none needed', s.reclaimCount ? 'warn' : 'good'),
+                this.row('Cases in the list', (CASES.cases || []).length.toLocaleString()),
+                this.row('Reviews kept', (REVIEWS || []).length.toLocaleString()),
+                this.row('Cases read this session', reads.length ? `${reads.length} (${viaGql} over GraphQL)` : 'none yet', reads.length && viaGql < reads.length ? 'warn' : 'good')
+            ].join(''));
+            const pk = G.peak || {};
+            const n = (v) => Number(v || 0).toLocaleString();
+            set('pwrPeak', [
+                this.row('Freezes caught (over 1 s)', pk.freezes ? `${n(pk.freezes)}, longest ${this.ms(pk.longestFreezeMs)}` : 'none', pk.freezes ? 'warn' : 'good'),
+                this.row('Long tasks (over 50 ms)', s.longTaskSupported ? `${n(pk.longTasks)}, ${this.ms(pk.longTaskMs || 0)} in all` : 'not reported by this browser'),
+                this.row('Background work held back', pk.deferred || pk.calmWaits ? `${n((pk.deferred || 0) + (pk.calmWaits || 0))} time(s)` : 'none needed', pk.deferred || pk.calmWaits ? 'warn' : 'good')
+            ].join(''));
+
+            const byMode = {};
+            for (const e of G.perf.entries()) {
+                if (e.kind !== 'ai-run' || e.open) continue;
+                const m = (e.meta && e.meta.mode) || 'qa review';
+                (byMode[m] = byMode[m] || []).push(e);
+            }
+            const med = (arr) => { const a = arr.slice().sort((x, y) => x - y); const i = Math.floor(a.length / 2); return a.length % 2 ? a[i] : Math.round((a[i - 1] + a[i]) / 2); };
+            const modes = Object.keys(byMode);
+            set('pwrSummary', !modes.length ? '<tr><td class="dim">No AI runs yet this session.</td></tr>'
+                : '<tr><th>Type</th><th class="num">Runs</th><th class="num">Failed</th><th class="num">Median</th><th class="num">To 1st words</th></tr>'
+                  + modes.map(m => {
+                      const es = byMode[m];
+                      const first = es.filter(e => e.ttftMs !== null).map(e => e.ttftMs);
+                      return `<tr><td>${esc(m)}</td><td class="num">${es.length}</td><td class="num">${es.filter(e => e.error).length}</td><td class="num">${this.ms(med(es.map(e => e.ms)))}</td><td class="num">${first.length ? this.ms(med(first)) : '—'}</td></tr>`;
+                  }).join(''));
+            const entries = G.perf.entries().slice(-60).reverse();
+            set('pwrLog', !entries.length ? '<tr><td class="dim">Nothing recorded yet.</td></tr>'
+                : '<tr><th>Time</th><th>Event</th><th>Detail</th><th class="num">Took</th></tr>'
+                  + entries.map(e => `<tr class="${e.error || (e.meta && e.meta.ok === false) ? 'err' : (e.kind === 'reclaim' ? 'reclaim' : '')}"><td class="dim">${esc(new Date(e.wallStart).toLocaleTimeString())}</td><td>${esc(e.kind)}</td><td class="dim">${esc(this.detail(e))}</td><td class="num">${e.open ? 'running…' : this.ms(e.ms)}</td></tr>`).join(''));
+        },
+        detail(e) {
+            const m = e.meta || {};
+            if (e.error) return `${m.mode || ''} — ${e.error}`;
+            switch (e.kind) {
+                case 'ai-run': return [m.mode, m.promptChars ? `${Math.round(m.promptChars / 1000)}k chars` : '', e.peakHeapMB ? `peak ${Math.round(e.peakHeapMB)} MB` : ''].filter(Boolean).join(' · ');
+                case 'case-read': return `${m.how}${m.ok ? '' : ' — failed'}`;
+                case 'list-read': return `${m.list || ''} — ${m.ok ? `${Number(m.cases || 0).toLocaleString()} cases` : 'could not read'}${m.quiet ? ' (automatic)' : ''}`;
+                case 'reclaim': return `${m.freedMB} MB freed at ${m.level}`;
+                case 'freeze': return `the panel was busy for ${this.ms(m.ms)} without a break`;
+                default: return Object.keys(m).filter(x => x !== 'ms').slice(0, 3).map(x => `${x}=${m[x]}`).join(' ');
+            }
+        },
+        asText() {
+            const G = this.G();
+            const s = (G && G.snapshot()) || {}, p = (G && G.profile) || {};
+            const pk = (G && G.peak) || {};
+            const lines = [
+                `QA Tool ${chrome.runtime && chrome.runtime.getManifest ? chrome.runtime.getManifest().version : ''} — Power Report`,
+                new Date().toISOString(), '',
+                `Machine:   ${p.deviceMemoryReported ? p.deviceMemoryGB + 'GB+' : 'RAM unknown'}, ${p.cores} logical cores, heap ceiling ${p.heapMeasurable ? Math.round(p.heapLimitMB) + 'MB' : 'unknown'}`,
+                `Tier:      ${p.tier}  (budget ${p.budgetMB}MB, limited by ${p.limitedBy})`,
+                `Now:       ${Math.round(s.usedMB || 0)}MB used, peak ${Math.round(s.peakMB || 0)}MB, lag ${Math.round(s.lagMs || 0)}ms, level ${s.level}`,
+                `Peak:      ${pk.freezes || 0} freeze(s) (longest ${Math.round(pk.longestFreezeMs || 0)}ms), ${pk.longTasks || 0} long tasks`,
+                `Queue:     ${(CASES.cases || []).length} cases, ${(REVIEWS || []).length} reviews`,
+                '', 'Recent activity:'
+            ];
+            for (const e of (G ? G.perf.entries() : []).slice(-40)) lines.push(`  ${new Date(e.wallStart).toLocaleTimeString()}  ${e.kind.padEnd(12)} ${e.open ? 'running' : Math.round(e.ms) + 'ms'}  ${this.detail(e)}`);
+            return lines.join('\n');
+        }
+    };
+
+    // A point in the Power Monitor's log: how a case was read and how long it took. Never the case's text.
+    function markRead(how, t0, ok) {
+        try { if (window.SotiPower && window.SotiPower.perf) window.SotiPower.perf.mark('case-read', { how, ok: !!ok, ms: Math.round(performance.now() - t0) }); } catch (e) { /* a courtesy */ }
+    }
     async function readOnce(rec) {
+        const t0 = performance.now();
         try {
             const viaApi = await readByGraphql(rec);
-            if (viaApi.ok) return viaApi;
+            if (viaApi.ok) { markRead('graphql', t0, true); return viaApi; }
             if (viaApi.why && viaApi.why !== 'no-module') logLine(`${rec.caseNum || keyOf(rec)}: GraphQL read unavailable (${viaApi.error || viaApi.why}) — reading the case page instead.`, 'warn');
         } catch (e) { /* the page read below */ }
+        const t1 = performance.now();
         try {
-            return await window.QaReader.readCase(urlOf(rec));
+            const r = await window.QaReader.readCase(urlOf(rec));
+            markRead('case page', t1, r && r.ok);
+            return r;
         } catch (e) {
+            markRead('case page', t1, false);
             return { ok: false, error: (e && e.message) || String(e) };
         }
     }
@@ -4414,7 +4844,7 @@
      * run, one agent for the coaching. The analyser's, keyed per kind. localStorage because the
      * bar needs it SYNCHRONOUSLY when it opens; a per-machine pacing hint, nothing more. */
     const RUN_MS_PREFIX = 'qa_run_ms_';
-    const RUN_MS_DEFAULT = { qa: 120000, '306090': 120000, 'chat-read': 60000, coaching: 60000, scan: 1500, 'scan-list': 8000 };
+    const RUN_MS_DEFAULT = { qa: 120000, '306090': 120000, 'chat-read': 60000, coaching: 60000, scan: 1500, 'scan-list': 8000, list: 8000 };
     function expectedRunMs(kind) {
         const fallback = RUN_MS_DEFAULT[kind] || 90000;
         try {
@@ -5200,11 +5630,19 @@
      * carrying a delta — so an answer appears as it is written rather than after a minute of
      * silence. On a runtime with no readable body it falls back to reading the lot at once,
      * which is the old behaviour and still correct. */
-    async function streamAi(messages, label, onDelta, signal, record) {
+    function streamAi(messages, label, onDelta, signal, record) {
+        return timedAi('chat', messages, (h) => {
+            let first = true;
+            const tell = (t) => { if (first && h && String(t || '').trim()) { first = false; try { h.firstToken(); } catch (e) { /* a courtesy */ } } return onDelta(t); };
+            return streamAiOnce(messages, label, tell, signal, record);
+        });
+    }
+    async function streamAiOnce(messages, label, onDelta, signal, record) {
         if (!window.SotiAI) {
             throw new Error('ai-provider.js did not load, so there is nothing to send this to.');
         }
         if (label) window.SotiAI.setConversationLabel(label);
+        try { if (window.SotiAI.setConversationSubject) window.SotiAI.setConversationSubject(''); } catch (e) { /* the label alone */ }
         // The same record the write-up keeps. A chat grounded in a case that had to be typed
         // into the box in eight parts is a different chat from one grounded in an attached
         // file, and the reviewer is entitled to know which they are having.
@@ -6793,6 +7231,12 @@
 
         $('btnSyncCaseList').onclick = syncCaseList;
         $('ocRefresh').onclick = syncCaseList;
+        PowerMonitor.init();
+        // EMEA Agent Cases kept up to date by itself, every minute, over GraphQL (see THE TWO EMEA LISTS).
+        if (isExt()) {
+            setTimeout(() => { gqlLiveTick(); }, 8000);
+            setInterval(() => { gqlLiveTick(); }, GQL_TICK_MS);
+        }
 
         /* ADD CASE — a menu of three ways in, as the analyser has it. */
         const addMenu = $('ocAddMenu');
